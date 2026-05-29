@@ -1,6 +1,6 @@
 // tests/score-turn.test.ts
 import { describe, it, expect } from "vitest";
-import { findingsStatus, researchState, parseLatestOffset, scaledTimeout, composeResearchPrompt } from "../src/core/scoreTurn.js";
+import { findingsStatus, researchState, parseLatestOffset, scaledTimeout, composeResearchPrompt, composeVerifyPrompt, verifyState } from "../src/core/scoreTurn.js";
 
 describe("findingsStatus", () => {
   it("null (no findings.md) → missing", () => { expect(findingsStatus(null)).toBe("missing"); });
@@ -72,5 +72,33 @@ describe("composeResearchPrompt", () => {
     expect(p).not.toContain('"event":"done"');
     expect(p).not.toMatch(/master[ -]?yoda/i);
     expect(p).not.toMatch(/trooper|commander/i);
+  });
+});
+
+describe("verifyState", () => {
+  it("null → timeout; question → question; error → failed", () => {
+    expect(verifyState(null, "x")).toBe("timeout");
+    expect(verifyState({ event: "question", message: "?" }, null)).toBe("question");
+    expect(verifyState({ event: "error", reason: "x" }, "x")).toBe("failed");
+  });
+  it("done → ok iff verify.md non-empty, else missing", () => {
+    expect(verifyState({ event: "done", summary: "ok" }, "## Verdicts\n1. AGREE [a:1] x\n")).toBe("ok");
+    expect(verifyState({ event: "done", summary: "ok" }, "")).toBe("missing");
+    expect(verifyState({ event: "done", summary: "ok" }, null)).toBe("missing");
+  });
+});
+
+describe("composeVerifyPrompt", () => {
+  const p = composeVerifyPrompt("[a:1] claim one\n[b:2] claim two", "/s/viola-codex/verify.md");
+  it("numbers the items, names AGREE/DISPUTE/UNCERTAIN + the write path, no fence/rebrand tokens", () => {
+    expect(p).toContain("1. [a:1] claim one");
+    expect(p).toContain("2. [b:2] claim two");
+    expect(p).toMatch(/AGREE/); expect(p).toMatch(/DISPUTE/); expect(p).toMatch(/UNCERTAIN/);
+    expect(p).toContain("/s/viola-codex/verify.md");
+    expect(p).toContain("## Verdicts");
+    expect(p).not.toContain("END_OF_INSTRUCTION");
+    expect(p).not.toContain('"event":"done"');
+    expect(p).not.toMatch(/master[ -]?yoda|trooper|commander/i);
+    expect(p).toContain('"event":"question"');
   });
 });

@@ -98,3 +98,47 @@ export function composeResearchPrompt(topicText: string, findingsPath: string): 
     RESEARCH_BLOCKERS,
   ].join("\n");
 }
+
+/** Verify wait outcome → VS= value, ported from cw_consult_wait verify branch (lib/consult-wait.sh):
+ *  null → timeout; question → question; done → ok iff verify.md non-empty (the `-s` test) else missing;
+ *  any other event → failed. (VS=skipped is written by verify-send on empty scope, not here.) */
+export function verifyState(ev: OutboxEvent | null, verifyText: string | null): "ok" | "missing" | "failed" | "timeout" | "question" {
+  if (!ev) return "timeout";
+  if (ev.event === "question") return "question";
+  if (ev.event === "done") return verifyText !== null && verifyText.length > 0 ? "ok" : "missing";
+  return "failed";
+}
+
+/** Verify-phase prompt body (port of config/prompt-templates/consult/verify.md, rebranded).
+ *  Numbers the items (nl -ba -w1 -s'. '). No END_OF_INSTRUCTION/done-line — inboxWrite appends them. */
+export function composeVerifyPrompt(itemsText: string, verifyPath: string): string {
+  const items = itemsText.split("\n").filter((l) => l.length > 0).map((l, i) => `${i + 1}. ${l}`).join("\n");
+  return [
+    "You researched a topic in your previous turn. Below are claims the OTHER researchers raised that",
+    "you did not. For EACH item, do ONE of:",
+    "",
+    "  AGREE     — confirm with your own evidence (cite a file/line/source)",
+    "  DISPUTE   — explain why it's wrong, with counter-evidence",
+    "  UNCERTAIN — you cannot tell from available evidence; say so",
+    "",
+    "Items to verify:",
+    items,
+    "",
+    `Write your verdicts to ${verifyPath} in this exact format:`,
+    "",
+    "  # Verify",
+    "  ## Verdicts",
+    "  1. <TAG> <original [citation] and text>",
+    "     <one-line evidence>",
+    "  2. ...",
+    "",
+    "Where <TAG> is one of: AGREE / DISPUTE / UNCERTAIN.",
+    "",
+    "Verification methods: use any tool in your environment. WebSearch / fetch are authorized when an",
+    "item cites a URL, references external standards/docs, or makes a claim local repo evidence cannot",
+    "resolve. For URL-cited items, fetching the source is the default. For file-cited items prefer the",
+    "local file. If a tool is unavailable, mark the item UNCERTAIN and note the gap — never fabricate.",
+    "",
+    RESEARCH_BLOCKERS,
+  ].join("\n");
+}
