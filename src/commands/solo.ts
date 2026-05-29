@@ -21,6 +21,13 @@ function usage(): number {
   return 2;
 }
 
+export interface InitDeps {
+  haveCmd(name: string): boolean;
+  instrumentBinary(name: string): string | undefined;
+  pickRandomInstrument(topic: string): string | null;
+}
+const liveInitDeps: InitDeps = { haveCmd, instrumentBinary, pickRandomInstrument };
+
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
   const rest = args.slice(1);
@@ -37,20 +44,24 @@ export async function run(args: string[]): Promise<number> {
 }
 
 async function initRun(tokens: string[]): Promise<number> {
+  return initWith(tokens, liveInitDeps);
+}
+
+export async function initWith(tokens: string[], d: InitDeps): Promise<number> {
   const { topicText, provider: provArg, finish } = parseSoloArgs(tokens);
   if (!topicText) { log.error("solo init: topic text is empty"); return 1; }
   const slug = deriveSlug(topicText);
   if (!slug) { log.error("solo init: topic produced an empty slug; provide alphanumerics"); return 1; }
 
   const provider = provArg ?? "codex";
-  const binary = instrumentBinary(provider);
+  const binary = d.instrumentBinary(provider);
   if (!binary) { log.error(`solo init: provider '${provider}' has no entry in contracts.yaml`); return 3; }
-  if (!haveCmd(binary)) { log.error(`solo init: ${provider}'s binary '${binary}' is not on PATH`); return 3; }
+  if (!d.haveCmd(binary)) { log.error(`solo init: ${provider}'s binary '${binary}' is not on PATH`); return 3; }
 
   const art = soloArtDir(slug);
   if (existsSync(art)) { log.error(`solo init: topic already in flight: ${art}`); log.error("  run /consort:coda or pick a different topic"); return 2; }
 
-  const instrument = pickRandomInstrument(slug);
+  const instrument = d.pickRandomInstrument(slug);
   if (!instrument) { log.error(`solo init: no available instrument in the pool for '${slug}'`); return 1; }
 
   const exec = soloExecDir(slug);
@@ -161,6 +172,7 @@ export async function turnWaitWith(topic: string, round: number, d: TurnWaitDeps
   const exec = soloExecDir(topic);
   const instrument = readField(join(art, "instrument.txt"));
   const provider = readField(join(art, "selected-provider.txt"));
+  if (!instrument || !provider) { log.error("solo turn-wait: missing instrument.txt/selected-provider.txt"); return 1; }
   const stateFile = join(exec, `turn-${round}.txt`);
   if (!existsSync(stateFile)) { log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`); return 1; }
   const offset = parseOffset(readFileSync(stateFile, "utf8"));
@@ -258,6 +270,7 @@ async function summaryRun(rest: string[]): Promise<number> {
 /** Read a `key=value` line from a KV file; "" if absent. */
 function kvField(path: string, key: string): string {
   if (!existsSync(path)) return "";
-  const m = readFileSync(path, "utf8").match(new RegExp(`^${key}=(.*)$`, "m"));
+  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = readFileSync(path, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
   return m ? m[1].trim() : "";
 }

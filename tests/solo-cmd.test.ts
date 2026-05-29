@@ -1,6 +1,7 @@
 // tests/solo-cmd.test.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { run as soloRun } from "../src/commands/solo.js";
+import { run as soloRun, initWith } from "../src/commands/solo.js";
+import type { InitDeps } from "../src/commands/solo.js";
 
 describe("solo dispatcher", () => {
   it("no verb / unknown verb → usage, rc 2", async () => {
@@ -28,37 +29,39 @@ describe("solo init", () => {
   beforeEach(() => { h = freshHome(); outSpy = captureStdout(); });
   afterEach(() => { outSpy.restore(); h.cleanup(); });
 
+  // Deterministic deps: provider present + on PATH, instrument fixed — no env dependency.
+  const okDeps: InitDeps = { haveCmd: () => true, instrumentBinary: () => "codex", pickRandomInstrument: () => "violin" };
+
   it("scaffolds _solo, validates provider, prints KV; rc 0", async () => {
-    // codex is in config/contracts.yaml and (in CI) may not be on PATH — force provider validation
-    // to pass by pointing at an instrument whose binary exists. Use a fake provider via CONSORT config?
-    // Simpler: assert the in-flight + bad-args paths deterministically; provider-present path is dogfood-covered.
-    const rc = await soloRun(["init", "--args-file", argsFile(h.home, "add oauth login --provider codex")]);
-    // rc is 0 when codex binary present, else 3 (no-provider). Accept either but assert scaffolding on 0.
-    if (rc === 0) {
-      const art = soloArtDir("add-oauth-login");
-      expect(existsSync(join(art, "execute"))).toBe(true);
-      expect(readFileSync(join(art, "topic.txt"), "utf8").trim()).toBe("add-oauth-login");
-      expect(readFileSync(join(art, "selected-provider.txt"), "utf8").trim()).toBe("codex");
-      expect(readFileSync(join(art, "execute", "finish.txt"), "utf8").trim()).toBe("no");
-      expect(outSpy.text()).toMatch(/^SLUG=add-oauth-login$/m);
-      expect(outSpy.text()).toMatch(/^PROVIDER=codex$/m);
-    } else {
-      expect(rc).toBe(3);
-    }
+    const rc = await initWith(["add", "oauth", "login", "--provider", "codex"], okDeps);
+    expect(rc).toBe(0);
+    const art = soloArtDir("add-oauth-login");
+    expect(existsSync(join(art, "execute"))).toBe(true);
+    expect(readFileSync(join(art, "topic.txt"), "utf8").trim()).toBe("add-oauth-login");
+    expect(readFileSync(join(art, "selected-provider.txt"), "utf8").trim()).toBe("codex");
+    expect(readFileSync(join(art, "instrument.txt"), "utf8").trim()).toBe("violin");
+    expect(readFileSync(join(art, "execute", "finish.txt"), "utf8").trim()).toBe("no");
+    expect(outSpy.text()).toMatch(/^SLUG=add-oauth-login$/m);
+    expect(outSpy.text()).toMatch(/^PROVIDER=codex$/m);
+    expect(outSpy.text()).toMatch(/^INSTRUMENT=violin$/m);
   });
 
   it("empty topic → rc 1", async () => {
     expect(await soloRun(["init", "--args-file", argsFile(h.home, "--provider codex")])).toBe(1);
   });
 
-  it("unknown provider → rc 3", async () => {
+  it("unknown provider → rc 3 (env-independent: reads shipped contracts.yaml)", async () => {
     expect(await soloRun(["init", "--args-file", argsFile(h.home, "do thing --provider nope")])).toBe(3);
   });
 
+  it("provider known but binary not on PATH → rc 3", async () => {
+    const rc = await initWith(["do", "thing"], { haveCmd: () => false, instrumentBinary: () => "codex", pickRandomInstrument: () => "violin" });
+    expect(rc).toBe(3);
+  });
+
   it("in-flight (art dir exists) → rc 2", async () => {
-    const first = await soloRun(["init", "--args-file", argsFile(h.home, "dup topic --provider codex")]);
-    if (first !== 0) return; // skip if codex binary absent in this env
-    expect(await soloRun(["init", "--args-file", argsFile(h.home, "dup topic --provider codex")])).toBe(2);
+    expect(await initWith(["dup", "topic", "--provider", "codex"], okDeps)).toBe(0);
+    expect(await initWith(["dup", "topic", "--provider", "codex"], okDeps)).toBe(2);
   });
 });
 
