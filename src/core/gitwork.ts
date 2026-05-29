@@ -54,3 +54,37 @@ export function createOrResumeBranch(r: Runner, name: string): boolean {
 export function shortstat(r: Runner, base: string): string {
   return r.run("git", ["diff", "--shortstat", `${base}..HEAD`]).stdout.trim();
 }
+
+export interface FinishOpts {
+  branch: string;
+  startBranch: string;
+  hasGh: boolean;
+  originUrl?: string;
+  title?: string;
+  body?: string;
+}
+export interface FinishResult { action: "pr" | "keep"; outcome: string; }
+
+/** Auto finish: remote → push + gh PR; none → keep. Always restores the start-branch checkout. Best-effort. */
+export function finishBranch(r: Runner, o: FinishOpts): FinishResult {
+  const action = finishAutoAction(r.run("git", ["remote"]).stdout);
+  if (action === "keep") {
+    r.run("git", ["checkout", "-q", o.startBranch]);
+    return { action, outcome: "kept" };
+  }
+  let outcome: string;
+  if (r.run("git", ["push", "-q", "-u", "origin", o.branch]).code === 0) {
+    const url = o.originUrl ?? r.run("git", ["remote", "get-url", "origin"]).stdout.trim();
+    const title = o.title ?? `solo: ${o.branch}`;
+    const body = o.body ?? `Automated solo branch. Review and merge into ${o.startBranch}.`;
+    if (o.hasGh && r.run("gh", ["pr", "create", "--repo", url, "--base", o.startBranch, "--head", o.branch, "--title", title, "--body", body]).code === 0) {
+      outcome = "pr-opened";
+    } else {
+      outcome = "pr-pushed-no-gh";
+    }
+  } else {
+    outcome = "pr-failed-kept";
+  }
+  r.run("git", ["checkout", "-q", o.startBranch]);
+  return { action, outcome };
+}

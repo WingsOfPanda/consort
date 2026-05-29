@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { classifyDirty, finishAutoAction } from "../src/core/gitwork.js";
 import { preSnapshot, createOrResumeBranch, shortstat } from "../src/core/gitwork.js";
+import { finishBranch } from "../src/core/gitwork.js";
 import type { Runner, RunResult } from "../src/core/gitwork.js";
 
 /** Fake runner: `replies` maps a "cmd arg arg" key to a scripted RunResult; default {code:0,stdout:""}. */
@@ -86,5 +87,40 @@ describe("shortstat", () => {
   it("returns the trimmed diff --shortstat base..HEAD", () => {
     const { r } = fakeRunner({ "git diff --shortstat base..HEAD": { code: 0, stdout: " 2 files changed\n" } });
     expect(shortstat(r, "base")).toBe("2 files changed");
+  });
+});
+
+describe("finishBranch", () => {
+  it("no remote → keep, restores start branch", () => {
+    const { r, calls } = fakeRunner({ "git remote": { code: 0, stdout: "" } });
+    expect(finishBranch(r, { branch: "feat/solo-auth", startBranch: "main", hasGh: true }))
+      .toEqual({ action: "keep", outcome: "kept" });
+    expect(calls).toContainEqual(["git", "checkout", "-q", "main"]);
+  });
+  it("remote + gh → push + pr-opened, restores start branch", () => {
+    const { r, calls } = fakeRunner({
+      "git remote": { code: 0, stdout: "origin\n" },
+      "git push -q -u origin feat/solo-auth": { code: 0, stdout: "" },
+      "git remote get-url origin": { code: 0, stdout: "git@example:me/r.git\n" },
+    });
+    const res = finishBranch(r, { branch: "feat/solo-auth", startBranch: "main", hasGh: true, title: "solo: feat/solo-auth", body: "b" });
+    expect(res).toEqual({ action: "pr", outcome: "pr-opened" });
+    expect(calls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create")).toBe(true);
+    expect(calls).toContainEqual(["git", "checkout", "-q", "main"]);
+  });
+  it("remote, push ok, gh absent → pr-pushed-no-gh", () => {
+    const { r } = fakeRunner({
+      "git remote": { code: 0, stdout: "origin" },
+      "git push -q -u origin feat/solo-auth": { code: 0, stdout: "" },
+      "git remote get-url origin": { code: 0, stdout: "url" },
+    });
+    expect(finishBranch(r, { branch: "feat/solo-auth", startBranch: "main", hasGh: false }).outcome).toBe("pr-pushed-no-gh");
+  });
+  it("push fails → pr-failed-kept", () => {
+    const { r } = fakeRunner({
+      "git remote": { code: 0, stdout: "origin" },
+      "git push -q -u origin feat/solo-auth": { code: 1, stdout: "" },
+    });
+    expect(finishBranch(r, { branch: "feat/solo-auth", startBranch: "main", hasGh: true }).outcome).toBe("pr-failed-kept");
   });
 });
