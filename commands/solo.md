@@ -94,8 +94,13 @@ Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 ## Stage 3 — Teardown + SUMMARY
 
 1. `$CS coda <INSTRUMENT> <SLUG>` — graceful FINE banner → teardown → archive the part dir.
-2. `$CS solo summary <SLUG>` — writes `SUMMARY.md`. Then print it:
-   `cat <SLUG state>/_solo/SUMMARY.md`.
+   Capture the archived path it reports and record it for the summary:
+   ```bash
+   ARCHIVED=$($CS coda <INSTRUMENT> <SLUG> 2>&1 | sed -n 's/.*archived [^:]*: //p' | tail -1)
+   [ -n "$ARCHIVED" ] && printf '%s\n' "$ARCHIVED" > <SLUG state>/_solo/archived-path.txt
+   ```
+2. `$CS solo summary <SLUG>` — writes `SUMMARY.md` (reads `archived-path.txt` for the "Archived
+   state" line). Then print it: `cat <SLUG state>/_solo/SUMMARY.md`.
 
 ## Notes
 
