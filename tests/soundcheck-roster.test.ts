@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
 import { globalRoot } from "../src/core/paths.js";
@@ -37,5 +37,31 @@ describe("soundcheck roster-plan", () => {
     const out = JSON.parse(cap.text());
     expect(out.detected).toEqual(["codex"]);
     expect(out.skipped).toEqual(["fooai (consult_validated: false)"]);
+  });
+});
+
+describe("soundcheck roster-set", () => {
+  it("empty selection → rc 1, no file written", async () => {
+    stageAvailable(["codex", "claude"]);
+    const rc = await soundcheck(["roster-set"]);
+    expect(rc).toBe(1);
+    expect(existsSync(join(globalRoot(), "providers-active.txt"))).toBe(false);
+  });
+  it("provider not in detected-validated → rc 1, no file", async () => {
+    stageAvailable(["codex", "claude"]);
+    const rc = await soundcheck(["roster-set", "fooai"]);
+    expect(rc).toBe(1);
+    expect(existsSync(join(globalRoot(), "providers-active.txt"))).toBe(false);
+  });
+  it("happy path atomic-writes the active file + prints confirmation", async () => {
+    stageAvailable(["codex", "claude", "agy"]);
+    const cap = captureStdout();
+    const rc = await soundcheck(["roster-set", "codex", "claude"]);
+    cap.restore();
+    expect(rc).toBe(0);
+    const body = readFileSync(join(globalRoot(), "providers-active.txt"), "utf8");
+    expect(body).toContain("by /consort:soundcheck");
+    expect(body.trim().split("\n").slice(-2)).toEqual(["codex", "claude"]);
+    expect(cap.text()).toContain("active set: codex, claude");
   });
 });

@@ -6,7 +6,8 @@ import { haveCmd, inTmuxSession, tmuxVersionOk, tmuxVersionString } from "../cor
 import { globalRoot } from "../core/paths.js";
 import { atomicWrite } from "../core/atomic.js";
 import { contractsExist, listInstruments, instrumentBinary, instrumentConsultValidated } from "../core/contracts.js";
-import { readProviderList, planRoster } from "../core/providers.js";
+import { readProviderList, planRoster, formatActiveFile } from "../core/providers.js";
+import { isoUtc } from "../core/archive.js";
 
 export interface PermissionResult { rc: 0 | 1 | 2; message?: string; configPath?: string; }
 
@@ -54,7 +55,23 @@ function rosterPlan(): number {
   return 0;
 }
 
-function rosterSet(_providers: string[]): number { return 0; }
+function rosterSet(providers: string[]): number {
+  if (providers.length === 0) {
+    log.error("must select at least one provider; selection unchanged");
+    return 1;
+  }
+  const valid = new Set(detectedValidatedProviders());
+  const bad = providers.filter((p) => !valid.has(p));
+  if (bad.length > 0) {
+    log.error(`not in the detected validated set: ${bad.join(", ")}; selection unchanged`);
+    return 1;
+  }
+  const root = globalRoot();
+  mkdirSync(root, { recursive: true });
+  atomicWrite(join(root, "providers-active.txt"), formatActiveFile(providers, isoUtc()));
+  process.stdout.write(`active set: ${providers.join(", ")} (written to providers-active.txt)\n`);
+  return 0;
+}
 
 function healthCheck(): number {
   let fail = 0, warn = 0, ok = 0, total = 0;
