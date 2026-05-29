@@ -106,3 +106,55 @@ Full outbox sequence (the wire protocol, end-to-end):
 - Per-task two-stage review (spec compliance → code quality) across 6 phases; one Important
   review finding fixed (init made deterministically testable so CI without `codex` still covers
   the happy path).
+
+---
+
+# Consort `soundcheck` roster-picker — Dogfood Result
+
+**Date:** 2026-05-29 · **Branch:** `feat/soundcheck-roster` · **Verdict:** PASS
+
+The provider roster-picker (port of clone-wars `medic` v0.18.0): `soundcheck` gains a curated
+`providers-active.txt` selection layer that `/consort:score` will read via the existing
+`activeProvidersPath()` resolver. Dogfooded by driving the real CLI subcommand sequence (the
+mechanical half the directive orchestrates) under an isolated `CONSORT_HOME`; the interactive
+`AskUserQuestion` menu is conductor-side prose validated by the Phase 3 directive review.
+
+## Run
+
+| Step | Result |
+|---|---|
+| `soundcheck` (health) | `Verdict: OK — ready to spawn (4/4 providers available; 0 warnings)`; wrote `providers-available.txt` = `codex agy claude opencode` |
+| `soundcheck roster-plan` (no prior) | `{"detected":["codex","agy","claude","opencode"],"prior":[],"dropped":[],"decision":"prompt","skipped":[]}` |
+| `soundcheck roster-set codex claude` | `active set: codex, claude (written to providers-active.txt)`; rc 0; file has the two header lines + `codex` / `claude` |
+| `soundcheck roster-plan` (re-run) | `"prior":["codex","claude"]` — the data the directive uses to recommend "Keep current selection" |
+| `soundcheck roster-set` (empty) | `[FAIL] must select at least one provider; selection unchanged` (stderr); rc 1; active file untouched |
+| `soundcheck roster-set fooai` (invalid) | `[FAIL] not in the detected validated set: fooai; selection unchanged`; rc 1; no write |
+| stale-drop (`claude` no longer detected, prior had it) | `"detected":["codex","agy","opencode"],"prior":["codex"],"dropped":["claude (no longer detected)"],"decision":"prompt"` |
+| auto path (1 validated detected) | `"decision":"auto","auto":"codex"` |
+| skip path (0 validated; unknown provider present) | `"decision":"skip","skipped":["fooai (consult_validated: false)"]` |
+| resolver | after a write, `providers-active.txt` exists at `$CONSORT_HOME`; `activeProvidersPath()` returns it over `providers-available.txt` (logic unit-tested in `paths.test.ts`) |
+
+All five acceptance checks (write · re-run keep-current · stale drop · empty-set guard · resolver)
+plus the `auto`/`skip` decision branches behave exactly as specified.
+
+## Findings / fixes surfaced
+
+- **Code-review cleanup (Phase 2, commit `d16c6ad`)**: the first `roster-plan` cut filtered
+  `instrumentConsultValidated` twice over the available list (2×N un-memoized `contracts.yaml`
+  parses) and duplicated the detected-filter predicate between `roster-plan` and a
+  `detectedValidatedProviders()` helper. Consolidated into a single-pass `partitionAvailable()`
+  (`{available, detected, skipped}`) + lazy `availablePath()`/`activePath()` helpers; output and
+  ordering byte-identical, all tests green.
+- **Phase 1 DRY (commit `3b07571`)**: extracted `formatProviderFile(providers, isoStamp, subtitle)`
+  so the `providers-available.txt` and `providers-active.txt` writers share one template; the
+  available-file output stayed byte-identical (verified by the unchanged `soundcheck.test.ts`).
+- No behavioral bugs found in the dogfood — the decision matrix and guards matched the spec on the
+  first run.
+
+## Verification context
+
+- 167 vitest unit tests green (`providers` + `soundcheck-roster` suites added, 16 new tests);
+  `tsc --noEmit` + eslint + stale-token gate clean; `dist/consort.cjs` rebuilt (635.7kb) + committed.
+- Per-phase two-stage review (spec compliance → code quality) across Phases 1–3; one
+  Approved-with-minors finding fixed (the single-pass partition above). The `medic` → `soundcheck`
+  rebrand kept the frozen `consult_validated` contracts key; no stale clone-wars tokens shipped.

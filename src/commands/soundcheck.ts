@@ -5,7 +5,9 @@ import { log } from "../core/log.js";
 import { haveCmd, inTmuxSession, tmuxVersionOk, tmuxVersionString } from "../core/deps.js";
 import { globalRoot } from "../core/paths.js";
 import { atomicWrite } from "../core/atomic.js";
-import { contractsExist, listInstruments, instrumentBinary } from "../core/contracts.js";
+import { contractsExist, listInstruments, instrumentBinary, instrumentConsultValidated } from "../core/contracts.js";
+import { readProviderList, planRoster, formatActiveFile, formatProviderFile } from "../core/providers.js";
+import { isoUtc } from "../core/archive.js";
 
 export interface PermissionResult { rc: 0 | 1 | 2; message?: string; configPath?: string; }
 
@@ -29,8 +31,53 @@ export function opencodePermissionCheck(cfgPath?: string): PermissionResult {
 }
 
 const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+const availablePath = (): string => join(globalRoot(), "providers-available.txt");
+const activePath = (): string => join(globalRoot(), "providers-active.txt");
 
-export async function run(_args: string[]): Promise<number> {
+export async function run(args: string[]): Promise<number> {
+  if (args[0] === "roster-plan") return rosterPlan();
+  if (args[0] === "roster-set") return rosterSet(args.slice(1));
+  return healthCheck();
+}
+
+function partitionAvailable(): { available: string[]; detected: string[]; skipped: string[] } {
+  const available = readProviderList(availablePath());
+  const detected: string[] = [];
+  const skipped: string[] = [];
+  for (const p of available) {
+    if (instrumentConsultValidated(p)) detected.push(p);
+    else skipped.push(`${p} (consult_validated: false)`);
+  }
+  return { available, detected, skipped };
+}
+
+function rosterPlan(): number {
+  const { detected, skipped } = partitionAvailable();
+  const prior = readProviderList(activePath());
+  const plan = planRoster({ detectedValidated: detected, prior });
+  process.stdout.write(JSON.stringify({ ...plan, skipped }) + "\n");
+  return 0;
+}
+
+function rosterSet(providers: string[]): number {
+  if (providers.length === 0) {
+    log.error("must select at least one provider; selection unchanged");
+    return 1;
+  }
+  const valid = new Set(partitionAvailable().detected);
+  const bad = providers.filter((p) => !valid.has(p));
+  if (bad.length > 0) {
+    log.error(`not in the detected validated set: ${bad.join(", ")}; selection unchanged`);
+    return 1;
+  }
+  const root = globalRoot();
+  mkdirSync(root, { recursive: true });
+  atomicWrite(activePath(), formatActiveFile(providers, isoUtc()));
+  process.stdout.write(`active set: ${providers.join(", ")} (written to providers-active.txt)\n`);
+  return 0;
+}
+
+function healthCheck(): number {
   let fail = 0, warn = 0, ok = 0, total = 0;
   const root = globalRoot();
   try { mkdirSync(root, { recursive: true }); } catch { /* writable check below reports it */ }
@@ -73,9 +120,7 @@ export async function run(_args: string[]): Promise<number> {
     }
   }
 
-  const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  atomicWrite(join(globalRoot(), "providers-available.txt"),
-    `# generated ${stamp} by /consort:soundcheck\n# providers detected with binary on PATH + contracts.yaml row\n${detected.join("\n")}${detected.length ? "\n" : ""}`);
+  atomicWrite(availablePath(), formatProviderFile(detected, isoUtc(), "providers detected with binary on PATH + contracts.yaml row"));
 
   if (fail !== 0 || ok === 0) {
     if (ok === 0 && total > 0) log.error(`no providers available; install at least one of: ${listInstruments().join(" ")}`);

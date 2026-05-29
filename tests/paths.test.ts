@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createHash } from "node:crypto";
-import { realpathSync, existsSync, readFileSync, mkdtempSync, mkdirSync, utimesSync } from "node:fs";
+import { realpathSync, existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as P from "../src/core/paths.js";
@@ -56,5 +56,14 @@ describe("paths", () => {
   it("runDirLast throws when absent", () => {
     process.env.CONSORT_HOME = mkdtempSync(join(tmpdir(), "rl-"));
     expect(() => P.runDirLast()).toThrow();
+  });
+  it("activeProvidersPath: prefers active when present, else available", () => {
+    const home = mkdtempSync(join(tmpdir(), "ap-"));
+    process.env.CONSORT_HOME = home;
+    // no curated active file yet → resolver returns the medic-detected available path
+    expect(P.activeProvidersPath()).toBe(join(home, "providers-available.txt"));
+    // once the user-curated active file exists → resolver prefers it
+    writeFileSync(join(home, "providers-active.txt"), "codex\n");
+    expect(P.activeProvidersPath()).toBe(join(home, "providers-active.txt"));
   });
 });

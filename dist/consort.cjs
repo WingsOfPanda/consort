@@ -8018,6 +8018,10 @@ function instrumentBootstrapSleep(name) {
   if (typeof v === "number") return v;
   return name === "claude" ? 12 : 8;
 }
+function instrumentConsultValidated(name) {
+  if (!name) throw new TypeError("instrumentConsultValidated: missing provider arg");
+  return inst(name)?.consult_validated === true;
+}
 function contractsExist() {
   return (0, import_node_fs7.existsSync)(contractsPath());
 }
@@ -17020,6 +17024,42 @@ var init_coda = __esm({
   }
 });
 
+// src/core/providers.ts
+function parseProviderList(text) {
+  return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
+}
+function readProviderList(path6) {
+  if (!(0, import_node_fs19.existsSync)(path6)) return [];
+  try {
+    return parseProviderList((0, import_node_fs19.readFileSync)(path6, "utf8"));
+  } catch {
+    return [];
+  }
+}
+function planRoster(input) {
+  const detected = [...input.detectedValidated];
+  const prior = input.prior.filter((p) => detected.includes(p));
+  const dropped = input.prior.filter((p) => !detected.includes(p)).map((p) => `${p} (no longer detected)`);
+  if (detected.length === 0) return { detected, prior, dropped, decision: "skip" };
+  if (detected.length === 1) return { detected, prior, dropped, decision: "auto", auto: detected[0] };
+  return { detected, prior, dropped, decision: "prompt" };
+}
+function formatProviderFile(providers, isoStamp, subtitle) {
+  return `# generated ${isoStamp} by /consort:soundcheck
+# ${subtitle}
+${providers.join("\n")}${providers.length ? "\n" : ""}`;
+}
+function formatActiveFile(providers, isoStamp) {
+  return formatProviderFile(providers, isoStamp, "active providers selected by user");
+}
+var import_node_fs19;
+var init_providers = __esm({
+  "src/core/providers.ts"() {
+    "use strict";
+    import_node_fs19 = require("node:fs");
+  }
+});
+
 // src/commands/soundcheck.ts
 var soundcheck_exports = {};
 __export(soundcheck_exports, {
@@ -17029,16 +17069,16 @@ __export(soundcheck_exports, {
 });
 function opencodeConfigPath(cwd = process.cwd(), home = (0, import_node_os6.homedir)()) {
   const proj = (0, import_node_path15.join)(cwd, "opencode.json");
-  if ((0, import_node_fs19.existsSync)(proj)) return proj;
+  if ((0, import_node_fs20.existsSync)(proj)) return proj;
   const glob = (0, import_node_path15.join)(home, ".config", "opencode", "opencode.json");
-  return (0, import_node_fs19.existsSync)(glob) ? glob : null;
+  return (0, import_node_fs20.existsSync)(glob) ? glob : null;
 }
 function opencodePermissionCheck(cfgPath) {
   const p = cfgPath ?? opencodeConfigPath();
-  if (!p || !(0, import_node_fs19.existsSync)(p)) return { rc: 1, message: "no opencode.json found" };
+  if (!p || !(0, import_node_fs20.existsSync)(p)) return { rc: 1, message: "no opencode.json found" };
   let obj;
   try {
-    obj = JSON.parse((0, import_node_fs19.readFileSync)(p, "utf8"));
+    obj = JSON.parse((0, import_node_fs20.readFileSync)(p, "utf8"));
   } catch {
     return { rc: 1, message: "opencode.json: unparseable", configPath: p };
   }
@@ -17048,11 +17088,51 @@ function opencodePermissionCheck(cfgPath) {
   if (perm && typeof perm === "object") return { rc: 2, message: "opencode.json: object-form permission detected; soundcheck does not introspect per-tool keys", configPath: p };
   return { rc: 1, message: "opencode.json: no top-level 'permission' key (defaults to 'ask')", configPath: p };
 }
-async function run6(_args) {
+async function run6(args) {
+  if (args[0] === "roster-plan") return rosterPlan();
+  if (args[0] === "roster-set") return rosterSet(args.slice(1));
+  return healthCheck();
+}
+function partitionAvailable() {
+  const available = readProviderList(availablePath());
+  const detected = [];
+  const skipped = [];
+  for (const p of available) {
+    if (instrumentConsultValidated(p)) detected.push(p);
+    else skipped.push(`${p} (consult_validated: false)`);
+  }
+  return { available, detected, skipped };
+}
+function rosterPlan() {
+  const { detected, skipped } = partitionAvailable();
+  const prior = readProviderList(activePath());
+  const plan = planRoster({ detectedValidated: detected, prior });
+  process.stdout.write(JSON.stringify({ ...plan, skipped }) + "\n");
+  return 0;
+}
+function rosterSet(providers) {
+  if (providers.length === 0) {
+    log.error("must select at least one provider; selection unchanged");
+    return 1;
+  }
+  const valid = new Set(partitionAvailable().detected);
+  const bad = providers.filter((p) => !valid.has(p));
+  if (bad.length > 0) {
+    log.error(`not in the detected validated set: ${bad.join(", ")}; selection unchanged`);
+    return 1;
+  }
+  const root = globalRoot();
+  (0, import_node_fs20.mkdirSync)(root, { recursive: true });
+  atomicWrite(activePath(), formatActiveFile(providers, isoUtc()));
+  process.stdout.write(`active set: ${providers.join(", ")} (written to providers-active.txt)
+`);
+  return 0;
+}
+function healthCheck() {
   let fail = 0, warn = 0, ok = 0, total = 0;
   const root = globalRoot();
   try {
-    (0, import_node_fs19.mkdirSync)(root, { recursive: true });
+    (0, import_node_fs20.mkdirSync)(root, { recursive: true });
   } catch {
   }
   const ver = tmuxVersionString();
@@ -17068,19 +17148,19 @@ async function run6(_args) {
     log.warn("tmux session: not set \u2014 `tmux new -s consort` before spawning");
     warn = 1;
   }
-  if ((0, import_node_fs19.existsSync)(root)) log.ok(`state dir: ${root} (writable)`);
+  if ((0, import_node_fs20.existsSync)(root)) log.ok(`state dir: ${root} (writable)`);
   else {
     log.error(`state dir: ${root} cannot be created or is not writable`);
     fail = 1;
   }
   for (const f of ["contracts.yaml", "instruments.yaml"]) {
     const dest = (0, import_node_path15.join)(globalRoot(), f);
-    if ((0, import_node_fs19.existsSync)(dest)) log.ok(`config: ${f}`);
+    if ((0, import_node_fs20.existsSync)(dest)) log.ok(`config: ${f}`);
     else {
       const shipped = (0, import_node_path15.join)(pluginRoot5(), "config", f);
-      if ((0, import_node_fs19.existsSync)(shipped)) {
+      if ((0, import_node_fs20.existsSync)(shipped)) {
         try {
-          (0, import_node_fs19.copyFileSync)(shipped, dest);
+          (0, import_node_fs20.copyFileSync)(shipped, dest);
           log.ok(`config: ${f} (copied default into state dir)`);
         } catch {
           log.error(`config: ${f} missing; copy from plugin defaults failed`);
@@ -17116,13 +17196,7 @@ async function run6(_args) {
       else log.warn(`  opencode auto-approve: ${r.message}${r.rc === 2 ? " (non-fatal)" : ""}`);
     }
   }
-  const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
-  atomicWrite(
-    (0, import_node_path15.join)(globalRoot(), "providers-available.txt"),
-    `# generated ${stamp} by /consort:soundcheck
-# providers detected with binary on PATH + contracts.yaml row
-${detected.join("\n")}${detected.length ? "\n" : ""}`
-  );
+  atomicWrite(availablePath(), formatProviderFile(detected, isoUtc(), "providers detected with binary on PATH + contracts.yaml row"));
   if (fail !== 0 || ok === 0) {
     if (ok === 0 && total > 0) log.error(`no providers available; install at least one of: ${listInstruments().join(" ")}`);
     process.stdout.write("Verdict: FAIL \u2014 fix items above before spawning\n");
@@ -17132,11 +17206,11 @@ ${detected.join("\n")}${detected.length ? "\n" : ""}`
 `);
   return 0;
 }
-var import_node_fs19, import_node_path15, import_node_os6, pluginRoot5;
+var import_node_fs20, import_node_path15, import_node_os6, pluginRoot5, availablePath, activePath;
 var init_soundcheck = __esm({
   "src/commands/soundcheck.ts"() {
     "use strict";
-    import_node_fs19 = require("node:fs");
+    import_node_fs20 = require("node:fs");
     import_node_path15 = require("node:path");
     import_node_os6 = require("node:os");
     init_log();
@@ -17144,7 +17218,11 @@ var init_soundcheck = __esm({
     init_paths();
     init_atomic();
     init_contracts();
+    init_providers();
+    init_archive();
     pluginRoot5 = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+    availablePath = () => (0, import_node_path15.join)(globalRoot(), "providers-available.txt");
+    activePath = () => (0, import_node_path15.join)(globalRoot(), "providers-active.txt");
   }
 });
 
@@ -17190,7 +17268,7 @@ async function run7(args) {
     return 1;
   }
   const art = artDir || (0, import_node_path16.join)(topicDir(topic), "_consult");
-  (0, import_node_fs20.mkdirSync)(art, { recursive: true });
+  (0, import_node_fs21.mkdirSync)(art, { recursive: true });
   const panesFile = (0, import_node_path16.join)(art, "preflight-panes.txt");
   try {
     const out = await preflightLayout(topic, roster, { writePanes: (tsv) => atomicWrite(panesFile, tsv) });
@@ -17203,11 +17281,11 @@ async function run7(args) {
     return 1;
   }
 }
-var import_node_fs20, import_node_path16, SLUG2;
+var import_node_fs21, import_node_path16, SLUG2;
 var init_preflight = __esm({
   "src/commands/preflight.ts"() {
     "use strict";
-    import_node_fs20 = require("node:fs");
+    import_node_fs21 = require("node:fs");
     import_node_path16 = require("node:path");
     init_args();
     init_log();
@@ -17270,22 +17348,22 @@ function parseSoloArgs(tokens) {
   return { topicText: text.join(" ").trim(), provider, finish };
 }
 function detectTestCommand(root) {
-  if ((0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "tests", "run.sh"))) return "bash tests/run.sh";
+  if ((0, import_node_fs22.existsSync)((0, import_node_path17.join)(root, "tests", "run.sh"))) return "bash tests/run.sh";
   const pkg = (0, import_node_path17.join)(root, "package.json");
-  if ((0, import_node_fs21.existsSync)(pkg)) {
+  if ((0, import_node_fs22.existsSync)(pkg)) {
     try {
-      if (JSON.parse((0, import_node_fs21.readFileSync)(pkg, "utf8"))?.scripts?.test) return "npm test";
+      if (JSON.parse((0, import_node_fs22.readFileSync)(pkg, "utf8"))?.scripts?.test) return "npm test";
     } catch {
     }
   }
   const mk = (0, import_node_path17.join)(root, "Makefile");
-  if ((0, import_node_fs21.existsSync)(mk)) {
+  if ((0, import_node_fs22.existsSync)(mk)) {
     try {
-      if (/^test:/m.test((0, import_node_fs21.readFileSync)(mk, "utf8"))) return "make test";
+      if (/^test:/m.test((0, import_node_fs22.readFileSync)(mk, "utf8"))) return "make test";
     } catch {
     }
   }
-  if (((0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "pyproject.toml")) || (0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "setup.cfg"))) && (0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "tests"))) return "pytest";
+  if (((0, import_node_fs22.existsSync)((0, import_node_path17.join)(root, "pyproject.toml")) || (0, import_node_fs22.existsSync)((0, import_node_path17.join)(root, "setup.cfg"))) && (0, import_node_fs22.existsSync)((0, import_node_path17.join)(root, "tests"))) return "pytest";
   return "";
 }
 function renderSummary(f) {
@@ -17344,12 +17422,12 @@ function renderResume(f) {
     ""
   ].join("\n");
 }
-var import_node_path17, import_node_fs21;
+var import_node_path17, import_node_fs22;
 var init_solo = __esm({
   "src/core/solo.ts"() {
     "use strict";
     import_node_path17 = require("node:path");
-    import_node_fs21 = require("node:fs");
+    import_node_fs22 = require("node:fs");
     init_paths();
   }
 });
@@ -17543,7 +17621,7 @@ async function initWith(tokens, d) {
     return 3;
   }
   const art = soloArtDir(slug);
-  if ((0, import_node_fs22.existsSync)(art)) {
+  if ((0, import_node_fs23.existsSync)(art)) {
     log.error(`solo init: topic already in flight: ${art}`);
     log.error("  run /consort:coda or pick a different topic");
     return 2;
@@ -17554,7 +17632,7 @@ async function initWith(tokens, d) {
     return 1;
   }
   const exec = soloExecDir(slug);
-  (0, import_node_fs22.mkdirSync)(exec, { recursive: true });
+  (0, import_node_fs23.mkdirSync)(exec, { recursive: true });
   atomicWrite((0, import_node_path18.join)(art, "topic.txt"), slug + "\n");
   atomicWrite((0, import_node_path18.join)(art, "topic-text.txt"), topicText);
   atomicWrite((0, import_node_path18.join)(art, "selected-provider.txt"), provider + "\n");
@@ -17623,22 +17701,22 @@ async function turnSendWith(topic, round, d) {
     return 1;
   }
   const stateFile = (0, import_node_path18.join)(exec, `turn-${round}.txt`);
-  if ((0, import_node_fs22.existsSync)(stateFile)) {
+  if ((0, import_node_fs23.existsSync)(stateFile)) {
     log.error(`solo turn-send: ${stateFile} already exists; rm to retry`);
     return 1;
   }
   let prompt;
   if (round === 1) {
-    const brief = (0, import_node_fs22.existsSync)((0, import_node_path18.join)(art, "task-brief.md")) ? (0, import_node_fs22.readFileSync)((0, import_node_path18.join)(art, "task-brief.md"), "utf8") : "";
+    const brief = (0, import_node_fs23.existsSync)((0, import_node_path18.join)(art, "task-brief.md")) ? (0, import_node_fs23.readFileSync)((0, import_node_path18.join)(art, "task-brief.md"), "utf8") : "";
     const branch = readField((0, import_node_path18.join)(exec, "branch.txt")) || `feat/solo-${topic}`;
     prompt = composeRound1Prompt(brief, branch);
   } else {
     const bundle = (0, import_node_path18.join)(exec, `fix-prompt-${round}.md`);
-    if (!(0, import_node_fs22.existsSync)(bundle)) {
+    if (!(0, import_node_fs23.existsSync)(bundle)) {
       log.error(`solo turn-send: fix bundle missing: ${bundle} (the directive must write it first)`);
       return 1;
     }
-    prompt = composeFixPrompt((0, import_node_fs22.readFileSync)(bundle, "utf8"), round);
+    prompt = composeFixPrompt((0, import_node_fs23.readFileSync)(bundle, "utf8"), round);
   }
   const promptFile = (0, import_node_path18.join)(exec, `turn-prompt-${round}.md`);
   atomicWrite(promptFile, prompt);
@@ -17654,7 +17732,7 @@ async function turnSendWith(topic, round, d) {
   return 0;
 }
 function readField(path6) {
-  return (0, import_node_fs22.existsSync)(path6) ? (0, import_node_fs22.readFileSync)(path6, "utf8").split("\n")[0].trim() : "";
+  return (0, import_node_fs23.existsSync)(path6) ? (0, import_node_fs23.readFileSync)(path6, "utf8").split("\n")[0].trim() : "";
 }
 async function turnWaitRun(rest) {
   const [topic, roundStr] = rest;
@@ -17677,11 +17755,11 @@ async function turnWaitWith(topic, round, d) {
     return 1;
   }
   const stateFile = (0, import_node_path18.join)(exec, `turn-${round}.txt`);
-  if (!(0, import_node_fs22.existsSync)(stateFile)) {
+  if (!(0, import_node_fs23.existsSync)(stateFile)) {
     log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`);
     return 1;
   }
-  const offset = parseOffset((0, import_node_fs22.readFileSync)(stateFile, "utf8"));
+  const offset = parseOffset((0, import_node_fs23.readFileSync)(stateFile, "utf8"));
   if (offset === null) {
     log.error(`solo turn-wait: OFFSET not set in ${stateFile}`);
     return 1;
@@ -17690,7 +17768,7 @@ async function turnWaitWith(topic, round, d) {
   const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], SOLO_TURN_TIMEOUT);
   const ts = classifyTurn(ev);
   if (ts === "question" && ev) atomicWrite((0, import_node_path18.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
-  (0, import_node_fs22.appendFileSync)(stateFile, `TS=${ts}
+  (0, import_node_fs23.appendFileSync)(stateFile, `TS=${ts}
 `);
   log.ok(`solo turn-wait: round=${round} TS=${ts}`);
   return 0;
@@ -17721,7 +17799,7 @@ async function finishWith(topic, r, hasGh) {
     log.ok(`solo finish: branch-only \u2014 kept ${branch}, restored ${startBranch}`);
     return 0;
   }
-  const brief = (0, import_node_fs22.existsSync)((0, import_node_path18.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs22.readFileSync)((0, import_node_path18.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
+  const brief = (0, import_node_fs23.existsSync)((0, import_node_path18.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs23.readFileSync)((0, import_node_path18.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
   const verify = readField((0, import_node_path18.join)(exec, "verify-result.txt"));
   const res = finishBranch(r, {
     branch,
@@ -17793,16 +17871,16 @@ duration=${duration}
   return 0;
 }
 function kvField(path6, key) {
-  if (!(0, import_node_fs22.existsSync)(path6)) return "";
+  if (!(0, import_node_fs23.existsSync)(path6)) return "";
   const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = (0, import_node_fs22.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
+  const m = (0, import_node_fs23.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
   return m ? m[1].trim() : "";
 }
-var import_node_fs22, import_node_path18, liveInitDeps, SOLO_TURN_TIMEOUT;
+var import_node_fs23, import_node_path18, liveInitDeps, SOLO_TURN_TIMEOUT;
 var init_solo2 = __esm({
   "src/commands/solo.ts"() {
     "use strict";
-    import_node_fs22 = require("node:fs");
+    import_node_fs23 = require("node:fs");
     import_node_path18 = require("node:path");
     init_log();
     init_args();
