@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { topicDir } from "../src/core/paths.js";
-import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs, detectTestCommand } from "../src/core/solo.js";
+import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs, detectTestCommand, renderSummary, renderResume } from "../src/core/solo.js";
 
 afterEach(() => { delete process.env.CONSORT_HOME; });
 
@@ -58,5 +58,41 @@ describe("detectTestCommand (precedence)", () => {
   });
   it("empty string when nothing detected", () => {
     expect(detectTestCommand(fresh())).toBe("");
+  });
+});
+
+const okFacts = {
+  topic: "auth", status: "ok" as const, started: "2026-05-29T06:00:00Z",
+  ended: "2026-05-29T06:05:00Z", duration: 300, provider: "codex", instrument: "violin",
+  branch: "feat/solo-auth", verify: "PASS (npm test)", diffStats: " 2 files changed, 9 insertions(+)",
+  archived: "/arch/violin-codex-...", targetCwd: "/proj", branchBase: "abc123",
+};
+
+describe("renderSummary", () => {
+  it("ok summary has frontmatter + Result/Where-to-look sections", () => {
+    const md = renderSummary(okFacts);
+    expect(md).toMatch(/^---\ncommand: solo\ntopic: auth\nstatus: ok\n/);
+    expect(md).toContain("duration_seconds: 300");
+    expect(md).toContain("- Provider: codex");
+    expect(md).toContain("- Branch: feat/solo-auth");
+    expect(md).toContain("- Verify: PASS (npm test)");
+    expect(md).toContain("git -C /proj checkout feat/solo-auth");
+  });
+  it("aborted summary carries the abort fields + RESUME pointer", () => {
+    const md = renderSummary({ ...okFacts, status: "aborted", ended: undefined, duration: undefined,
+      abortedPhase: "build", abortedGate: "part-turn-failed", abortedReason: "turn failed twice (TS=failed)" });
+    expect(md).toContain("status: aborted");
+    expect(md).toContain("aborted_phase: build");
+    expect(md).toContain("aborted_reason: turn failed twice (TS=failed)");
+    expect(md).toContain("RESUME.md");
+  });
+});
+
+describe("renderResume", () => {
+  it("points at the state dir + manual resume", () => {
+    const md = renderResume({ topic: "auth", branch: "feat/solo-auth", artDir: "/s/_solo", phase: "build", gate: "part-turn-failed" });
+    expect(md).toContain("# RESUME — auth");
+    expect(md).toContain("State dir: /s/_solo");
+    expect(md).toContain("re-run /consort:solo");
   });
 });

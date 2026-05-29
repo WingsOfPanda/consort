@@ -48,3 +48,82 @@ export function detectTestCommand(root: string): string {
   if ((existsSync(join(root, "pyproject.toml")) || existsSync(join(root, "setup.cfg"))) && existsSync(join(root, "tests"))) return "pytest";
   return "";
 }
+
+export interface SummaryFacts {
+  topic: string;
+  status: "ok" | "aborted";
+  started: string;
+  ended?: string;
+  duration?: number | string;
+  provider: string;
+  instrument: string;
+  branch: string;
+  verify: string;
+  diffStats: string;
+  archived: string;
+  targetCwd: string;
+  branchBase: string;
+  abortedPhase?: string;
+  abortedGate?: string;
+  abortedReason?: string;
+}
+
+export function renderSummary(f: SummaryFacts): string {
+  const head = [
+    "---",
+    "command: solo",
+    `topic: ${f.topic}`,
+    `status: ${f.status}`,
+    `started: ${f.started}`,
+  ];
+  if (f.status === "ok") {
+    head.push(`ended: ${f.ended ?? "unknown"}`, `duration_seconds: ${f.duration ?? 0}`, "---", "");
+    return [
+      ...head,
+      "## Result",
+      `- Provider: ${f.provider}`,
+      `- Instrument: ${f.instrument}`,
+      `- Branch: ${f.branch}`,
+      `- Verify: ${f.verify}`,
+      `- Diff: ${f.diffStats}`,
+      "",
+      "## Where to look",
+      `- Review the work: \`git -C ${f.targetCwd} checkout ${f.branch}\` (diff base: ${f.branchBase})`,
+      `- Archived state: ${f.archived}`,
+      "",
+    ].join("\n");
+  }
+  head.push(
+    `aborted_phase: ${f.abortedPhase ?? "unknown"}`,
+    `aborted_gate: ${f.abortedGate ?? "unknown"}`,
+    `aborted_reason: ${f.abortedReason ?? "unknown"}`,
+    "---",
+    "",
+  );
+  return [
+    ...head,
+    "## Why aborted",
+    `- ${f.abortedReason ?? "unknown"}`,
+    "",
+    "## RESUME instructions",
+    `- Read RESUME.md for the state pointer; re-run /consort:solo to retry.`,
+    "",
+  ].join("\n");
+}
+
+export interface ResumeFacts { topic: string; branch: string; artDir: string; phase: string; gate: string; }
+
+export function renderResume(f: ResumeFacts): string {
+  return [
+    `# RESUME — ${f.topic} (aborted at ${f.phase}.${f.gate})`,
+    "",
+    "## State pointers",
+    `- State dir: ${f.artDir}`,
+    `- Topic: ${f.topic}`,
+    `- Branch: ${f.branch}`,
+    "",
+    "## Manual resume",
+    `- Inspect ${f.artDir}/execute/ for the part's partial work, then re-run /consort:solo.`,
+    "",
+  ].join("\n");
+}
