@@ -33,6 +33,20 @@ export function sendKeysLiteralArgs(pane: string, line: string): string[] {
 export function sendKeysEnterArgs(pane: string): string[] {
   return ["send-keys", "-t", pane, "Enter"];
 }
+
+// Pane-border config so the per-pane @cs_label_fmt (stamped by paneLabelSet) actually renders on the
+// pane border. Without it the border shows the program's own pane title (the raw TUI name). Rebranded
+// port of the prior bash plugin's tmux.conf convention to the @cs_ user-options; falls back to #{pane_title}
+// for panes with no @cs_ label (e.g. the conductor). The `#,` is an escaped comma inside #[...].
+export function paneBorderArgs(): string[][] {
+  return [
+    ["set-option", "-g", "pane-border-status", "top"],
+    ["set-option", "-g", "pane-border-format",
+      " #{?@cs_label_fmt,#{@cs_label_fmt},#[fg=#{?@cs_color,#{@cs_color},default}#,bold]#{?@cs_label,#{@cs_label},#{pane_title}}#[default]} "],
+    ["set-hook", "-g", "after-select-pane",
+      'set-option -g pane-active-border-style "fg=#{?@cs_color,#{@cs_color},green}"'],
+  ];
+}
 export function wrapLaunch(launch: string, hasBashrc: boolean = existsSync(join(homedir(), ".bashrc"))): string {
   return hasBashrc ? `bash -ic 'exec ${launch}'` : launch;
 }
@@ -56,6 +70,12 @@ export const respawn = async (pane: string, launch: string, cwd?: string): Promi
 };
 
 export async function setOption(pane: string, opt: string, val: string): Promise<void> { await tmux(setOptionArgs(pane, opt, val)); }
+
+/** Apply the orchestra pane-border config (idempotent `set -g`) so part labels render on the
+ *  border instead of the raw TUI title. Called from spawn; tolerant of tmux errors. */
+export async function ensurePaneBorders(): Promise<void> {
+  for (const a of paneBorderArgs()) { try { await tmux(a); } catch { /* tolerate */ } }
+}
 
 export async function paneAlive(pane: string): Promise<boolean> {
   const { stdout } = await execa("tmux", ["list-panes", "-a", "-F", "#{pane_id}"]);

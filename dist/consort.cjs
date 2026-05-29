@@ -16321,6 +16321,23 @@ function sendKeysLiteralArgs(pane, line) {
 function sendKeysEnterArgs(pane) {
   return ["send-keys", "-t", pane, "Enter"];
 }
+function paneBorderArgs() {
+  return [
+    ["set-option", "-g", "pane-border-status", "top"],
+    [
+      "set-option",
+      "-g",
+      "pane-border-format",
+      " #{?@cs_label_fmt,#{@cs_label_fmt},#[fg=#{?@cs_color,#{@cs_color},default}#,bold]#{?@cs_label,#{@cs_label},#{pane_title}}#[default]} "
+    ],
+    [
+      "set-hook",
+      "-g",
+      "after-select-pane",
+      'set-option -g pane-active-border-style "fg=#{?@cs_color,#{@cs_color},green}"'
+    ]
+  ];
+}
 function wrapLaunch(launch, hasBashrc = (0, import_node_fs13.existsSync)((0, import_node_path11.join)((0, import_node_os5.homedir)(), ".bashrc"))) {
   return hasBashrc ? `bash -ic 'exec ${launch}'` : launch;
 }
@@ -16330,6 +16347,14 @@ function sentinelCommand(labelFmt2) {
 async function tmux(args) {
   const { stdout } = await execa("tmux", args);
   return stdout.trim();
+}
+async function ensurePaneBorders() {
+  for (const a2 of paneBorderArgs()) {
+    try {
+      await tmux(a2);
+    } catch {
+    }
+  }
 }
 async function paneAlive(pane) {
   const { stdout } = await execa("tmux", ["list-panes", "-a", "-F", "#{pane_id}"]);
@@ -16567,6 +16592,7 @@ async function run(args) {
     log.error("tmux >= 3.0 required");
     return 1;
   }
+  await ensurePaneBorders();
   if (instrument === "random") {
     const pick = pickRandomInstrument(topic);
     if (!pick) {

@@ -8,7 +8,7 @@ import { stateInit, stateArchive } from "../core/archive.js";
 import { identityWrite, identityPath, inboxWrite, inboxPath, paneMetaWrite, outboxWait } from "../core/ipc.js";
 import { pickRandomInstrument, instrumentInUse, formatCollisionError } from "../core/instruments.js";
 import { instrumentBinary, instrumentDefaultMode, instrumentModeArgs, instrumentReadyTimeout, instrumentBootstrapSleep } from "../core/contracts.js";
-import { wrapLaunch, splitRight, splitDown, respawn, paneAlive, paneLabelSet, paneSend, killNow, capturePane } from "../core/tmux.js";
+import { wrapLaunch, splitRight, splitDown, respawn, paneAlive, paneLabelSet, paneSend, killNow, capturePane, ensurePaneBorders } from "../core/tmux.js";
 import { labelFor } from "../core/colors.js";
 import { captureFailure } from "../core/forensics.js";
 
@@ -38,6 +38,7 @@ export async function run(args: string[]): Promise<number> {
   if (!inTmuxSession()) { log.error("must run inside a tmux session"); return 1; }
   if (!haveCmd("tmux")) { log.error("tmux not on PATH"); return 1; }
   if (!tmuxVersionOk()) { log.error("tmux >= 3.0 required"); return 1; }
+  await ensurePaneBorders(); // render @cs_ part labels on pane borders (not the raw TUI title)
 
   if (instrument === "random") {
     const pick = pickRandomInstrument(topic);

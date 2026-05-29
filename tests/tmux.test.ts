@@ -17,6 +17,19 @@ describe("tmux arg builders", () => {
       ["respawn-pane", "-k", "-t", "%3", "-c", "/repo", "LAUNCH"]);
     expect(T.respawnArgs("%3", "LAUNCH")).toEqual(["respawn-pane", "-k", "-t", "%3", "LAUNCH"]);
   });
+  it("paneBorderArgs: status top + @cs_-aware format + active-border hook (no @cw_)", () => {
+    const a = T.paneBorderArgs();
+    expect(a[0]).toEqual(["set-option", "-g", "pane-border-status", "top"]);
+    expect(a[1][0]).toBe("set-option");
+    expect(a[1]).toContain("pane-border-format");
+    expect(a[1][3]).toContain("#{@cs_label_fmt}");
+    expect(a[1][3]).toContain("#{pane_title}"); // fallback for unlabeled panes
+    expect(a[2][0]).toBe("set-hook");
+    expect(a[2][1]).toBe("-g");
+    expect(a[2][2]).toBe("after-select-pane");
+    // rebrand: never reference the clone-wars @cw_ keys
+    expect(JSON.stringify(a)).not.toContain("@cw_");
+  });
   it("wrapLaunch: bashrc wrap when present", () => {
     expect(T.wrapLaunch("codex --foo", true)).toBe("bash -ic 'exec codex --foo'");
     expect(T.wrapLaunch("codex --foo", false)).toBe("codex --foo");
