@@ -1,5 +1,6 @@
 // src/core/score.ts
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { topicDir } from "./paths.js";
 import { kvParse } from "../args.js";
 import type { DocMode } from "./scoreDoc.js";
@@ -126,4 +127,23 @@ export function lastTag(text: string, tag: string): string | null {
   const re = new RegExp(`^${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(.*)$`, "gm");
   const ms = [...text.matchAll(re)];
   return ms.length ? ms[ms.length - 1][1].trim() : null;
+}
+
+/** `_score/drilldowns/_scratch` — per-part drill output, kept out of design-doc/ so the doc dir stays clean. */
+export function scoreDrilldownScratchDir(topic: string, opts?: { home?: string; cwd?: string }): string {
+  return join(scoreArtDir(topic, opts), "drilldowns", "_scratch");
+}
+
+/** Collision-resolved drill output path (port of consult-drilldown.sh resolve_out_path). Strips any
+ *  prior `-N` before re-appending `-2..-99`, so re-runs don't compound; throws past 99. */
+export function resolveDrilldownPath(scratchDir: string, section: string, instrument: string, subproject?: string): string {
+  const slug = section.toLowerCase().replace(/ /g, "-");
+  const base = `drilldown-${slug}${subproject ? `-${subproject}` : ""}-${instrument}`;
+  let cand = base;
+  let n = 2;
+  while (existsSync(join(scratchDir, `${cand}.md`))) {
+    cand = `${cand.replace(/-[0-9]+$/, "")}-${n}`;
+    if (++n > 100) throw new Error("resolveDrilldownPath: too many same-section drilldown collisions");
+  }
+  return join(scratchDir, `${cand}.md`);
 }

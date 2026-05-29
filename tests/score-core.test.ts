@@ -1,7 +1,9 @@
 // tests/score-core.test.ts
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode, verifyScopeFiles, lastTag, writeTargetsTsv } from "../src/core/score.js";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode, verifyScopeFiles, lastTag, writeTargetsTsv, scoreDrilldownScratchDir, resolveDrilldownPath } from "../src/core/score.js";
 
 describe("score paths", () => {
   it("scoreArtDir / scoreDraftDir hang off the topic dir under _score", () => {
@@ -89,5 +91,22 @@ describe("writeTargetsTsv", () => {
     expect(tsv).toContain("# generated 2026-05-29T00:00:00Z by /consort:score");
     expect(tsv.trim().split("\n").filter((l) => !l.startsWith("#"))).toEqual(["api\t/r/api/CLAUDE.md", "web\t/r/web/AGENTS.md"]);
     expect(writeTargetsTsv([], "2026-05-29T00:00:00Z")).toBe("# generated 2026-05-29T00:00:00Z by /consort:score\n");
+  });
+});
+
+describe("drilldown paths", () => {
+  it("scratch dir hangs off _score/drilldowns/_scratch", () => {
+    process.env.CONSORT_HOME = "/R";
+    expect(scoreDrilldownScratchDir("t").endsWith(join("t", "_score", "drilldowns", "_scratch"))).toBe(true);
+  });
+  it("resolveDrilldownPath: plain, then -2/-3 collisions (no compounding), subproject infix", () => {
+    const sc = mkdtempSync(join(tmpdir(), "dd-")); mkdirSync(sc, { recursive: true });
+    const p1 = resolveDrilldownPath(sc, "the section", "viola");
+    expect(p1.endsWith(join(sc, "drilldown-the-section-viola.md").slice(-40)) || p1.endsWith("drilldown-the-section-viola.md")).toBe(true);
+    writeFileSync(p1, "x");
+    const p2 = resolveDrilldownPath(sc, "the section", "viola"); expect(p2.endsWith("drilldown-the-section-viola-2.md")).toBe(true);
+    writeFileSync(p2, "x");
+    const p3 = resolveDrilldownPath(sc, "the section", "viola"); expect(p3.endsWith("drilldown-the-section-viola-3.md")).toBe(true);
+    expect(resolveDrilldownPath(sc, "arch", "cello", "api").endsWith("drilldown-arch-api-cello.md")).toBe(true);
   });
 });
