@@ -876,7 +876,7 @@ Behavior (from `lib/state.sh` + `lib/ipc.sh`):
 
 ```ts
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as A from "../src/core/archive.js";
@@ -945,7 +945,7 @@ describe("archive", () => {
 - [ ] **Step 3: Implement `src/core/archive.ts`**
 
 ```ts
-import { existsSync, mkdirSync, writeFileSync, renameSync, rmSync, readdirSync, statSync, readFileSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, renameSync, rmSync, readdirSync, readFileSync, openSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { partDir, topicDir, globalRoot, repoHash } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
