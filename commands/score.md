@@ -292,9 +292,29 @@ success-criteria** (single-sub uses the 6 base sections + the singular header). 
   Re-assemble after each fix; loop until rc 0 (bound to a few attempts per section, then surface the
   remaining ISSUEs and stop).
 
-> **Phase E ends at the assembled, audit-passing doc (single-repo OR multi-repo).** Drilldown,
-> forensics, `coda` teardown, and the `present` handoff land in **Phase F**. The parts are still live —
-> `/consort:coda <instrument> <TOPIC>` each to tear them down (Phase F automates it).
+## Stage 13 — drilldown (optional; parts still live)
+
+(Fast-path: no parts → skip Stages 13–15 entirely; go to Stage 16.) Derive the design-doc path
+(`$ART/design-doc/<date>-<TOPIC>-design.md`, also printed by `assemble`; missing → tell the user and
+skip drilldown). **AskUserQuestion**: "Any aspect to drill deeper before tearing down? (parts still
+live)" — **Yes, drill** / **No, proceed to teardown**. While Yes, per round:
+1. Free-form: **drill subject** (a section/topic) → SECTION; **focus angle** (e.g. "the tradeoffs feel
+   hand-wavy") → FOCUS.
+2. **AskUserQuestion which part(s)** — an N-aware option set from `$ART/roster.txt`: N=2 → the 2 parts +
+   "both (parallel)"; N=3 → the 3 parts + 3 pairs + "all three (parallel)".
+3. Dispatch (the CLI caps at 2 parts per call):
+   - one or two parts → one call: `$CS score drilldown <TOPIC> "<SECTION>" "$ART/drilldowns" "<FOCUS>"
+     <DESIGN_DOC> <i1> <m1> [<i2> <m2>]`.
+   - **all three** → **two parallel** `$CS score drilldown …` Bash calls in one message (a K=2 call +
+     a K=1 call) sharing `<TOPIC>` + `"$ART/drilldowns"`. Success if ≥1 call returns rc 0.
+   - multi-repo: append the target `<subproject>` slug as the final arg to scope the drill; the output
+     file then carries the `-<subproject>-` infix.
+4. **Read back** `$ART/drilldowns/_scratch/drilldown-<section-slug>-*.md` (tolerate an optional
+   `-<subproject>-` infix) and summarize. On **rc 1** (all empty/timeout) → AskUserQuestion **Retry /
+   Different aspect / Skip**. Then "Drill another aspect?" — loop or proceed.
+
+The drill files stay in `_score/drilldowns/_scratch/` (out of `design-doc/`) and ride along into the
+archive (Stage 15). Re-drilling the same section auto-suffixes `-2`, `-3`, ….
 
 ## Notes
 
