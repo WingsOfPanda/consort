@@ -51,8 +51,12 @@ export function adjudicate(input: AdjudicateInput): string {
   return input.parts.length === 2 ? adjudicateN2(input) : adjudicateNge3(input);
 }
 
+// n2 ## Adjudicated comment (byte-faithful to consult.sh:547, rebranded).
 const YODA_PENDING = "<!-- Maestro: read each cited source for every \"PENDING\" line below; rewrite the prefix to CONFIRMED, REFUTED, or move to ## Contested. synthesize refuses to finalize while any PENDING remains. -->";
 const YODA_CONTESTED = "<!-- Maestro: move CONTESTED items here from Adjudicated. Items in this section ship in the design-doc as unresolved. -->";
+// nge3 ## - PENDING: comment (byte-faithful to consult.sh:753, rebranded) — note it
+// lacks the "to CONFIRMED, REFUTED," clause that the n2 comment carries.
+const PENDING_NOTE_NGE3 = "<!-- Maestro: read each cited source for every \"PENDING\" line below; rewrite the prefix or move to ## Contested. synthesize refuses to finalize while any PENDING remains. -->";
 
 function adjudicateN2(input: AdjudicateInput): string {
   const [p0, p1] = input.parts;
@@ -131,6 +135,6 @@ function adjudicateNge3(input: AdjudicateInput): string {
     { header: "## Cross-verified", acc: cross },
     { header: "## Contested", acc: contested },
     { header: "## Refuted", acc: refuted },
-    { header: "## - PENDING:", acc: pending, comment: YODA_PENDING },
+    { header: "## - PENDING:", acc: pending, comment: PENDING_NOTE_NGE3 },
   ]);
 }

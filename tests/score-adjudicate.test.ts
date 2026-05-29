@@ -44,6 +44,8 @@ describe("adjudicate N=2", () => {
     expect(out).toContain("- PENDING: [c.ts:1] cody-only thing — CODY DISPUTE: cody disputes\n");
     expect(out).toContain("Maestro");        // the comment rebrand
     expect(out).not.toContain("Master Yoda");
+    // n2 Adjudicated comment carries the "to CONFIRMED, REFUTED," clause (consult.sh:547).
+    expect(out).toContain("rewrite the prefix to CONFIRMED, REFUTED, or move to ## Contested");
     expect(out).toContain("## Contested\n");
     expect(out).toContain("## Not-verified\n");
   });
@@ -60,23 +62,27 @@ describe("adjudicate N=2", () => {
 });
 
 describe("adjudicate N=3 (_classify)", () => {
-  function n3(ownerBucket: string, ownersCsv: string, verifierVerdicts: Record<string, string>): string {
+  function n3(ownerBucket: string, verifierVerdicts: Record<string, string>): string {
     const parts = [{ commander: "rex", provider: "codex" }, { commander: "cody", provider: "claude" }, { commander: "bly", provider: "agy" }];
     const verify: Record<string, string> = {};
     for (const [cmdr, tag] of Object.entries(verifierVerdicts)) verify[cmdr] = verdictsMd(`1. ${tag} [x.ts:1] the claim`);
     return adjudicate({ parts, verify, vs: {}, buckets: { [ownerBucket]: "[x.ts:1] the claim\n" } });
   }
   it("single-owner, all verifiers AGREE → Cross-verified", () => {
-    expect(n3("rex_only_items.txt", "rex", { cody: "AGREE", bly: "AGREE" })).toContain("## Cross-verified\n- [x.ts:1] the claim");
+    expect(n3("rex_only_items.txt", { cody: "AGREE", bly: "AGREE" })).toContain("## Cross-verified\n- [x.ts:1] the claim");
   });
   it("single-owner, all verifiers DISPUTE → Refuted", () => {
-    expect(n3("rex_only_items.txt", "rex", { cody: "DISPUTE", bly: "DISPUTE" })).toContain("## Refuted\n- [x.ts:1] the claim");
+    expect(n3("rex_only_items.txt", { cody: "DISPUTE", bly: "DISPUTE" })).toContain("## Refuted\n- [x.ts:1] the claim");
   });
   it("single-owner, all verifiers UNCERTAIN → Contested", () => {
-    expect(n3("rex_only_items.txt", "rex", { cody: "UNCERTAIN", bly: "UNCERTAIN" })).toContain("## Contested\n- [x.ts:1] the claim");
+    expect(n3("rex_only_items.txt", { cody: "UNCERTAIN", bly: "UNCERTAIN" })).toContain("## Contested\n- [x.ts:1] the claim");
   });
   it("mixed UNCERTAIN + AGREE → PENDING", () => {
-    expect(n3("rex_only_items.txt", "rex", { cody: "AGREE", bly: "UNCERTAIN" })).toMatch(/## - PENDING:[\s\S]*- \[x\.ts:1\] the claim/);
+    const out = n3("rex_only_items.txt", { cody: "AGREE", bly: "UNCERTAIN" });
+    expect(out).toMatch(/## - PENDING:[\s\S]*- \[x\.ts:1\] the claim/);
+    // nge3 PENDING comment lacks the "to CONFIRMED, REFUTED," clause (consult.sh:753).
+    expect(out).toContain("rewrite the prefix or move to ## Contested");
+    expect(out).not.toContain("to CONFIRMED, REFUTED");
   });
   it("consensus.txt lines → Consensus section with [all] srcset", () => {
     const parts = [{ commander: "rex", provider: "codex" }, { commander: "cody", provider: "claude" }, { commander: "bly", provider: "agy" }];
