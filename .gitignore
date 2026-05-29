@@ -2,3 +2,4 @@ node_modules/
 .codegraph/
 *.tmp
 .consort/
+.antigravitycli/
