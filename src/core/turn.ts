@@ -1,4 +1,5 @@
 // src/core/turn.ts
+import type { OutboxEvent } from "./ipc.js";
 
 const BRANCH_DISCIPLINE =
   "BRANCH DISCIPLINE (hard rule):\n" +
@@ -36,6 +37,22 @@ export function composeRound1Prompt(briefText: string, branch: string): string {
     BRANCH_DISCIPLINE,
     BLOCKERS,
   ].join("\n");
+}
+
+export type TurnStatus = "ok" | "failed" | "question" | "timeout";
+
+/** done → ok; question → question; null (no event before timeout) → timeout; everything else (error, unknown) → failed. */
+export function classifyTurn(ev: OutboxEvent | null): TurnStatus {
+  if (!ev) return "timeout";
+  if (ev.event === "done") return "ok";
+  if (ev.event === "question") return "question";
+  return "failed";
+}
+
+/** Read the OFFSET=<n> line from a turn state file's contents. null if absent/unparseable. */
+export function parseOffset(stateText: string): number | null {
+  const m = stateText.match(/^OFFSET=(\d+)\s*$/m);
+  return m ? Number(m[1]) : null;
 }
 
 /** Fix-round prompt body (round >= 2). Same fence note as composeRound1Prompt. */
