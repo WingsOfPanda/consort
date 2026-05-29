@@ -208,3 +208,54 @@ assemble → audit-PASS, and the audit-FAIL → `ISSUE=` → re-draft → PASS r
 - Per-task two-stage review (spec compliance → code quality) across Phases A + B; two
   Approved-with-minors findings fixed (the plan-test correction + the `--targets` stop). Escalation,
   the interactive design walk, multi-repo + execution-DAG, and drilldown remain Phases C–F.
+
+# Consort `score` — Phase C (escalation: spawn-all → research → diff) Dogfood Result
+
+**Date:** 2026-05-29 · **Branch:** `feat/score` · **Result:** PASS (full pipeline end-to-end with two
+live model parts; two latent foundation tmux bugs surfaced + fixed)
+
+## Run
+
+- Isolated `CONSORT_HOME=/tmp/consort-dogfood-phaseC`, `CLAUDE_PLUGIN_ROOT=$PWD`, inside tmux.
+  Seeded `providers-active.txt` with two `consult_validated` providers (codex, claude).
+- Topic: `consort outbox wait protocol` → slug `consort-outbox-wait`, `N=2`, parts assigned
+  **timpani:codex** + **violin:claude** (the conductor drove the CLI subcommands the directive runs).
+- `score init --ensemble` → rc 0; printed `TOPIC/N/ENSEMBLE/MODE/ART/PART=` (the new `ART=` line).
+- **Stage 3** `score spawn-all consort-outbox-wait` → rc 0, `2/2 parts ready`; `spawn-results.tsv`
+  written (`<instrument>\t<provider>\t0\t`). Both parts bootstrapped into preflight panes and emitted
+  `ready`.
+- **Stage 4** `score research-send` ×2 → each wrote `research-<inst>.txt` (`OFFSET=85`), the composed
+  findings prompt, and nudged the part.
+- **Stage 5** two background `score research-wait` → both returned `FS=ok` with `.done` sentinels; no
+  question fired this run. findings: timpani 12 cited claims, violin 16 cited claims.
+- **Stage 6** `score diff consort-outbox-wait` → rc 0; `diff.md` with `## Agreed` / `## Timpani-only`
+  (6) / `## Violin-only` (10) + the two `*_only_items.txt` bucket files.
+
+## Findings / fixes surfaced
+
+- **`respawn()` returned an empty pane id (foundation bug, fixed `core/tmux.ts`).** `respawn-pane -t
+  <pane>` reuses the same pane and prints nothing, so `respawn` returned `""`. Every caller
+  (`paneMetaWrite`/`paneLabelSet`/`paneSend`) then used a blank pane id: `pane.json` stored
+  `pane_id=""` (→ `research-send` failed with "pane.json missing"), and under `spawn-all`'s concurrent
+  `Promise.all` both identity nudges mis-routed to tmux's *active* pane (user observed both nudges
+  hitting the claude pane, codex none). The `--target-pane` path is new-to-Phase-C (`solo` never used
+  it), so this latent foundation bug surfaced on score's first live `spawn-all`. Fix: `respawn` returns
+  the target pane id. Re-run confirmed each pane gets its own identity nudge + correct `pane.json`.
+- **Pane labels never rendered (foundation gap, fixed `core/tmux.ts` + `spawn.ts`).** `spawn` stamped
+  `@cs_label`/`@cs_color`/`@cs_label_fmt` per pane but nothing set `pane-border-status`/`-format` to
+  display them, so panes showed the raw TUI title (`consort` / the claude review prompt). A user's
+  leftover tmux.conf reading the old `@cw_label_fmt` key compounded it (consort writes `@cs_`, so the
+  border fell back to `#{pane_title}`). Fix: `spawn` now sets a `pane-border-format` reading
+  `@cs_label_fmt` (rebranded port of the bash predecessor's convention; falls back to `pane_title` for
+  unlabeled panes like the conductor). Label format unchanged: `section-instrument:model:topic`,
+  per-section colored. Applied live → the running panes immediately showed their colored labels.
+
+## Verification context
+
+- 285 vitest unit tests green (added `score-turn` 16, `score-spawn` 5, `score-escalation` 15, the
+  `score-init` `ART=` case, the `tmux paneBorderArgs` case); `tsc --noEmit` + eslint + stale-token
+  gate clean; `dist/consort.cjs` rebuilt + committed.
+- The `FS=` research state machine, the offset-capture/bump discipline, the spawn-batch rc 0/1/2
+  contract, and the N-way diff bucketing all exercised with real codex + claude parts. Cross-verify →
+  adjudicate → design walk → audit (Phase D), multi-repo + execution-DAG (Phase E), and
+  drilldown/forensics/teardown/present (Phase F) remain. Both parts torn down via `coda` (archived).
