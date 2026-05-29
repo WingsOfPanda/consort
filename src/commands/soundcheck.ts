@@ -30,7 +30,16 @@ export function opencodePermissionCheck(cfgPath?: string): PermissionResult {
 
 const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 
-export async function run(_args: string[]): Promise<number> {
+export async function run(args: string[]): Promise<number> {
+  if (args[0] === "roster-plan") return rosterPlan();
+  if (args[0] === "roster-set") return rosterSet(args.slice(1));
+  return healthCheck();
+}
+
+function rosterPlan(): number { return 0; }
+function rosterSet(_providers: string[]): number { return 0; }
+
+function healthCheck(): number {
   let fail = 0, warn = 0, ok = 0, total = 0;
   const root = globalRoot();
   try { mkdirSync(root, { recursive: true }); } catch { /* writable check below reports it */ }
