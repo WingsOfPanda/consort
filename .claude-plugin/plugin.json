@@ -1,0 +1,15 @@
+{
+  "name": "consort",
+  "version": "0.1.0",
+  "description": "Multi-model tmux pane orchestration for Claude Code — spawn codex/claude/agy/opencode TUIs as attachable parts",
+  "author": { "name": "WingsOfPanda", "email": "WingsOfPanda@users.noreply.github.com" },
+  "homepage": "https://github.com/WingsOfPanda/consort",
+  "repository": "https://github.com/WingsOfPanda/consort",
+  "license": "MIT",
+  "keywords": ["claude-code", "plugin", "multi-agent", "orchestration", "tmux", "codex"],
+  "hooks": {
+    "UserPromptSubmit": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/consort.js hook user-prompt-submit" } ] }
+    ]
+  }
+}

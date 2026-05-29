@@ -1,0 +1,43 @@
+# config/instruments.yaml — curated instrument-name pool; user-editable.
+# `spawn random <model> <topic>` picks an unused instrument from this pool.
+# Names are matched case-insensitively; conventionally lowercase at use site.
+# Grouping by section is documentation only; section membership lives in core/colors.ts.
+instruments:
+  # strings
+  - violin
+  - viola
+  - cello
+  - contrabass
+  - harp
+  # woodwinds
+  - flute
+  - piccolo
+  - oboe
+  - clarinet
+  - bassoon
+  - recorder
+  # brass
+  - horn
+  - trumpet
+  - trombone
+  - tuba
+  - cornet
+  # percussion
+  - timpani
+  - celesta
+  - vibraphone
+  - marimba
+  - xylophone
+  - glockenspiel
+  # keys
+  - piano
+  - organ
+  - harpsichord
+  # early
+  - lute
+  - theorbo
+  - viol
+  - sackbut
+  - shawm
+  - crumhorn
+  - cittern

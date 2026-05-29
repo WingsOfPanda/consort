@@ -1,0 +1,79 @@
+# config/contracts.yaml — shipped defaults; copied to $CONSORT_HOME on first soundcheck run.
+# Each provider row has:
+#   binary:           CLI executable name (must be on PATH)
+#   modes:            map of mode-name -> args list passed to the CLI
+#                     two modes are reserved: 'full' (yolo/bypass) and 'read-only'
+#   default_mode:     mode used by consort spawn when --mode is omitted
+#   ready_timeout_s:  how long consort spawn waits for the part's "ready"
+#                     event in outbox.jsonl before giving up
+#
+# Modes that have no native equivalent on a given provider are shipped as best-effort
+# (agy approximates read-only via --sandbox; claude approximates it via
+# --permission-mode plan).
+
+codex:
+  binary: codex
+  consult_validated: true
+  modes:
+    full:      [--dangerously-bypass-approvals-and-sandbox]
+    read-only: [--sandbox, read-only]
+  default_mode: full
+  ready_timeout_s: 90
+  # bootstrap_sleep_s bumped 8 → 20 to absorb codex's cold-start node-modules
+  # + auth-handshake. Earlier 8s tripped a race where spawn.sh's identity-read
+  # nudge arrived before codex was draining its TTY, leading to silent buffer
+  # drops + ready-timeout. Warm starts are unaffected (the sleep is a floor
+  # before the nudge fires). See commands/consult.md Step 1 spawn-rollback
+  # for the directive-side auto-retry-once that complements this change.
+  bootstrap_sleep_s: 20
+
+agy:
+  binary: agy
+  consult_validated: true       # v0.58.0 T10: flipped after in-session dogfood (T7 N=1 fast-path PASS in 57s; T8 N=2 cross-verify PASS in 30s)
+  modes:
+    full:      [--dangerously-skip-permissions]
+    read-only: [--sandbox]                       # best-effort; agy --sandbox restricts terminal but isn't true read-only
+  default_mode: full
+  ready_timeout_s: 30
+  # v0.61.2: bumped 8 → 20 (matching codex). agy displays an
+  # eligibility-check screen at startup; with 8s the identity
+  # keystrokes were sometimes sent BEFORE the REPL was accepting input
+  # and got swallowed by the screen-transition, causing the trooper
+  # to time out without ever processing identity.md (empty outbox,
+  # visible `>` prompt at capture). Verified by the bly-agy
+  # 20260524T012248Z FAILED archive: pane.json registered, outbox.jsonl
+  # empty, scrollback showed REPL prompt reached but no injected text.
+  bootstrap_sleep_s: 20
+
+claude:
+  binary: claude
+  consult_validated: true
+  modes:
+    full:      [--permission-mode, auto]
+    read-only: [--permission-mode, plan]     # best-effort; plan mode is read-only-ish
+  default_mode: full
+  ready_timeout_s: 60
+  bootstrap_sleep_s: 12
+
+opencode:
+  binary: opencode
+  consult_validated: true
+  modes:
+    # opencode has no permission flag; full and read-only use the same row.
+    full:      [-m, deepseek/deepseek-v4-pro]
+    read-only: [-m, deepseek/deepseek-v4-pro]
+  default_mode: full
+  # ready_timeout_s: pre-tracer-measurement estimate; 4x bootstrap leaves margin.
+  ready_timeout_s: 60
+  # bootstrap_sleep_s: matches tracer scaffold; conservative initial value.
+  bootstrap_sleep_s: 15
+  # v0.35.0: DeepSeek V4 Pro is wall-clock slower than codex/claude; multiply
+  # per-kind consult timeouts by this factor before the liveness probe kicks in.
+  # Closes the false-FS=timeout symptom hit during consort score when
+  # a part recorded timeout while findings.md was 18 KB and the pane was
+  # visibly working. See the part-liveness design notes for the full design.
+  timeout_multiplier: 2.5
+
+consult:
+  research_timeout_s: 600   # 10 min
+  verify_timeout_s:   300   # 5 min
