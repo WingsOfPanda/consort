@@ -321,8 +321,8 @@ function haveCmd(name) {
     return false;
   }
 }
-function tmuxVersionString(run9) {
-  if (run9) return run9();
+function tmuxVersionString(run10) {
+  if (run10) return run10();
   if (!haveCmd("tmux")) return null;
   try {
     return (0, import_node_child_process2.execFileSync)("tmux", ["-V"], { encoding: "utf8" }).trim();
@@ -376,6 +376,9 @@ var init_atomic = __esm({
 // src/core/archive.ts
 function archiveTs(now = /* @__PURE__ */ new Date()) {
   return now.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "").replace(/Z$/, "Z");
+}
+function isoUtc(now = /* @__PURE__ */ new Date()) {
+  return now.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 function stateInit(instrument, model, topic) {
   const dir = partDir(instrument, model, topic);
@@ -17229,12 +17232,602 @@ var init_hook = __esm({
   }
 });
 
+// src/core/solo.ts
+function soloArtDir(topic) {
+  return (0, import_node_path17.join)(topicDir(topic), "_solo");
+}
+function soloExecDir(topic) {
+  return (0, import_node_path17.join)(soloArtDir(topic), "execute");
+}
+function deriveSlug(text) {
+  const s = text.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, 20).replace(/-+$/, "");
+  return s;
+}
+function parseSoloArgs(tokens) {
+  let provider;
+  let finish = false;
+  const text = [];
+  for (let i2 = 0; i2 < tokens.length; i2++) {
+    const t = tokens[i2];
+    if (t === "--finish") {
+      finish = true;
+      continue;
+    }
+    if (t === "--provider") {
+      const v = tokens[i2 + 1];
+      if (v && !v.startsWith("--")) {
+        provider = v;
+        i2++;
+      }
+      continue;
+    }
+    if (t.startsWith("--provider=")) {
+      provider = t.slice("--provider=".length);
+      continue;
+    }
+    text.push(t);
+  }
+  return { topicText: text.join(" ").trim(), provider, finish };
+}
+function detectTestCommand(root) {
+  if ((0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "tests", "run.sh"))) return "bash tests/run.sh";
+  const pkg = (0, import_node_path17.join)(root, "package.json");
+  if ((0, import_node_fs21.existsSync)(pkg)) {
+    try {
+      if (JSON.parse((0, import_node_fs21.readFileSync)(pkg, "utf8"))?.scripts?.test) return "npm test";
+    } catch {
+    }
+  }
+  const mk = (0, import_node_path17.join)(root, "Makefile");
+  if ((0, import_node_fs21.existsSync)(mk)) {
+    try {
+      if (/^test:/m.test((0, import_node_fs21.readFileSync)(mk, "utf8"))) return "make test";
+    } catch {
+    }
+  }
+  if (((0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "pyproject.toml")) || (0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "setup.cfg"))) && (0, import_node_fs21.existsSync)((0, import_node_path17.join)(root, "tests"))) return "pytest";
+  return "";
+}
+function renderSummary(f) {
+  const head = [
+    "---",
+    "command: solo",
+    `topic: ${f.topic}`,
+    `status: ${f.status}`,
+    `started: ${f.started}`
+  ];
+  if (f.status === "ok") {
+    head.push(`ended: ${f.ended ?? "unknown"}`, `duration_seconds: ${f.duration ?? 0}`, "---", "");
+    return [
+      ...head,
+      "## Result",
+      `- Provider: ${f.provider}`,
+      `- Instrument: ${f.instrument}`,
+      `- Branch: ${f.branch}`,
+      `- Verify: ${f.verify}`,
+      `- Diff: ${f.diffStats}`,
+      "",
+      "## Where to look",
+      `- Review the work: \`git -C ${f.targetCwd} checkout ${f.branch}\` (diff base: ${f.branchBase})`,
+      `- Archived state: ${f.archived}`,
+      ""
+    ].join("\n");
+  }
+  head.push(
+    `aborted_phase: ${f.abortedPhase ?? "unknown"}`,
+    `aborted_gate: ${f.abortedGate ?? "unknown"}`,
+    `aborted_reason: ${f.abortedReason ?? "unknown"}`,
+    "---",
+    ""
+  );
+  return [
+    ...head,
+    "## Why aborted",
+    `- ${f.abortedReason ?? "unknown"}`,
+    "",
+    "## RESUME instructions",
+    `- Read RESUME.md for the state pointer; re-run /consort:solo to retry.`,
+    ""
+  ].join("\n");
+}
+function renderResume(f) {
+  return [
+    `# RESUME \u2014 ${f.topic} (aborted at ${f.phase}.${f.gate})`,
+    "",
+    "## State pointers",
+    `- State dir: ${f.artDir}`,
+    `- Topic: ${f.topic}`,
+    `- Branch: ${f.branch}`,
+    "",
+    "## Manual resume",
+    `- Inspect ${f.artDir}/execute/ for the part's partial work, then re-run /consort:solo.`,
+    ""
+  ].join("\n");
+}
+var import_node_path17, import_node_fs21;
+var init_solo = __esm({
+  "src/core/solo.ts"() {
+    "use strict";
+    import_node_path17 = require("node:path");
+    import_node_fs21 = require("node:fs");
+    init_paths();
+  }
+});
+
+// src/core/gitwork.ts
+function runnerAt(cwd) {
+  return {
+    run(cmd, args) {
+      try {
+        const stdout = (0, import_node_child_process8.execFileSync)(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+        return { code: 0, stdout };
+      } catch (e) {
+        const err = e;
+        return { code: typeof err.status === "number" ? err.status : 1, stdout: err.stdout != null ? String(err.stdout) : "" };
+      }
+    }
+  };
+}
+function classifyDirty(porcelain) {
+  return porcelain.trim().length > 0;
+}
+function finishAutoAction(remotes) {
+  return remotes.trim().length > 0 ? "pr" : "keep";
+}
+function preSnapshot(r, topic) {
+  if (r.run("git", ["rev-parse", "--git-dir"]).code !== 0) return { branch: "", baseSha: "", state: "not-git" };
+  const branch = r.run("git", ["symbolic-ref", "--short", "HEAD"]).stdout.trim() || "(detached)";
+  const preSha = r.run("git", ["rev-parse", "HEAD"]).stdout.trim();
+  if (!classifyDirty(r.run("git", ["status", "--porcelain"]).stdout)) {
+    return { branch, baseSha: preSha, state: "clean" };
+  }
+  r.run("git", ["add", "-A"]);
+  if (r.run("git", ["commit", "-q", "-m", `chore: WIP before solo ${topic}`]).code !== 0) {
+    return { branch, baseSha: preSha, state: "hook-blocked" };
+  }
+  return { branch, baseSha: r.run("git", ["rev-parse", "HEAD"]).stdout.trim(), state: "wip-committed" };
+}
+function createOrResumeBranch(r, name) {
+  if (r.run("git", ["show-ref", "--verify", "--quiet", `refs/heads/${name}`]).code === 0) {
+    return r.run("git", ["checkout", "-q", name]).code === 0;
+  }
+  return r.run("git", ["checkout", "-q", "-b", name]).code === 0;
+}
+function finishBranch(r, o2) {
+  const action = finishAutoAction(r.run("git", ["remote"]).stdout);
+  if (action === "keep") {
+    r.run("git", ["checkout", "-q", o2.startBranch]);
+    return { action, outcome: "kept" };
+  }
+  let outcome;
+  if (r.run("git", ["push", "-q", "-u", "origin", o2.branch]).code === 0) {
+    const url = o2.originUrl ?? r.run("git", ["remote", "get-url", "origin"]).stdout.trim();
+    const title = o2.title ?? `solo: ${o2.branch}`;
+    const body = o2.body ?? `Automated solo branch. Review and merge into ${o2.startBranch}.`;
+    if (o2.hasGh && r.run("gh", ["pr", "create", "--repo", url, "--base", o2.startBranch, "--head", o2.branch, "--title", title, "--body", body]).code === 0) {
+      outcome = "pr-opened";
+    } else {
+      outcome = "pr-pushed-no-gh";
+    }
+  } else {
+    outcome = "pr-failed-kept";
+  }
+  r.run("git", ["checkout", "-q", o2.startBranch]);
+  return { action, outcome };
+}
+var import_node_child_process8;
+var init_gitwork = __esm({
+  "src/core/gitwork.ts"() {
+    "use strict";
+    import_node_child_process8 = require("node:child_process");
+  }
+});
+
+// src/core/turn.ts
+function composeRound1Prompt(briefText, branch) {
+  return [
+    `You are implementing a single, self-contained change on the branch \`${branch}\` of this repository.`,
+    "",
+    "This is one autonomous turn: read the task, implement it, commit your work, then report.",
+    "",
+    "THE TASK:",
+    "",
+    briefText.trim(),
+    "",
+    "INSTRUCTIONS:",
+    `- Implement the change directly in this repository's working tree (you are on \`${branch}\`).`,
+    "- Commit per logical change with Conventional Commits messages.",
+    "- If the repository has a test suite, run it and make your change pass it.",
+    "- When the implementation is complete and committed, emit the done event (see below).",
+    "",
+    BRANCH_DISCIPLINE,
+    BLOCKERS
+  ].join("\n");
+}
+function classifyTurn(ev) {
+  if (!ev) return "timeout";
+  if (ev.event === "done") return "ok";
+  if (ev.event === "question") return "question";
+  return "failed";
+}
+function parseOffset(stateText) {
+  const m = stateText.match(/^OFFSET=(\d+)\s*$/m);
+  return m ? Number(m[1]) : null;
+}
+function composeFixPrompt(issuesText, round) {
+  return [
+    `You are entering ROUND ${round} of /consort:solo (fix loop), still on the same branch.`,
+    "",
+    "This is one autonomous turn: fix each issue below, commit per fix, re-run the tests, then report.",
+    "",
+    "ISSUES TO ADDRESS:",
+    "",
+    issuesText.trim(),
+    "",
+    "INSTRUCTIONS:",
+    "- Fix each issue above. Commit per fix with Conventional Commits messages.",
+    "- Re-run the repository's test suite and confirm it passes.",
+    "- When all issues are addressed and committed, emit the done event (see below).",
+    "",
+    BRANCH_DISCIPLINE,
+    BLOCKERS
+  ].join("\n");
+}
+var BRANCH_DISCIPLINE, BLOCKERS;
+var init_turn = __esm({
+  "src/core/turn.ts"() {
+    "use strict";
+    BRANCH_DISCIPLINE = 'BRANCH DISCIPLINE (hard rule):\n- You are already on the correct branch. Do NOT run `git checkout`, `git switch`,\n  or `git branch`, and do NOT create new branches.\n- If the work genuinely needs a different branch, do NOT switch; instead emit\n  {"event":"error","reason":"branch-discipline: needed a different branch"} and stop.\n';
+    BLOCKERS = 'IF YOU ARE BLOCKED:\n- If a path, file, command, or assumption is wrong or missing, do NOT guess or invent a\n  workaround. Append a question event to your outbox and stop:\n  {"event":"question","message":"<what you need and why>","ts":"<iso>"}\n  The conductor will reply via your inbox, then re-engage you.\n';
+  }
+});
+
+// src/commands/solo.ts
+var solo_exports = {};
+__export(solo_exports, {
+  branchWith: () => branchWith,
+  finishWith: () => finishWith,
+  initWith: () => initWith,
+  run: () => run9,
+  turnSendWith: () => turnSendWith,
+  turnWaitWith: () => turnWaitWith
+});
+function usage() {
+  log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|summary> ...");
+  return 2;
+}
+async function run9(args) {
+  const verb = args[0];
+  const rest = args.slice(1);
+  switch (verb) {
+    case "init":
+      return initRun(applyArgsFile(rest));
+    case "branch":
+      return branchRun(rest);
+    case "turn-send":
+      return turnSendRun(rest);
+    case "turn-wait":
+      return turnWaitRun(rest);
+    case "detect-test":
+      return detectTestRun(rest);
+    case "finish":
+      return finishRun(rest);
+    case "summary":
+      return summaryRun(rest);
+    default:
+      return usage();
+  }
+}
+async function initRun(tokens) {
+  return initWith(tokens, liveInitDeps);
+}
+async function initWith(tokens, d) {
+  const { topicText, provider: provArg, finish } = parseSoloArgs(tokens);
+  if (!topicText) {
+    log.error("solo init: topic text is empty");
+    return 1;
+  }
+  const slug = deriveSlug(topicText);
+  if (!slug) {
+    log.error("solo init: topic produced an empty slug; provide alphanumerics");
+    return 1;
+  }
+  const provider = provArg ?? "codex";
+  const binary = d.instrumentBinary(provider);
+  if (!binary) {
+    log.error(`solo init: provider '${provider}' has no entry in contracts.yaml`);
+    return 3;
+  }
+  if (!d.haveCmd(binary)) {
+    log.error(`solo init: ${provider}'s binary '${binary}' is not on PATH`);
+    return 3;
+  }
+  const art = soloArtDir(slug);
+  if ((0, import_node_fs22.existsSync)(art)) {
+    log.error(`solo init: topic already in flight: ${art}`);
+    log.error("  run /consort:coda or pick a different topic");
+    return 2;
+  }
+  const instrument = d.pickRandomInstrument(slug);
+  if (!instrument) {
+    log.error(`solo init: no available instrument in the pool for '${slug}'`);
+    return 1;
+  }
+  const exec = soloExecDir(slug);
+  (0, import_node_fs22.mkdirSync)(exec, { recursive: true });
+  atomicWrite((0, import_node_path18.join)(art, "topic.txt"), slug + "\n");
+  atomicWrite((0, import_node_path18.join)(art, "topic-text.txt"), topicText);
+  atomicWrite((0, import_node_path18.join)(art, "selected-provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path18.join)(art, "instrument.txt"), instrument + "\n");
+  atomicWrite((0, import_node_path18.join)(art, "timing.txt"), `started=${isoUtc()}
+`);
+  atomicWrite((0, import_node_path18.join)(exec, "provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path18.join)(exec, "finish.txt"), (finish ? "yes" : "no") + "\n");
+  const target = repoRoot();
+  log.ok(`solo init: topic=${slug} instrument=${instrument} provider=${provider} finish=${finish ? "yes" : "no"}`);
+  process.stdout.write(`SLUG=${slug}
+INSTRUMENT=${instrument}
+PROVIDER=${provider}
+FINISH=${finish ? "yes" : "no"}
+TARGET=${target}
+`);
+  return 0;
+}
+async function branchRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo branch <topic>");
+    return 2;
+  }
+  const target = repoRoot();
+  return branchWith(topic, target, runnerAt(target));
+}
+async function branchWith(topic, target, r) {
+  const snap = preSnapshot(r, topic);
+  if (snap.state === "not-git") {
+    log.error(`solo branch: ${target} is not a git repository`);
+    return 1;
+  }
+  const branch = `feat/solo-${topic}`;
+  const onBranch = createOrResumeBranch(r, branch);
+  const exec = soloExecDir(topic);
+  atomicWrite((0, import_node_path18.join)(exec, "target_cwd.txt"), target + "\n");
+  atomicWrite((0, import_node_path18.join)(exec, "start-branch.txt"), snap.branch + "\n");
+  atomicWrite((0, import_node_path18.join)(exec, "branch-base.sha"), snap.baseSha + "\n");
+  atomicWrite((0, import_node_path18.join)(exec, "branch.txt"), branch + "\n");
+  if (!onBranch) {
+    log.warn(`solo branch: checkout ${branch} failed; staying on ${snap.branch}`);
+  }
+  log.ok(`solo branch: ${branch} (snapshot=${snap.state}, base=${snap.baseSha.slice(0, 8)})`);
+  return 0;
+}
+async function turnSendRun(rest) {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) {
+    log.error("usage: solo turn-send <topic> <round>=1..");
+    return 2;
+  }
+  return turnSendWith(topic, round, {
+    offsetFor: (i2, m, t) => outboxOffset(outboxPath(i2, m, t)),
+    send: (args) => run2(args)
+  });
+}
+async function turnSendWith(topic, round, d) {
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const instrument = readField((0, import_node_path18.join)(art, "instrument.txt"));
+  const provider = readField((0, import_node_path18.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("solo turn-send: missing instrument.txt/selected-provider.txt (run solo init)");
+    return 1;
+  }
+  const stateFile = (0, import_node_path18.join)(exec, `turn-${round}.txt`);
+  if ((0, import_node_fs22.existsSync)(stateFile)) {
+    log.error(`solo turn-send: ${stateFile} already exists; rm to retry`);
+    return 1;
+  }
+  let prompt;
+  if (round === 1) {
+    const brief = (0, import_node_fs22.existsSync)((0, import_node_path18.join)(art, "task-brief.md")) ? (0, import_node_fs22.readFileSync)((0, import_node_path18.join)(art, "task-brief.md"), "utf8") : "";
+    const branch = readField((0, import_node_path18.join)(exec, "branch.txt")) || `feat/solo-${topic}`;
+    prompt = composeRound1Prompt(brief, branch);
+  } else {
+    const bundle = (0, import_node_path18.join)(exec, `fix-prompt-${round}.md`);
+    if (!(0, import_node_fs22.existsSync)(bundle)) {
+      log.error(`solo turn-send: fix bundle missing: ${bundle} (the directive must write it first)`);
+      return 1;
+    }
+    prompt = composeFixPrompt((0, import_node_fs22.readFileSync)(bundle, "utf8"), round);
+  }
+  const promptFile = (0, import_node_path18.join)(exec, `turn-prompt-${round}.md`);
+  atomicWrite(promptFile, prompt);
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}
+`);
+  const rc = await d.send([instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) {
+    log.error(`solo turn-send: send failed (rc=${rc}); ${stateFile} kept for retry`);
+    return 1;
+  }
+  log.ok(`solo turn-send: round=${round} offset=${offset}`);
+  return 0;
+}
+function readField(path6) {
+  return (0, import_node_fs22.existsSync)(path6) ? (0, import_node_fs22.readFileSync)(path6, "utf8").split("\n")[0].trim() : "";
+}
+async function turnWaitRun(rest) {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) {
+    log.error("usage: solo turn-wait <topic> <round>=1..");
+    return 2;
+  }
+  return turnWaitWith(topic, round, {
+    wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to)
+  });
+}
+async function turnWaitWith(topic, round, d) {
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const instrument = readField((0, import_node_path18.join)(art, "instrument.txt"));
+  const provider = readField((0, import_node_path18.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("solo turn-wait: missing instrument.txt/selected-provider.txt");
+    return 1;
+  }
+  const stateFile = (0, import_node_path18.join)(exec, `turn-${round}.txt`);
+  if (!(0, import_node_fs22.existsSync)(stateFile)) {
+    log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`);
+    return 1;
+  }
+  const offset = parseOffset((0, import_node_fs22.readFileSync)(stateFile, "utf8"));
+  if (offset === null) {
+    log.error(`solo turn-wait: OFFSET not set in ${stateFile}`);
+    return 1;
+  }
+  log.info(`solo turn-wait: round=${round} offset=${offset} timeout=${SOLO_TURN_TIMEOUT}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], SOLO_TURN_TIMEOUT);
+  const ts = classifyTurn(ev);
+  if (ts === "question" && ev) atomicWrite((0, import_node_path18.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
+  (0, import_node_fs22.appendFileSync)(stateFile, `TS=${ts}
+`);
+  log.ok(`solo turn-wait: round=${round} TS=${ts}`);
+  return 0;
+}
+async function detectTestRun(rest) {
+  const cwd = rest[0] || repoRoot();
+  process.stdout.write(detectTestCommand(cwd) + "\n");
+  return 0;
+}
+async function finishRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo finish <topic>");
+    return 2;
+  }
+  const target = readField((0, import_node_path18.join)(soloExecDir(topic), "target_cwd.txt")) || repoRoot();
+  return finishWith(topic, runnerAt(target), haveCmd("gh"));
+}
+async function finishWith(topic, r, hasGh) {
+  const exec = soloExecDir(topic);
+  const branch = readField((0, import_node_path18.join)(exec, "branch.txt"));
+  const startBranch = readField((0, import_node_path18.join)(exec, "start-branch.txt")) || "main";
+  const doFinish = readField((0, import_node_path18.join)(exec, "finish.txt")) === "yes";
+  if (!doFinish) {
+    r.run("git", ["checkout", "-q", startBranch]);
+    atomicWrite((0, import_node_path18.join)(exec, "finish-result.txt"), `none	branch-only (kept ${branch})
+`);
+    log.ok(`solo finish: branch-only \u2014 kept ${branch}, restored ${startBranch}`);
+    return 0;
+  }
+  const brief = (0, import_node_fs22.existsSync)((0, import_node_path18.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs22.readFileSync)((0, import_node_path18.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
+  const verify = readField((0, import_node_path18.join)(exec, "verify-result.txt"));
+  const res = finishBranch(r, {
+    branch,
+    startBranch,
+    hasGh,
+    title: `solo: ${branch}`,
+    body: `${brief}
+
+Verify: ${verify}
+
+(Automated solo branch \u2014 review and merge into ${startBranch}.)`
+  });
+  atomicWrite((0, import_node_path18.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
+`);
+  log.ok(`solo finish: ${res.action} \u2192 ${res.outcome}`);
+  return 0;
+}
+async function summaryRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo summary <topic> [--aborted <phase> <gate> <reason...>]");
+    return 2;
+  }
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const started = kvField((0, import_node_path18.join)(art, "timing.txt"), "started") || "unknown";
+  let ended;
+  let duration;
+  const i2 = rest.indexOf("--aborted");
+  const aborted2 = i2 >= 0;
+  if (!aborted2) {
+    ended = isoUtc();
+    const s = Date.parse(started), e = Date.parse(ended);
+    duration = Number.isFinite(s) && Number.isFinite(e) ? Math.round((e - s) / 1e3) : 0;
+    atomicWrite((0, import_node_path18.join)(art, "timing.txt"), `started=${started}
+ended=${ended}
+duration=${duration}
+`);
+  }
+  const facts = {
+    topic,
+    status: aborted2 ? "aborted" : "ok",
+    started,
+    ended,
+    duration,
+    provider: readField((0, import_node_path18.join)(art, "selected-provider.txt")) || "unknown",
+    instrument: readField((0, import_node_path18.join)(art, "instrument.txt")) || "unknown",
+    branch: readField((0, import_node_path18.join)(exec, "branch.txt")) || "unknown",
+    verify: readField((0, import_node_path18.join)(exec, "verify-result.txt")) || "unknown",
+    diffStats: readField((0, import_node_path18.join)(exec, "diff-stats.txt")) || "unknown",
+    archived: readField((0, import_node_path18.join)(art, "archived-path.txt")) || "(not archived)",
+    targetCwd: readField((0, import_node_path18.join)(exec, "target_cwd.txt")) || "<target>",
+    branchBase: readField((0, import_node_path18.join)(exec, "branch-base.sha")) || "<base>",
+    abortedPhase: aborted2 ? rest[i2 + 1] : void 0,
+    abortedGate: aborted2 ? rest[i2 + 2] : void 0,
+    abortedReason: aborted2 ? rest.slice(i2 + 3).join(" ") || "unknown" : void 0
+  };
+  atomicWrite((0, import_node_path18.join)(art, "SUMMARY.md"), renderSummary(facts));
+  if (aborted2) {
+    atomicWrite((0, import_node_path18.join)(art, "RESUME.md"), renderResume({
+      topic,
+      branch: facts.branch,
+      artDir: art,
+      phase: facts.abortedPhase ?? "unknown",
+      gate: facts.abortedGate ?? "unknown"
+    }));
+  }
+  log.ok(`solo summary: wrote ${(0, import_node_path18.join)(art, "SUMMARY.md")}`);
+  return 0;
+}
+function kvField(path6, key) {
+  if (!(0, import_node_fs22.existsSync)(path6)) return "";
+  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = (0, import_node_fs22.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
+  return m ? m[1].trim() : "";
+}
+var import_node_fs22, import_node_path18, liveInitDeps, SOLO_TURN_TIMEOUT;
+var init_solo2 = __esm({
+  "src/commands/solo.ts"() {
+    "use strict";
+    import_node_fs22 = require("node:fs");
+    import_node_path18 = require("node:path");
+    init_log();
+    init_args();
+    init_atomic();
+    init_archive();
+    init_paths();
+    init_solo();
+    init_contracts();
+    init_deps();
+    init_instruments();
+    init_gitwork();
+    init_ipc();
+    init_turn();
+    init_send2();
+    liveInitDeps = { haveCmd, instrumentBinary, pickRandomInstrument };
+    SOLO_TURN_TIMEOUT = Number(process.env.CONSORT_SOLO_TURN_TIMEOUT) || 14400;
+  }
+});
+
 // src/consort.ts
 init_args();
 init_paths();
 init_colors();
 async function loadHandlers() {
-  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook] = await Promise.all([
+  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo] = await Promise.all([
     Promise.resolve().then(() => (init_spawn(), spawn_exports)),
     Promise.resolve().then(() => (init_send2(), send_exports)),
     Promise.resolve().then(() => (init_collect(), collect_exports)),
@@ -17242,7 +17835,8 @@ async function loadHandlers() {
     Promise.resolve().then(() => (init_coda(), coda_exports)),
     Promise.resolve().then(() => (init_soundcheck(), soundcheck_exports)),
     Promise.resolve().then(() => (init_preflight(), preflight_exports)),
-    Promise.resolve().then(() => (init_hook(), hook_exports))
+    Promise.resolve().then(() => (init_hook(), hook_exports)),
+    Promise.resolve().then(() => (init_solo2(), solo_exports))
   ]);
   return {
     spawn: spawn2.run,
@@ -17252,7 +17846,8 @@ async function loadHandlers() {
     coda: coda.run,
     soundcheck: soundcheck.run,
     preflight: preflight.run,
-    hook: hook.run
+    hook: hook.run,
+    solo: solo.run
   };
 }
 async function banner(label, color) {
