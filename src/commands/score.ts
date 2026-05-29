@@ -1,5 +1,5 @@
 // src/commands/score.ts
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile } from "../args.js";
@@ -7,8 +7,10 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import {
   deriveSlug, parseScoreArgs, scoreArtDir, scoreDraftDir,
-  formatRosterFile, type RosterRow,
+  formatRosterFile, scoreDocPath, parseMultiRepoMode, type RosterRow,
 } from "../core/score.js";
+import { assembleDoc, SECTIONS_SINGLE, SECTIONS_MULTI, type DocMode } from "../core/scoreDoc.js";
+import { auditDoc } from "../core/audit.js";
 import { readProviderList } from "../core/providers.js";
 import { activeProvidersPath } from "../core/paths.js";
 import { instrumentConsultValidated } from "../core/contracts.js";
@@ -75,5 +77,43 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   return 0;
 }
 
-// assembleRun lands in Task 4.
-async function assembleRun(_rest: string[]): Promise<number> { return 0; }
+function readIf(path: string): string { return existsSync(path) ? readFileSync(path, "utf8") : ""; }
+
+async function assembleRun(rest: string[]): Promise<number> {
+  const topic = rest[0];
+  if (!topic) { log.error("usage: score assemble <topic>"); return 2; }
+  const art = scoreArtDir(topic);
+  const draftDir = scoreDraftDir(topic);
+  if (!existsSync(draftDir)) { log.error(`score assemble: no draft dir at ${draftDir} (run score init + draft sections)`); return 2; }
+
+  const title = (readIf(join(art, "topic.txt")).split("\n")[0] || topic).trim();
+  const mode: DocMode = parseMultiRepoMode(readIf(join(art, "multi-repo.txt")));
+  const targets = mode === "single" ? [] : parseRosterTargets(readIf(join(art, "targets.txt")));
+  const keys = mode === "multi" ? SECTIONS_MULTI : SECTIONS_SINGLE;
+  const drafts = new Map<string, string>();
+  for (const k of keys) { const f = join(draftDir, `${k}.md`); if (existsSync(f)) drafts.set(k, readFileSync(f, "utf8").replace(/\n+$/, "")); }
+
+  const date = isoUtc().slice(0, 10);
+  const doc = assembleDoc({ title, mode, date, targets, drafts });
+  const out = scoreDocPath(topic, date);
+  mkdirSync(join(art, "design-doc"), { recursive: true });
+  atomicWrite(out, doc);
+
+  const result = auditDoc(doc);
+  const auditText = [`VERDICT=${result.verdict}`, ...result.issues.map((i) => `ISSUE=${i}`)].join("\n") + "\n";
+  atomicWrite(join(art, "design-doc", "audit.log"), auditText);
+  if (result.verdict === "FAIL") {
+    for (const i of result.issues) process.stderr.write(`ISSUE=${i}\n`);
+    log.error(`score assemble: audit FAILED on ${out} (see design-doc/audit.log)`);
+    return 1;
+  }
+  log.ok(`score assemble: audit PASSED`);
+  process.stdout.write(out + "\n");
+  return 0;
+}
+
+/** targets.txt may be a plain slug-per-line list (init) or a TSV (multi-repo detect, Phase E). */
+function parseRosterTargets(text: string): string[] {
+  return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"))
+    .map((l) => l.split("\t")[0]).filter(Boolean);
+}

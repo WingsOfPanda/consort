@@ -6,14 +6,16 @@ import { renderBannerHead } from "./core/colors.js";
 type Handler = (args: string[]) => Promise<number>;
 
 async function loadHandlers(): Promise<Record<string, Handler>> {
-  const [spawn, send, collect, roster, coda, soundcheck, preflight, hook, solo] = await Promise.all([
+  const [spawn, send, collect, roster, coda, soundcheck, preflight, hook, solo, score] = await Promise.all([
     import("./commands/spawn.js"), import("./commands/send.js"), import("./commands/collect.js"),
     import("./commands/roster.js"), import("./commands/coda.js"), import("./commands/soundcheck.js"),
     import("./commands/preflight.js"), import("./commands/hook.js"), import("./commands/solo.js"),
+    import("./commands/score.js"),
   ]);
   return {
     spawn: spawn.run, send: send.run, collect: collect.run, roster: roster.run,
-    coda: coda.run, soundcheck: soundcheck.run, preflight: preflight.run, hook: hook.run, solo: solo.run,
+    coda: coda.run, soundcheck: soundcheck.run, preflight: preflight.run, hook: hook.run,
+    solo: solo.run, score: score.run,
   };
 }
 
