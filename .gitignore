@@ -2,4 +2,3 @@ node_modules/
 .codegraph/
 *.tmp
 .consort/
-dist/

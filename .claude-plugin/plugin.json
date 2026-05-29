@@ -9,7 +9,7 @@
   "keywords": ["claude-code", "plugin", "multi-agent", "orchestration", "tmux", "codex"],
   "hooks": {
     "UserPromptSubmit": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/consort.js hook user-prompt-submit" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs hook user-prompt-submit" } ] }
     ]
   }
 }

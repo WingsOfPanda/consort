@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const CLI = join(process.cwd(), "dist", "consort.js");
+const CLI = join(process.cwd(), "dist", "consort.cjs");
 function run(args: string[], env: Record<string, string> = {}) {
   try {
     const stdout = execFileSync("node", [CLI, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
