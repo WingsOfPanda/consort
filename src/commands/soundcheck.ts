@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../core/log.js";
 import { haveCmd, inTmuxSession, tmuxVersionOk, tmuxVersionString } from "../core/deps.js";
-import { globalRoot, stateEnsure } from "../core/paths.js";
+import { globalRoot } from "../core/paths.js";
 import { atomicWrite } from "../core/atomic.js";
 import { contractsExist, listInstruments, instrumentBinary } from "../core/contracts.js";
 
@@ -32,7 +32,8 @@ const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 
 export async function run(_args: string[]): Promise<number> {
   let fail = 0, warn = 0, ok = 0, total = 0;
-  const root = stateEnsure();
+  const root = globalRoot();
+  try { mkdirSync(root, { recursive: true }); } catch { /* writable check below reports it */ }
 
   const ver = tmuxVersionString();
   if (!ver) { log.error("tmux: not on PATH (install: https://github.com/tmux/tmux)"); fail = 1; }
@@ -73,7 +74,6 @@ export async function run(_args: string[]): Promise<number> {
   }
 
   const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  mkdirSync(globalRoot(), { recursive: true });
   atomicWrite(join(globalRoot(), "providers-available.txt"),
     `# generated ${stamp} by /consort:soundcheck\n# providers detected with binary on PATH + contracts.yaml row\n${detected.join("\n")}${detected.length ? "\n" : ""}`);
 

@@ -17047,7 +17047,11 @@ function opencodePermissionCheck(cfgPath) {
 }
 async function run6(_args) {
   let fail = 0, warn = 0, ok = 0, total = 0;
-  const root = stateEnsure();
+  const root = globalRoot();
+  try {
+    (0, import_node_fs19.mkdirSync)(root, { recursive: true });
+  } catch {
+  }
   const ver = tmuxVersionString();
   if (!ver) {
     log.error("tmux: not on PATH (install: https://github.com/tmux/tmux)");
@@ -17110,7 +17114,6 @@ async function run6(_args) {
     }
   }
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
-  (0, import_node_fs19.mkdirSync)(globalRoot(), { recursive: true });
   atomicWrite(
     (0, import_node_path15.join)(globalRoot(), "providers-available.txt"),
     `# generated ${stamp} by /consort:soundcheck
