@@ -305,3 +305,55 @@ two live model parts → an audit-passing deploy-schema design doc)
   N=2 adjudication tiers + PENDING resolution, synthesize seeding, the interactive walk, and the
   assemble + deploy-audit retry (with `SECTION=` routing) all exercised — single-repo end-to-end.
   Multi-repo + execution-DAG (Phase E) and drilldown/forensics/teardown/present (Phase F) remain.
+
+# Consort `score` — Phase E (multi-repo detect → 8-section walk → Execution DAG → multi-assemble) Dogfood Result
+
+**Date:** 2026-05-29 · **Branch:** `feat/score` · **Result:** PASS (focused new-surface dogfood —
+exercises every Phase E addition end-to-end against the real `/home/liupan/CC` hub; the ensemble half
+research→verify→adjudicate is unchanged from the Phase D dogfood, so it was not re-run)
+
+## Run
+
+Isolated `CONSORT_HOME=/tmp/consort-dogfood-phaseE` (seeded codex+claude), conductor cwd =
+`/home/liupan/CC` (the workspace hub; siblings `clone-wars`/`consort`/`hermes-agent`/`iris-code`/`opencode`
+carry a marker).
+
+- **`init --targets` validation** — `init --targets clone-wars,consort` → rc 0, `multi-repo.txt=multi`,
+  and a **TSV** `targets.txt` (`clone-wars\t/home/liupan/CC/clone-wars/CLAUDE.md` + `consort\t…`, realpath
+  markers). `init --targets ghost` → **rc 1** ("target 'ghost' is not a sibling dir with
+  CLAUDE.md/AGENTS.md under /home/liupan/CC"). (slug truncated to `cross-repo-spawn-gat`.)
+- **`detect-multi-repo` (auto)** — against a seeded `adjudicated.md` mentioning both slugs → exactly
+  **2 hits** (`clone-wars`, `consort`); the other 4 siblings' slugs aren't substrings of the corpus, so
+  they're correctly excluded (the loose-substring escape hatch wasn't needed).
+- **`emit-dag` → `check-dag`** — `dag-rows.tsv` (2 steps, `consort` depends on `clone-wars`) rendered to
+  `## Execution DAG` with the em-dash + `(depends on 1)` suffix; `check-dag` PASS. Forced a hyphen onto
+  step 1 → `check-dag` **rc 1** printing the malformed line `1. clone-wars - …`; `emit-dag` re-render →
+  PASS (the Stage-11 Revise→fix loop).
+- **8-section walk + multi-assemble** — drafted all 8 sections (architecture carries `### clone-wars`
+  + `### consort` subsections; `cross-repo-notes` fresh) → `assemble` → **audit PASS**
+  (`VERDICT=PASS`) with the plural `**Target Sub-Project(s):** clone-wars, consort` header and the
+  8 sections in `SECTIONS_MULTI` order (Execution DAG + Cross-Repo Notes between Components and Testing).
+
+## Findings / fixes surfaced
+
+- **No code bugs.** Every Phase E piece behaved on first run (the heavy reuse of the already-tested
+  `dag.ts`/`multirepo.ts`/`audit.ts`/`scoreDoc` paid off).
+- **No executor leak (verified):** after the multi-assemble, `_score/` contains **no** `dag-waves.txt`
+  / `dag-edges.txt` — score validates its DAG with `checkDagSection` only and never topo-sorts or
+  computes waves (that is perform's job, out of scope). The DAG section's two numbered lines all
+  `parseDagLine`.
+- **Conductor must run from the hub:** `init --targets` validates against `repoRoot()` and
+  `detect-multi-repo` defaults to `process.cwd()`, so the multi-repo conductor runs from the workspace
+  hub (where the sub-project dirs are first-level siblings) — exercised here by running every command
+  with cwd `/home/liupan/CC`. (`detect-multi-repo --cwd <hub>` also lets a non-hub conductor point at it.)
+
+## Verification context
+
+- 315 vitest unit tests green (added `multirepo` `validateTargets`, `score-core` `writeTargetsTsv`,
+  `dag` `dagMalformedLines`, `score-escalation` `detect-multi-repo`/`emit-dag`/`check-dag`, updated
+  `score-init` `--targets`); `tsc --noEmit` + eslint + stale-token gate clean; `dist/consort.cjs` rebuilt.
+- The `--targets` validation + TSV writer, sibling-repo auto-detection (loose substring, marker
+  precedence), the execution-DAG producer + draft-time conformance gate (with the forced-FAIL bounce),
+  the 8-section multi walk (per-target architecture, cross-repo notes), and the multi-doc assemble +
+  plural header + deploy-audit all exercised. Drilldown / forensics / `coda` teardown / `present`
+  (Phase F) remain.
