@@ -11,7 +11,7 @@ import {
   spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag, writeTargetsTsv,
   type RosterRow, type SpawnResult,
 } from "../core/score.js";
-import { validateTargets, type RepoHit } from "../core/multirepo.js";
+import { detectMultiRepo, validateTargets, type RepoHit } from "../core/multirepo.js";
 import { assembleDoc, SECTIONS_SINGLE, SECTIONS_MULTI, synthesizeSeeds, type DocMode } from "../core/scoreDoc.js";
 import { auditDoc } from "../core/audit.js";
 import { readProviderList } from "../core/providers.js";
@@ -44,6 +44,7 @@ export async function run(args: string[]): Promise<number> {
     case "adjudicate": return adjudicateRun(rest);
     case "synthesize": return synthesizeRun(rest);
     case "walk-state": return walkStateRun(rest);
+    case "detect-multi-repo": return detectMultiRepoRun(rest);
     default: return usage();
   }
 }
@@ -439,6 +440,25 @@ export async function walkStateRun(rest: string[]): Promise<number> {
   if (!topic) { log.error("usage: score walk-state <topic>"); return 2; }
   const states = walkSectionState(scoreDraftDir(topic), { withStatus: true });
   for (const s of states) process.stdout.write(`${s.name}\t${s.status}\n`);
+  return 0;
+}
+
+// ---- Phase E: multi-repo detection + execution-DAG ----
+
+export async function detectMultiRepoRun(rest: string[]): Promise<number> {
+  const topic = rest[0];
+  if (!topic) { log.error("usage: score detect-multi-repo <topic> [--cwd <abs>]"); return 2; }
+  let cwd = process.cwd();
+  const ci = rest.indexOf("--cwd");
+  if (ci >= 0 && rest[ci + 1]) cwd = rest[ci + 1];
+  const art = scoreArtDir(topic);
+  const adj = join(art, "adjudicated.md");
+  const corpus = existsSync(adj) ? readFileSync(adj, "utf8")
+    : existsSync(join(art, "topic.txt")) ? readFileSync(join(art, "topic.txt"), "utf8") : "";
+  if (!corpus) log.warn(`score detect-multi-repo: no adjudicated.md/topic.txt corpus at ${art}; scanning anyway`);
+  const hits = detectMultiRepo(cwd, corpus);
+  for (const h of hits) process.stdout.write(`${h.slug}\t${h.marker}\n`);
+  log.ok(`score detect-multi-repo: ${hits.length} hit(s) under ${cwd}`);
   return 0;
 }
 

@@ -1,12 +1,13 @@
 // tests/score-escalation.test.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { freshHome } from "./helpers/tmpHome.js";
 import { scoreArtDir } from "../src/core/score.js";
 import { partDir } from "../src/core/paths.js";
 import { outboxPath } from "../src/core/ipc.js";
-import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun } from "../src/commands/score.js";
+import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun } from "../src/commands/score.js";
 
 let env: { home: string; cleanup: () => void };
 beforeEach(() => { env = freshHome(); });
@@ -325,5 +326,21 @@ describe("score walk-state", () => {
     try { await walkStateRun(["t"]); } finally { (process.stdout as any).write = orig; }
     expect(out).toContain("goal\tapproved");
     expect(out).toContain("problem\tskipped");
+  });
+});
+
+describe("score detect-multi-repo", () => {
+  it("emits TSV hits for sibling dirs whose slug substring-matches the corpus", async () => {
+    const art = scoreArtDir("t"); mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "adjudicated.md"), "## Cross-verified\n- [x] touches api and web modules\n");
+    const hub = mkdtempSync(join(tmpdir(), "hub-"));
+    for (const s of ["api", "web"]) { mkdirSync(join(hub, s)); writeFileSync(join(hub, s, "CLAUDE.md"), "x\n"); }
+    mkdirSync(join(hub, "zzz")); writeFileSync(join(hub, "zzz", "CLAUDE.md"), "x\n");
+    let out = ""; const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout as any).write = (s: string) => { out += s; return true; };
+    try { await detectMultiRepoRun(["t", "--cwd", hub]); } finally { (process.stdout as any).write = orig; }
+    expect(out).toContain("api\t");
+    expect(out).toContain("web\t");
+    expect(out).not.toContain("zzz\t"); // slug not in corpus
   });
 });
