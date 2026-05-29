@@ -210,3 +210,15 @@ describe("solo turn-wait (turnWaitWith core)", () => {
     expect(await turnWaitWith("auth", 1, { wait: async () => null })).toBe(1);
   });
 });
+
+describe("solo detect-test", () => {
+  let outSpy: ReturnType<typeof captureStdout>;
+  beforeEach(() => { outSpy = captureStdout(); });
+  afterEach(() => { outSpy.restore(); });
+
+  it("prints the detected command for a given cwd; rc 0", async () => {
+    const r = mkdtempSync(join(tmpdir(), "dt2-")); writeFileSync(join(r, "package.json"), JSON.stringify({ scripts: { test: "x" } }));
+    expect(await soloRun(["detect-test", r])).toBe(0);
+    expect(outSpy.text().trim()).toBe("npm test");
+  });
+});

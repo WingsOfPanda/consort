@@ -6,7 +6,7 @@ import { applyArgsFile } from "../args.js";
 import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import { repoRoot } from "../core/paths.js";
-import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs } from "../core/solo.js";
+import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs, detectTestCommand } from "../core/solo.js";
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
@@ -175,6 +175,10 @@ export async function turnWaitWith(topic: string, round: number, d: TurnWaitDeps
   log.ok(`solo turn-wait: round=${round} TS=${ts}`);
   return 0;
 }
-async function detectTestRun(_a: string[]): Promise<number> { log.error("solo detect-test: not implemented"); return 2; }
+async function detectTestRun(rest: string[]): Promise<number> {
+  const cwd = rest[0] || repoRoot();
+  process.stdout.write(detectTestCommand(cwd) + "\n");
+  return 0;
+}
 async function finishRun(_a: string[]): Promise<number> { log.error("solo finish: not implemented"); return 2; }
 async function summaryRun(_a: string[]): Promise<number> { log.error("solo summary: not implemented"); return 2; }
