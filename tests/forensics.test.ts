@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as F from "../src/core/forensics.js";
+import { scrapeAuditLog, scrapeOutbox, scrapeStatus, scrapeSpawnResults, scrapeLogs } from "../src/core/forensics.js";
 import { partDir } from "../src/core/paths.js";
 
 afterEach(() => { delete process.env.CONSORT_HOME; });
@@ -46,5 +47,26 @@ describe("forensics", () => {
     home(); mkdirSync(partDir("violin", "codex", "demo"), { recursive: true });
     const r = await F.captureFailure({ instrument: "violin", model: "codex", topic: "demo", paneId: "%1", reason: "kaboom" as any }, deps());
     expect(r).toEqual({ ok: false, code: 2 });
+  });
+});
+
+describe("forensics scrapers", () => {
+  it("audit.log → ^ISSUE= lines", () => {
+    expect(scrapeAuditLog("VERDICT=FAIL\nISSUE=no_goal_section\nISSUE=tbd_marker\n"))
+      .toEqual([{ source: "audit_log", key: "ISSUE=no_goal_section", context: "audit.log" },
+                { source: "audit_log", key: "ISSUE=tbd_marker", context: "audit.log" }]);
+  });
+  it("outbox → error/question events via JSON.parse, labelled by part; skips non-JSON + done", () => {
+    const ob = '{"event":"done","summary":"ok"}\nnot json\n{"event":"error","reason":"boom"}\n{"event":"question","message":"?"}\n';
+    const f = scrapeOutbox(ob, "viola");
+    expect(f.map((x) => x.source)).toEqual(["outbox", "outbox"]);
+    expect(f.every((x) => x.context === "part=viola")).toBe(true);
+    expect(f[0].key).toContain('"event":"error"');
+  });
+  it("status.json state=error; spawn-results rc!=0; logs [error]/log_error", () => {
+    expect(scrapeStatus('{"state":"error","updated":"x"}', "cello")).toEqual([{ source: "status", key: "state=error", context: "part=cello" }]);
+    expect(scrapeStatus('{"state":"ready"}', "cello")).toEqual([]);
+    expect(scrapeSpawnResults("viola\tcodex\t0\t\ncello\tclaude\t1\tspawn-failed\n").map((x) => x.context)).toEqual(["part=cello"]);
+    expect(scrapeLogs("all good\n[error] boom\nplain\n", "dispatch.log").length).toBe(1);
   });
 });
