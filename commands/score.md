@@ -238,6 +238,40 @@ substring-matches `adjudicated.md`. Count the hit lines and branch:
    - **Skip** → Write `_(skipped)_` as the whole body. **Skip is NOT offered for the four
      audit-required sections** (goal, architecture, testing, success-criteria) — they must be drafted.
 
+### Stage 11 (multi-repo): the 8-section walk
+
+When `multi-repo.txt` ∈ {single-sub, multi}: after `score synthesize` (still seeds the 6 base sections),
+walk the **multi section list** — for `multi`, all 8 in this exact order (must match `SECTIONS_MULTI` in
+`core/scoreDoc.ts`): **problem, goal, architecture, components, execution-dag, cross-repo-notes, testing,
+success-criteria** (single-sub uses the 6 base sections + the singular header). The 2 multi-only sections
+(`execution-dag`, `cross-repo-notes`) have **no synthesize seed** — draft them fresh. Resume via
+`$CS score walk-state <TOPIC>`. Per-section rules:
+
+- **architecture** (multi): draft a `### <slug>` subsection per target (read `$ART/targets.txt` col 1
+  for the slugs) plus any shared/hub architecture. (Required — no Skip.)
+- **cross-repo-notes**: a normal narrative section (Skip allowed) — per-target dependencies, ordering
+  constraints, and shared contracts drawn from the parts' findings.
+- **execution-dag**: the special gated section (below). (No Skip.)
+- All other sections: exactly as the single-repo walk (the 4 required sections never offer Skip).
+
+**execution-dag drafting + pre-Approve gate** (mirrors the bash predecessor's v0.54.0 gate; NO executor):
+1. From the parts' cross-repo-dependency findings, **Write** `$ART/dag-rows.tsv` — one tab-separated
+   `<step>\t<repo>\t<desc>\t<deps-csv|none>` row per step (`deps` = comma-separated upstream step
+   numbers, or `none`). Then `$CS score emit-dag <TOPIC>` renders `.draft/execution-dag.md` as a
+   `## Execution DAG` section (numbered `N. <repo> — <desc> (depends on M, N)` lines, em-dash U+2014).
+2. **Pre-validate before presenting:** `$CS score check-dag <TOPIC>`.
+   - **rc 0** → present the section; **AskUserQuestion Approve / Revise** (NO Skip — execution-dag is
+     required in multi-repo).
+   - **rc 1** → it printed the malformed line(s) to stderr. Do **not** offer the normal options; instead
+     **AskUserQuestion**: **Revise** / **Force-Approve (override)** / **Abort**.
+     - Revise → take direction, rewrite `dag-rows.tsv`, re-run `emit-dag`, re-loop the gate (cap 4 revises).
+     - Force-Approve → keep the non-conforming draft as-is; the Stage-12 audit
+       (`execution_dag_not_parseable`) will catch it.
+     - Abort → stop the walk.
+3. The drafted heading MUST be exactly `## Execution DAG` (a decorated heading silently disables the
+   gate). score validates conformance only — it does NOT topo-sort, compute waves, or detect cycles
+   (a cyclic-but-syntactically-valid DAG passes here and surfaces only at perform time).
+
 ## Stage 12 — assemble + deploy-audit gate (retry loop)
 
 `$CS score assemble <TOPIC>`.
