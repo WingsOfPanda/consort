@@ -15,3 +15,19 @@ export function deriveSlug(text: string): string {
     .replace(/-+$/, "");
   return s;
 }
+
+export interface SoloArgs { topicText: string; provider?: string; finish: boolean; }
+
+export function parseSoloArgs(tokens: string[]): SoloArgs {
+  let provider: string | undefined;
+  let finish = false;
+  const text: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === "--finish") { finish = true; continue; }
+    if (t === "--provider") { provider = tokens[i + 1]; i++; continue; }
+    if (t.startsWith("--provider=")) { provider = t.slice("--provider=".length); continue; }
+    text.push(t);
+  }
+  return { topicText: text.join(" ").trim(), provider, finish };
+}
