@@ -1,7 +1,7 @@
 // tests/score-core.test.ts
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { scoreArtDir, scoreDraftDir, parseScoreArgs } from "../src/core/score.js";
+import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode } from "../src/core/score.js";
 
 describe("score paths", () => {
   it("scoreArtDir / scoreDraftDir hang off the topic dir under _score", () => {
@@ -33,5 +33,33 @@ describe("parseScoreArgs", () => {
   });
   it("--targets=a,b inline form", () => {
     expect(parseScoreArgs(["--targets=api,web", "x"]).targets).toEqual(["api", "web"]);
+  });
+});
+
+describe("scoreDocPath", () => {
+  it("canonical design-doc path under design-doc/", () => {
+    process.env.CONSORT_HOME = "/R";
+    expect(scoreDocPath("auth", "2026-05-29").endsWith(join("auth", "_score", "design-doc", "2026-05-29-auth-design.md"))).toBe(true);
+  });
+});
+
+describe("roster file", () => {
+  it("format then parse round-trips provider/instrument rows", () => {
+    const rows = [{ provider: "codex", instrument: "viola" }, { provider: "claude", instrument: "cello" }];
+    const text = formatRosterFile(rows, "2026-05-29T00:00:00Z");
+    expect(text).toContain("by /consort:score");
+    expect(parseRosterFile(text)).toEqual(rows);
+  });
+  it("parse skips #/blank lines and rows missing a field", () => {
+    expect(parseRosterFile("# h\ncodex\tviola\n\nbroken\n")).toEqual([{ provider: "codex", instrument: "viola" }]);
+  });
+});
+
+describe("parseMultiRepoMode", () => {
+  it("trims and validates; unknown/empty → single", () => {
+    expect(parseMultiRepoMode("multi\n")).toBe("multi");
+    expect(parseMultiRepoMode(" single-sub ")).toBe("single-sub");
+    expect(parseMultiRepoMode("garbage")).toBe("single");
+    expect(parseMultiRepoMode("")).toBe("single");
   });
 });
