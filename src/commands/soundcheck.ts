@@ -31,6 +31,8 @@ export function opencodePermissionCheck(cfgPath?: string): PermissionResult {
 }
 
 const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+const availablePath = (): string => join(globalRoot(), "providers-available.txt");
+const activePath = (): string => join(globalRoot(), "providers-active.txt");
 
 export async function run(args: string[]): Promise<number> {
   if (args[0] === "roster-plan") return rosterPlan();
@@ -38,18 +40,20 @@ export async function run(args: string[]): Promise<number> {
   return healthCheck();
 }
 
-function detectedValidatedProviders(): string[] {
-  const available = readProviderList(join(globalRoot(), "providers-available.txt"));
-  return available.filter((p) => instrumentConsultValidated(p));
+function partitionAvailable(): { available: string[]; detected: string[]; skipped: string[] } {
+  const available = readProviderList(availablePath());
+  const detected: string[] = [];
+  const skipped: string[] = [];
+  for (const p of available) {
+    if (instrumentConsultValidated(p)) detected.push(p);
+    else skipped.push(`${p} (consult_validated: false)`);
+  }
+  return { available, detected, skipped };
 }
 
 function rosterPlan(): number {
-  const available = readProviderList(join(globalRoot(), "providers-available.txt"));
-  const detected = available.filter((p) => instrumentConsultValidated(p));
-  const skipped = available
-    .filter((p) => !instrumentConsultValidated(p))
-    .map((p) => `${p} (consult_validated: false)`);
-  const prior = readProviderList(join(globalRoot(), "providers-active.txt"));
+  const { detected, skipped } = partitionAvailable();
+  const prior = readProviderList(activePath());
   const plan = planRoster({ detectedValidated: detected, prior });
   process.stdout.write(JSON.stringify({ ...plan, skipped }) + "\n");
   return 0;
@@ -60,7 +64,7 @@ function rosterSet(providers: string[]): number {
     log.error("must select at least one provider; selection unchanged");
     return 1;
   }
-  const valid = new Set(detectedValidatedProviders());
+  const valid = new Set(partitionAvailable().detected);
   const bad = providers.filter((p) => !valid.has(p));
   if (bad.length > 0) {
     log.error(`not in the detected validated set: ${bad.join(", ")}; selection unchanged`);
@@ -68,7 +72,7 @@ function rosterSet(providers: string[]): number {
   }
   const root = globalRoot();
   mkdirSync(root, { recursive: true });
-  atomicWrite(join(root, "providers-active.txt"), formatActiveFile(providers, isoUtc()));
+  atomicWrite(activePath(), formatActiveFile(providers, isoUtc()));
   process.stdout.write(`active set: ${providers.join(", ")} (written to providers-active.txt)\n`);
   return 0;
 }
@@ -116,8 +120,7 @@ function healthCheck(): number {
     }
   }
 
-  atomicWrite(join(globalRoot(), "providers-available.txt"),
-    formatProviderFile(detected, isoUtc(), "providers detected with binary on PATH + contracts.yaml row"));
+  atomicWrite(availablePath(), formatProviderFile(detected, isoUtc(), "providers detected with binary on PATH + contracts.yaml row"));
 
   if (fail !== 0 || ok === 0) {
     if (ok === 0 && total > 0) log.error(`no providers available; install at least one of: ${listInstruments().join(" ")}`);
