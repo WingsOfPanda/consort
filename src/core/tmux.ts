@@ -1,7 +1,8 @@
 import { execa } from "execa";
-import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { labelFor, colorFor, labelFmt } from "./colors.js";
 
 // ---------- pure arg builders (unit-tested) ----------
 export function splitRightArgs(launch: string, target?: string, cwd?: string): string[] {
@@ -80,4 +81,71 @@ export async function selectLayoutMainVertical(target: string): Promise<void> {
 export async function conductorPane(): Promise<string> {
   if (process.env.TMUX_PANE) return process.env.TMUX_PANE;
   return tmux(["display-message", "-p", "#{pane_id}"]);
+}
+
+// --- pane labels (the three @cs_* user-options) ---
+export function paneLabelSetArgs(pane: string, instrument: string, model: string, topic: string): string[][] {
+  return [
+    setOptionArgs(pane, "@cs_label", labelFor(instrument, model, topic)),
+    setOptionArgs(pane, "@cs_color", colorFor(instrument)),
+    setOptionArgs(pane, "@cs_label_fmt", labelFmt(instrument, model, topic)),
+  ];
+}
+export async function paneLabelSet(pane: string, instrument: string, model: string, topic: string): Promise<void> {
+  for (const args of paneLabelSetArgs(pane, instrument, model, topic)) await execa("tmux", args);
+}
+
+// --- graceful kill with FINE banner ---
+export function gracefulRespawnCommand(snap: string, pluginRoot: string, label: string, color: string): string {
+  return `cat '${snap}'; node '${pluginRoot}/dist/consort.cjs' _banner '${label}' '${color}'; rm -f '${snap}'`;
+}
+
+export async function paneLabel(pane: string): Promise<string> {
+  try { return (await execa("tmux", ["display-message", "-p", "-t", pane, "#{@cs_label}"])).stdout; } catch { return ""; }
+}
+export async function paneColor(pane: string): Promise<string> {
+  try { return (await execa("tmux", ["display-message", "-p", "-t", pane, "#{@cs_color}"])).stdout; } catch { return ""; }
+}
+
+export async function killGraceful(pane: string, pluginRoot: string): Promise<void> {
+  if (!(await paneAlive(pane))) return;
+  const label = (await paneLabel(pane)) || "part";
+  const color = await paneColor(pane);
+  const snap = join(mkdtempSync(join(tmpdir(), "cs-snap-")), "snap.txt");
+  try {
+    const { stdout } = await execa("tmux", ["capture-pane", "-p", "-e", "-t", pane]);
+    writeFileSync(snap, stdout);
+  } catch { writeFileSync(snap, ""); }
+  await respawn(pane, gracefulRespawnCommand(snap, pluginRoot, label, color));
+}
+
+// --- preflight grid ---
+export interface PreflightEntry { instrument: string; model: string; cwd?: string; }
+export async function preflightLayout(topic: string, roster: PreflightEntry[], opts: { writePanes: (tsv: string) => void }): Promise<Array<{ instrument: string; pane: string }>> {
+  const conductor = await conductorPane();
+  const created: string[] = [];
+  const out: Array<{ instrument: string; pane: string }> = [];
+  let prev = conductor;
+  let flag: "-h" | "-v" = "-h";
+  try {
+    for (const e of roster) {
+      const sentinel = sentinelCommand(labelFmt(e.instrument, e.model, topic));
+      const args = ["split-window", "-P", "-F", "#{pane_id}", flag, "-t", prev];
+      if (e.cwd) args.push("-c", e.cwd);
+      args.push(sentinel);
+      const { stdout } = await execa("tmux", args);
+      const pane = stdout.trim();
+      created.push(pane);
+      await paneLabelSet(pane, e.instrument, e.model, topic);
+      out.push({ instrument: e.instrument, pane });
+      prev = pane;
+      flag = "-v";
+    }
+    await selectLayoutMainVertical(conductor);
+    opts.writePanes(out.map((o) => `${o.instrument}\t${o.pane}`).join("\n") + "\n");
+    return out;
+  } catch (e) {
+    for (const p of created) { try { await execa("tmux", ["kill-pane", "-t", p]); } catch { /* */ } }
+    throw e;
+  }
 }
