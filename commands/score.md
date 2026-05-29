@@ -282,20 +282,24 @@ success-criteria** (single-sub uses the 6 base sections + the singular header). 
   - a **section name** (problem/goal/architecture/components/testing/success-criteria) → re-walk that
     one section (Stage 11 for it), then re-assemble.
   - `ASK` (a TBD/TODO/fill-in marker) → AskUserQuestion which section carries the marker, re-walk it.
-  - `header` / `execution-dag` → only arise in multi-repo (Phase E); not reachable single-repo.
+  - `execution-dag` (multi-repo, from `execution_dag_not_parseable`) → `rm $ART/design-doc/.draft/execution-dag.md`,
+    re-walk that one section (re-runs the Stage-11 `emit-dag` + `check-dag` gate), re-assemble.
+  - `header` (multi-repo, from `target_subproject_when_invalid` — a **single-sub** slug-validity failure;
+    the plural multi `**Target Sub-Project(s):**` header is descriptive and not audited as a slug) →
+    `rm -f $ART/multi-repo.txt $ART/targets.txt` and **bounce back to Stage 10** detection, then re-walk
+    + re-assemble.
   - empty (unknown code) → surface the raw `ISSUE=` and stop.
   Re-assemble after each fix; loop until rc 0 (bound to a few attempts per section, then surface the
   remaining ISSUEs and stop).
 
-> **Phase D ends at the assembled, audit-passing single-repo doc.** Drilldown, forensics, `coda`
-> teardown, and the `present` handoff land in **Phase F**; multi-repo + the execution DAG in **Phase E**.
-> The parts are still live — `/consort:coda <instrument> <TOPIC>` each to tear them down (Phase F
-> automates it).
+> **Phase E ends at the assembled, audit-passing doc (single-repo OR multi-repo).** Drilldown,
+> forensics, `coda` teardown, and the `present` handoff land in **Phase F**. The parts are still live —
+> `/consort:coda <instrument> <TOPIC>` each to tear them down (Phase F automates it).
 
 ## Notes
 
 - Fast-path spawns no parts and writes no working artifacts beyond `topic.txt`, `.draft/*.md`, the
   assembled `design-doc/<date>-<slug>-design.md`, and `audit.log`. No teardown needed.
 - Escalation Stages 3–12 (spawn-all → research → diff → cross-verify → adjudicate → synthesize →
-  design walk → deploy-audit gate) ship in Phases C–D. Multi-repo + execution-DAG (Phase E) and
-  drilldown / forensics / teardown / present (Phase F) arrive in later phases.
+  design walk → deploy-audit gate), single-repo AND multi-repo (detection → 8-section walk → execution
+  DAG), ship in Phases C–E. Drilldown / forensics / teardown / present (Phase F) arrive in the last phase.
