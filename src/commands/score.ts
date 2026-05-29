@@ -8,9 +8,10 @@ import { isoUtc } from "../core/archive.js";
 import {
   deriveSlug, parseScoreArgs, scoreArtDir, scoreDraftDir,
   formatRosterFile, scoreDocPath, parseMultiRepoMode, parseRosterFile,
-  spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag,
+  spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag, writeTargetsTsv,
   type RosterRow, type SpawnResult,
 } from "../core/score.js";
+import { validateTargets, type RepoHit } from "../core/multirepo.js";
 import { assembleDoc, SECTIONS_SINGLE, SECTIONS_MULTI, synthesizeSeeds, type DocMode } from "../core/scoreDoc.js";
 import { auditDoc } from "../core/audit.js";
 import { readProviderList } from "../core/providers.js";
@@ -51,11 +52,13 @@ export interface ScoreInitDeps {
   activeProviders(): string[];
   isValidated(provider: string): boolean;
   pickInstruments(topic: string, n: number): string[];
+  validateTargets(slugs: string[]): { ok: RepoHit[]; errors: string[] };
 }
 const liveInitDeps: ScoreInitDeps = {
   activeProviders: () => readProviderList(activeProvidersPath()),
   isValidated: instrumentConsultValidated,
   pickInstruments,
+  validateTargets: (slugs) => validateTargets(repoRoot(), slugs),
 };
 
 async function initRun(tokens: string[]): Promise<number> { return initWith(tokens, liveInitDeps); }
@@ -77,6 +80,14 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   const art = scoreArtDir(topic);
   if (existsSync(art)) { log.error(`score init: topic already in flight: ${art}`); log.error("  run /consort:coda or pick a different topic"); return 2; }
 
+  // Validate --targets BEFORE scaffolding so a bad slug leaves no art dir behind.
+  let targetHits: RepoHit[] = [];
+  if (targets.length > 0) {
+    const v = d.validateTargets(targets);
+    if (v.errors.length) { for (const e of v.errors) log.error(`score init: ${e}`); return 1; }
+    targetHits = v.ok;
+  }
+
   const instruments = d.pickInstruments(topic, roster.length);
   if (instruments.length < roster.length) { log.error(`score init: instrument pool exhausted (need ${roster.length}, got ${instruments.length})`); return 1; }
   const rows: RosterRow[] = roster.map((provider, i) => ({ provider, instrument: instruments[i] }));
@@ -85,9 +96,9 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   atomicWrite(join(art, "topic.txt"), topicText);
   // Full roster written even on a fast-path run; the ensemble path (Phase C) reads roster.txt back.
   atomicWrite(join(art, "roster.txt"), formatRosterFile(rows, isoUtc()));
-  const mode = targets.length >= 2 ? "multi" : targets.length === 1 ? "single-sub" : "single";
+  const mode = targetHits.length >= 2 ? "multi" : targetHits.length === 1 ? "single-sub" : "single";
   atomicWrite(join(art, "multi-repo.txt"), mode + "\n");
-  if (targets.length > 0) atomicWrite(join(art, "targets.txt"), `# generated ${isoUtc()} by /consort:score\n${targets.join("\n")}\n`);
+  if (targetHits.length > 0) atomicWrite(join(art, "targets.txt"), writeTargetsTsv(targetHits, isoUtc()));
 
   log.ok(`score init: topic=${topic} N=${rows.length} ensemble=${ensemble ? "yes" : "no"} mode=${mode}`);
   process.stdout.write(
