@@ -51,11 +51,11 @@ Decide fast-path vs escalation, in order:
 > - **fast-path** (`Path: fast`) → **Stage 2** (Maestro solo, unchanged).
 > - **escalate** (`escalated-from-flag` / `escalated-from-signals`) **and `MODE=single`** → **Stage 3**
 >   (the ensemble pipeline below — research → diff; Phase C ends at the diff).
-> - **escalate and `MODE` is `multi` / `single-sub`** (i.e. `--targets` was passed): the multi-repo
->   ensemble + execution-DAG design walk lands in **Phase E**. A multi doc would otherwise assemble
->   placeholder Execution DAG / Cross-Repo Notes sections that pass the audit while silently
->   under-serving the multi-repo intent. Tell the user plainly: "multi-repo runs (`--targets`) need
->   the Phase E pipeline; re-run without `--targets` for a single-repo run," and **stop**.
+> - **escalate and `MODE` is `multi` / `single-sub`** (i.e. `--targets` was passed): proceed into the
+>   **multi-repo ensemble** — Stages 3–9 run unchanged (research → diff → cross-verify → adjudicate);
+>   then Stage 10 honors the `--targets` short-circuit (targets already materialized by `init`) and
+>   Stage 11 walks the 8 sections. `--targets` is itself the escalation signal — skip the fast-path
+>   4-signal check.
 
 ## Stage 2 — fast-path (Maestro solo)
 
@@ -192,8 +192,35 @@ Proceed when every part is terminal (no `VS=question` outstanding).
 
 ## Stage 10 — multi-repo detection
 
-`MODE=single` here (Phase D is single-repo; `--targets` stopped at Stage 1). Multi-repo detection + the
-8-section walk land in **Phase E** — continue to Stage 11.
+If `--targets` was passed, `$ART/multi-repo.txt` + `$ART/targets.txt` already exist (written by `init`
+after validation) — **skip detection** and go to Stage 11.
+
+Otherwise auto-detect: `$CS score detect-multi-repo <TOPIC> --cwd <HUB>` (HUB = the workspace dir whose
+first-level subdirs are the candidate sub-projects; default is the conductor's cwd). It prints
+`<slug>\t<abs-marker>` per sibling dir (with `CLAUDE.md`/`AGENTS.md`) whose slug case-insensitively
+substring-matches `adjudicated.md`. Count the hit lines and branch:
+
+- **0 hits** → single-repo. Write `single` to `$ART/multi-repo.txt` (no `targets.txt`, no prompt).
+  Continue to Stage 11 (6-section walk).
+- **1 hit** → **AskUserQuestion** (Header `Target`): "Topic targets sub-project `<slug>` (detected from
+  sibling repos). Use it as the single sub-repo target, or treat as hub-level work?" — options
+  **Use `<slug>`** / **Treat as hub-level**.
+  - Use `<slug>` → write that hit's `<slug>\t<marker>` row to `$ART/targets.txt` (TSV) + `single-sub`
+    to `$ART/multi-repo.txt`.
+  - Treat as hub-level → `single` to `$ART/multi-repo.txt`, no `targets.txt`.
+- **2+ hits** → **AskUserQuestion**: "Detected multi-repo candidates: `<slug list>`. Use these as
+  targets, edit, or proceed single-repo?" — options **Use auto-detected list** / **Edit list** /
+  **Proceed single-repo**.
+  - Use list → write all hit rows (TSV) to `targets.txt` + `multi` to `multi-repo.txt`.
+  - Edit list → free-form follow-up for a comma-separated slug list; **re-validate** each (must be a
+    real sibling dir with a marker — same checks `init --targets` runs) and re-prompt on rejection;
+    then **N≥2 edited slugs → `multi`, exactly 1 → `single-sub`** (an edit-down-to-1 is single-sub, NOT
+    multi). Write `targets.txt` (TSV `<slug>\t<marker>`) accordingly.
+  - Proceed single-repo → `single`, no `targets.txt`.
+
+`targets.txt` rows are TSV `<slug>\t<abs-marker>` (the shape `detect-multi-repo`/`init` emit); a leading
+`# generated …` comment line is optional (readers strip it). After this stage, `multi-repo.txt` ∈
+{single, single-sub, multi}.
 
 ## Stage 11 — interactive per-section design walk
 
