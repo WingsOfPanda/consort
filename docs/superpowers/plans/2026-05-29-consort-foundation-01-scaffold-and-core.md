@@ -110,7 +110,6 @@ Test helper used throughout: a `tests/helpers/tmpHome.ts` that sets `CONSORT_HOM
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
-    "rootDir": "src",
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
