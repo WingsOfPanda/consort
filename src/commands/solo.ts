@@ -1,5 +1,5 @@
 // src/commands/solo.ts
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile } from "../args.js";
@@ -12,6 +12,9 @@ import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
 import { runnerAt, preSnapshot, createOrResumeBranch } from "../core/gitwork.js";
 import type { Runner } from "../core/gitwork.js";
+import { outboxOffset, outboxPath } from "../core/ipc.js";
+import { composeRound1Prompt, composeFixPrompt } from "../core/turn.js";
+import { run as sendRun } from "./send.js";
 
 function usage(): number {
   log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|summary> ...");
@@ -88,7 +91,57 @@ export async function branchWith(topic: string, target: string, r: Runner): Prom
   log.ok(`solo branch: ${branch} (snapshot=${snap.state}, base=${snap.baseSha.slice(0, 8)})`);
   return 0;
 }
-async function turnSendRun(_a: string[]): Promise<number> { log.error("solo turn-send: not implemented"); return 2; }
+export interface TurnSendDeps {
+  offsetFor(instrument: string, model: string, topic: string): number;
+  send(args: string[]): Promise<number>;
+}
+
+async function turnSendRun(rest: string[]): Promise<number> {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) { log.error("usage: solo turn-send <topic> <round>=1.."); return 2; }
+  return turnSendWith(topic, round, {
+    offsetFor: (i, m, t) => outboxOffset(outboxPath(i, m, t)),
+    send: (args) => sendRun(args),
+  });
+}
+
+export async function turnSendWith(topic: string, round: number, d: TurnSendDeps): Promise<number> {
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const instrument = readField(join(art, "instrument.txt"));
+  const provider = readField(join(art, "selected-provider.txt"));
+  if (!instrument || !provider) { log.error("solo turn-send: missing instrument.txt/selected-provider.txt (run solo init)"); return 1; }
+
+  const stateFile = join(exec, `turn-${round}.txt`);
+  if (existsSync(stateFile)) { log.error(`solo turn-send: ${stateFile} already exists; rm to retry`); return 1; }
+
+  let prompt: string;
+  if (round === 1) {
+    const brief = existsSync(join(art, "task-brief.md")) ? readFileSync(join(art, "task-brief.md"), "utf8") : "";
+    const branch = readField(join(exec, "branch.txt")) || `feat/solo-${topic}`;
+    prompt = composeRound1Prompt(brief, branch);
+  } else {
+    const bundle = join(exec, `fix-prompt-${round}.md`);
+    if (!existsSync(bundle)) { log.error(`solo turn-send: fix bundle missing: ${bundle} (the directive must write it first)`); return 1; }
+    prompt = composeFixPrompt(readFileSync(bundle, "utf8"), round);
+  }
+
+  const promptFile = join(exec, `turn-prompt-${round}.md`);
+  atomicWrite(promptFile, prompt);
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}\n`);
+
+  const rc = await d.send([instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) { log.error(`solo turn-send: send failed (rc=${rc}); ${stateFile} kept for retry`); return 1; }
+  log.ok(`solo turn-send: round=${round} offset=${offset}`);
+  return 0;
+}
+
+/** Read the first line of a single-value state file, trimmed; "" if absent. */
+function readField(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8").split("\n")[0].trim() : "";
+}
 async function turnWaitRun(_a: string[]): Promise<number> { log.error("solo turn-wait: not implemented"); return 2; }
 async function detectTestRun(_a: string[]): Promise<number> { log.error("solo detect-test: not implemented"); return 2; }
 async function finishRun(_a: string[]): Promise<number> { log.error("solo finish: not implemented"); return 2; }

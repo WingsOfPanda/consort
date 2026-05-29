@@ -119,3 +119,49 @@ describe("solo branch (branchWith core)", () => {
     expect(await branchWith("nope", "/proj", r)).toBe(1);
   });
 });
+
+import { turnSendWith } from "../src/commands/solo.js";
+
+describe("solo turn-send (turnSendWith core)", () => {
+  let h: { home: string; cleanup: () => void };
+  beforeEach(() => { h = freshHome(); });
+  afterEach(() => { h.cleanup(); });
+
+  async function scaffold(topic: string) {
+    const { soloArtDir, soloExecDir } = await import("../src/core/solo.js");
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(soloExecDir(topic), { recursive: true });
+    const art = soloArtDir(topic);
+    writeFileSync(join(art, "instrument.txt"), "violin\n");
+    writeFileSync(join(art, "selected-provider.txt"), "codex\n");
+    writeFileSync(join(art, "task-brief.md"), "## Goal\nDo X");
+    writeFileSync(join(soloExecDir(topic), "branch.txt"), "feat/solo-auth\n");
+  }
+
+  it("round 1: writes OFFSET, prompt file, calls send; rc 0", async () => {
+    await scaffold("auth");
+    const sends: string[][] = [];
+    const rc = await turnSendWith("auth", 1, {
+      offsetFor: () => 42,
+      send: async (args) => { sends.push(args); return 0; },
+    });
+    expect(rc).toBe(0);
+    const { soloExecDir } = await import("../src/core/solo.js");
+    const exec = soloExecDir("auth");
+    expect(readFileSync(join(exec, "turn-1.txt"), "utf8")).toBe("OFFSET=42\n");
+    expect(readFileSync(join(exec, "turn-prompt-1.md"), "utf8")).toContain("## Goal\nDo X");
+    expect(sends[0]).toEqual(["violin", "auth", `@${join(exec, "turn-prompt-1.md")}`]);
+  });
+
+  it("round 1 idempotency: existing turn-1.txt → rc 1", async () => {
+    await scaffold("auth");
+    const { soloExecDir } = await import("../src/core/solo.js");
+    writeFileSync(join(soloExecDir("auth"), "turn-1.txt"), "OFFSET=0\n");
+    expect(await turnSendWith("auth", 1, { offsetFor: () => 0, send: async () => 0 })).toBe(1);
+  });
+
+  it("round 2 without a fix bundle → rc 1", async () => {
+    await scaffold("auth");
+    expect(await turnSendWith("auth", 2, { offsetFor: () => 0, send: async () => 0 })).toBe(1);
+  });
+});
