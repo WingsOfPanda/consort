@@ -84,9 +84,11 @@ Then assemble + audit: `$CS score assemble <TOPIC>`.
   **re-draft** the offending `.draft/<section>.md` (Write tool), and **re-run `$CS score assemble
   <TOPIC>` once**. If it FAILs again → surface the remaining ISSUE list to the user and stop.
 
-## Stage 3 — escalation: preflight + batch-spawn (single-repo)
+## Stage 3 — escalation: preflight + batch-spawn
 
-> Reached only when Stage 1 chose **escalate** and `MODE=single`.
+> Reached on **any** escalation (`MODE` ∈ {single, single-sub, multi}). Stages 3–9 are
+> mode-independent — they always spawn the ensemble + research + diff + cross-verify + adjudicate;
+> `MODE` only changes Stage 10 onward (single-repo skips detection; single-sub/multi walk the targets).
 
 Spawn the ensemble in one call: `$CS score spawn-all <TOPIC>`. It preflights N panes, spawns every
 part in parallel (`--target-pane`, `--cwd <repo>`), and writes `$ART/spawn-results.tsv` (TSV
@@ -175,8 +177,9 @@ For each part, background `$CS score verify-wait <TOPIC> <INST> <PROV>`. On each
 - **`VS=question`** — same classify+relay as Stage 5 (read `$ART/question-<INST>.txt` + the part's
   `verify.md`; AskUserQuestion if critical else self-answer; `$CS send --from maestro <INST> <TOPIC>
   @<reply>`; `rm -f $ART/verify-<INST>.done`; re-arm the background `verify-wait`).
-- **`VS=failed` / `VS=timeout`** — record; the rival's claims this part would have verified are marked
-  `Not-verified` by adjudicate.
+- **`VS=failed` / `VS=timeout`** — record; the rival's claims this part would have verified surface
+  unresolved (N=2: a `## Not-verified` section; N≥3: they fall through the `UNCERTAIN` tier into
+  PENDING/Contested) — either way Maestro resolves them in Stage 9.
 Proceed when every part is terminal (no `VS=question` outstanding).
 
 ## Stage 9 — adjudicate + resolve PENDING
