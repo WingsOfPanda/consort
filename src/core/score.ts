@@ -15,7 +15,9 @@ export function scoreDraftDir(topic: string, opts?: { home?: string; cwd?: strin
 
 export interface ScoreArgs { topicText: string; ensemble: boolean; targets: string[]; }
 
-/** Pull the `--ensemble` boolean flag (token-exact) and `--targets a,b,c` out of the glued $ARGUMENTS. */
+/** Pull the `--ensemble` boolean flag (token-exact) and `--targets a,b,c` out of the glued $ARGUMENTS.
+ *  `--targets` is only split/trimmed/empty-filtered here; slug validation (regex, dir+marker
+ *  existence, dedup) is deferred to the command layer (`score init`). */
 export function parseScoreArgs(tokens: string[]): ScoreArgs {
   let ensemble = false;
   let targets: string[] = [];

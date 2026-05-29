@@ -26,7 +26,7 @@ export function walkSectionState(dir: string, opts: { withStatus: true }): Secti
 export function walkSectionState(dir: string, opts?: { withStatus?: boolean }): string[] | SectionStatus[] {
   let files: string[];
   try { files = readdirSync(dir).filter((f) => f.endsWith(".md")); }
-  catch { return opts?.withStatus ? [] : []; }
+  catch { return []; }
   const names = files.map((f) => f.replace(/\.md$/, "")).sort();
   if (!opts?.withStatus) return names;
   return names.map((name) => {
