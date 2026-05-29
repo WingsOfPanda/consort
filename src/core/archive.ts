@@ -53,7 +53,7 @@ export function finalizeArchived(td: string, opts?: { now?: Date }): void {
   }
 }
 
-export function archiveTopic(topic: string, suite: "consult" | "deploy" | "meditate", opts?: { now?: Date }): void {
+export function archiveTopic(topic: string, suite: "consult" | "deploy" | "meditate" | "score", opts?: { now?: Date }): void {
   const td = topicDir(topic);
   finalizeArchived(td, opts);
   const art = join(td, `_${suite}`);
