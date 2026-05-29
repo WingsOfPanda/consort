@@ -26,7 +26,7 @@ import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 
-function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];

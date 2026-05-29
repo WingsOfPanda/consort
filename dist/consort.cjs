@@ -18665,7 +18665,7 @@ __export(score_exports, {
   walkStateRun: () => walkStateRun
 });
 function usage2() {
-  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff> ...");
+  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state> ...");
   return 2;
 }
 async function run10(args) {
