@@ -1493,7 +1493,7 @@ describe("colors", () => {
 - [ ] **Step 3: Implement `src/core/colors.ts`**
 
 ```ts
-// Morandi 256-color palette (values verbatim from clone-wars lib/colors.sh),
+// Morandi 256-color palette (values carried over verbatim from the prior bash lib/colors.sh),
 // re-keyed to instruments grouped by orchestral section for harmony.
 type Section = "strings" | "woodwinds" | "brass" | "percussion" | "keys" | "early" | "tutti";
 
