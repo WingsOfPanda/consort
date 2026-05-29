@@ -1,6 +1,6 @@
 // tests/score-turn.test.ts
 import { describe, it, expect } from "vitest";
-import { findingsStatus, researchState, parseLatestOffset, scaledTimeout, composeResearchPrompt, composeVerifyPrompt, verifyState } from "../src/core/scoreTurn.js";
+import { findingsStatus, researchState, parseLatestOffset, scaledTimeout, composeResearchPrompt, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState } from "../src/core/scoreTurn.js";
 
 describe("findingsStatus", () => {
   it("null (no findings.md) → missing", () => { expect(findingsStatus(null)).toBe("missing"); });
@@ -100,5 +100,27 @@ describe("composeVerifyPrompt", () => {
     expect(p).not.toContain('"event":"done"');
     expect(p).not.toMatch(/master[ -]?yoda|trooper|commander/i);
     expect(p).toContain('"event":"question"');
+  });
+});
+
+describe("composeDrilldownPrompt", () => {
+  it("names the section, design doc, focus, out path; default focus; no fence/rebrand tokens", () => {
+    const p = composeDrilldownPrompt({ section: "Architecture", designDocPath: "/d/doc.md", focus: "", outPath: "/o/dd.md" });
+    expect(p).toContain("Architecture");
+    expect(p).toContain("/d/doc.md");
+    expect(p).toContain("/o/dd.md");
+    expect(p).toMatch(/Provide more depth, citations, and concrete trade-offs for the Architecture section\./);
+    expect(p).not.toContain("END_OF_INSTRUCTION");
+    expect(p).not.toMatch(/master[ -]?yoda|trooper|commander/i);
+    expect(composeDrilldownPrompt({ section: "Testing", designDocPath: "/d", focus: "edge cases", outPath: "/o" })).toContain("edge cases");
+  });
+});
+
+describe("drilldownState", () => {
+  it("terminal + non-empty file → ok; terminal + empty → missing; null → timeout", () => {
+    expect(drilldownState({ event: "done" }, "notes\n")).toBe("ok");
+    expect(drilldownState({ event: "done" }, "")).toBe("missing");
+    expect(drilldownState({ event: "error", reason: "x" }, null)).toBe("missing");
+    expect(drilldownState(null, "notes")).toBe("timeout");
   });
 });

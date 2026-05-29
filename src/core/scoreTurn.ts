@@ -142,3 +142,28 @@ export function composeVerifyPrompt(itemsText: string, verifyPath: string): stri
     RESEARCH_BLOCKERS,
   ].join("\n");
 }
+
+/** Drilldown wait outcome → state (port of consult-drilldown.sh await_drill): a terminal done|error
+ *  event with a NON-EMPTY drill file → ok; terminal with an empty/absent file → missing (NOT success);
+ *  no terminal event before timeout → timeout. Drilldown does not relay questions. */
+export function drilldownState(ev: OutboxEvent | null, fileText: string | null): "ok" | "missing" | "timeout" {
+  if (!ev) return "timeout";
+  return fileText !== null && fileText.length > 0 ? "ok" : "missing";
+}
+
+/** Drilldown prompt body (port of config/prompt-templates/consult/drilldown.md, rebranded). No
+ *  END_OF_INSTRUCTION/done-line — inboxWrite appends them. */
+export function composeDrilldownPrompt(opts: { section: string; designDocPath: string; focus: string; outPath: string }): string {
+  const focus = opts.focus.trim() || `Provide more depth, citations, and concrete trade-offs for the ${opts.section} section.`;
+  return [
+    `You are drilling deeper into the **${opts.section}** section of a design doc derived from the`,
+    "investigation you just completed.",
+    "",
+    `Read the design doc you produced: ${opts.designDocPath}`,
+    "",
+    `Focus: ${focus}`,
+    "",
+    "Write your expanded notes (with [citation] anchors) to:",
+    `  ${opts.outPath}`,
+  ].join("\n");
+}
