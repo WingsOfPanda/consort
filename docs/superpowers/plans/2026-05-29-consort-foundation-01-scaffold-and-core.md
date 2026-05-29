@@ -433,7 +433,7 @@ ANSI: `RED=\x1b[31m GRN=\x1b[32m YEL=\x1b[33m BLU=\x1b[34m RST=\x1b[0m`. Format 
 - [ ] **Step 1: Write failing tests** `tests/log.test.ts`
 
 ```ts
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createLogger } from "../src/core/log.js";
 
 function capture(): { lines: string[]; stream: NodeJS.WritableStream } {
@@ -533,7 +533,8 @@ import { execFileSync } from "node:child_process";
 
 export function haveCmd(name: string): boolean {
   try {
-    execFileSync("command", ["-v", name], { shell: "/bin/bash", stdio: "ignore" });
+    // `name` is passed as $1 (never interpolated into the command string) → injection-safe + no DEP0190.
+    execFileSync("/bin/sh", ["-c", 'command -v "$1"', "sh", name], { stdio: "ignore" });
     return true;
   } catch {
     return false;
