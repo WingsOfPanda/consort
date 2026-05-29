@@ -259,3 +259,49 @@ live model parts; two latent foundation tmux bugs surfaced + fixed)
   contract, and the N-way diff bucketing all exercised with real codex + claude parts. Cross-verify →
   adjudicate → design walk → audit (Phase D), multi-repo + execution-DAG (Phase E), and
   drilldown/forensics/teardown/present (Phase F) remain. Both parts torn down via `coda` (archived).
+
+# Consort `score` — Phase D (verify → adjudicate → walk → audit) Dogfood Result
+
+**Date:** 2026-05-29 · **Branch:** `feat/score` · **Result:** PASS (full escalated single-repo run with
+two live model parts → an audit-passing deploy-schema design doc)
+
+## Run
+
+- Isolated `CONSORT_HOME=/tmp/consort-dogfood-phaseD`, `CLAUDE_PLUGIN_ROOT=$PWD`, inside tmux; two
+  `consult_validated` providers (codex, claude). Topic `consort verify scope` → slug
+  `consort-verify-scope`, N=2, parts **cello:codex** + **clarinet:claude**.
+- Phase C stages (proven): `spawn-all` (2/2 ready) → `research-send`×2 → `research-wait`×2 (both
+  `FS=ok`; cello 5 / clarinet 13 single-only claims) → `diff` (Agreed + Cello-only 5 + Clarinet-only 13).
+- **Stage 7-8** `verify-send`×2 (cello verifies clarinet's 13, clarinet verifies cello's 5 — neither
+  skipped) → background `verify-wait`×2 → both `VS=ok`. No question fired.
+- **Stage 9** `adjudicate` → `adjudicated-draft.md` (4 sections). The parts produced substantive,
+  cross-confirmed claims about consort's own verify-scope code. **One `- PENDING:`**: cello DISPUTED a
+  Stage-8 claim, correctly noting `Not-verified` marking is N=2-only (`adjudicateN2` reads `input.vs`;
+  `adjudicateNge3` classifies via the verdict map and ignores it). Maestro confirmed against
+  `src/core/scoreAdjudicate.ts` and **moved it to `## Contested`** → `synthesize` proceeds.
+- **Stage 11** `synthesize` (6 seeds) → `walk-state` → Maestro drafted + Approved all 6 sections.
+- **Stage 12** `assemble` → audit **PASS** (`VERDICT=PASS`) → `2026-05-29-consort-verify-scope-design.md`.
+  Forced-FAIL check: a `TODO` marker in `testing.md` produced `ISSUE=todo_marker` + `SECTION=ASK`
+  (the directive's re-walk router), then removing it re-assembled to PASS. Both parts `coda`-archived.
+
+## Findings / fixes surfaced
+
+- **Real, accurate cross-verification.** The two parts independently cited the correct files/lines for
+  `verifyScopeFiles`/`verifyState`/`adjudicateRun` and cross-confirmed each other; the lone dispute was
+  a genuinely sharp catch (the N=2-vs-N≥3 `Not-verified` asymmetry) that the adjudicate→PENDING flow
+  surfaced for resolution exactly as designed. No code bug; the pipeline behaved.
+- **`walk-state` can't distinguish a seed from an approved draft** (observation, not a bug): right
+  after `synthesize` all six seeds report `approved` (the reader only flags `_(skipped)_`). This is
+  byte-faithful to clone-wars `consult_walk_section_state`; the fresh walk drafts over the seeds
+  regardless, and resume is best-effort. Noted for Phase F polish if desired.
+
+## Verification context
+
+- 305 vitest unit tests green (added `score-turn` verify cases, `score-core` `verifyScopeFiles`/`lastTag`,
+  `score-doc` `synthesizeSeeds`, `score-escalation` verify-send/wait/adjudicate/synthesize/walk-state,
+  `score-assemble` `SECTION=`); `tsc --noEmit` + eslint + stale-token gate clean; `dist/consort.cjs`
+  rebuilt + committed.
+- The `VS=` verify machine (incl. `VS=skipped` short-circuit), the verify-scope bucket selection, the
+  N=2 adjudication tiers + PENDING resolution, synthesize seeding, the interactive walk, and the
+  assemble + deploy-audit retry (with `SECTION=` routing) all exercised — single-repo end-to-end.
+  Multi-repo + execution-DAG (Phase E) and drilldown/forensics/teardown/present (Phase F) remain.
