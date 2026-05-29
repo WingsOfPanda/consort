@@ -19627,7 +19627,7 @@ var init_score2 = __esm({
       wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to),
       multiplier: instrumentTimeoutMultiplier
     };
-    DRILLDOWN_TIMEOUT = () => Number(process.env.CONSORT_DRILLDOWN_TIMEOUT_S) || 90;
+    DRILLDOWN_TIMEOUT = () => Number(process.env.CONSORT_DRILLDOWN_TIMEOUT_S) || consultTimeout("research");
   }
 });
 

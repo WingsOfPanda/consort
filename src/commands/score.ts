@@ -509,7 +509,10 @@ function parseRosterTargets(text: string): string[] {
 
 interface DrilldownDeps extends ResearchSendDeps, ResearchWaitDeps {}
 interface DrilldownTestHooks { writeProbe?: (outPath: string) => void; }
-const DRILLDOWN_TIMEOUT = (): number => Number(process.env.CONSORT_DRILLDOWN_TIMEOUT_S) || 90;
+// Default to the research turn timeout (the bash predecessor's findings_timeout_s, ~600s) — a real
+// drill turn (read the doc + write cited notes) routinely exceeds 90s; env-overridable. The wait
+// returns as soon as done/error appears, so a generous ceiling only bounds the hang case.
+const DRILLDOWN_TIMEOUT = (): number => Number(process.env.CONSORT_DRILLDOWN_TIMEOUT_S) || consultTimeout("research");
 
 async function drilldownRun(rest: string[]): Promise<number> {
   return drilldownWith(rest, { ...liveResearchSendDeps, ...liveResearchWaitDeps }, {});
