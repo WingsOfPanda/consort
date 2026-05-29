@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as F from "../src/core/forensics.js";
-import { scrapeAuditLog, scrapeOutbox, scrapeStatus, scrapeSpawnResults, scrapeLogs } from "../src/core/forensics.js";
+import { scrapeAuditLog, scrapeOutbox, scrapeStatus, scrapeSpawnResults, scrapeLogs, scrapeArtDir, renderArtForensics } from "../src/core/forensics.js";
 import { partDir } from "../src/core/paths.js";
 
 afterEach(() => { delete process.env.CONSORT_HOME; });
@@ -68,5 +68,30 @@ describe("forensics scrapers", () => {
     expect(scrapeStatus('{"state":"ready"}', "cello")).toEqual([]);
     expect(scrapeSpawnResults("viola\tcodex\t0\t\ncello\tclaude\t1\tspawn-failed\n").map((x) => x.context)).toEqual(["part=cello"]);
     expect(scrapeLogs("all good\n[error] boom\nplain\n", "dispatch.log").length).toBe(1);
+  });
+});
+
+describe("scrapeArtDir + render", () => {
+  it("collects findings across the art dir + sibling part dirs, deduped", () => {
+    const topicDir = mkdtempSync(join(tmpdir(), "fz-"));
+    const art = join(topicDir, "_score"); mkdirSync(join(art, "design-doc"), { recursive: true });
+    writeFileSync(join(art, "design-doc", "audit.log"), "VERDICT=FAIL\nISSUE=no_goal_section\n");
+    writeFileSync(join(art, "spawn-results.tsv"), "viola\tcodex\t1\tspawn-failed\n");
+    const part = join(topicDir, "viola-codex"); mkdirSync(part, { recursive: true });
+    writeFileSync(join(part, "outbox.jsonl"), '{"event":"error","reason":"x"}\n');
+    writeFileSync(join(part, "status.json"), '{"state":"error"}');
+    const f = scrapeArtDir(art);
+    expect(f.some((x) => x.source === "audit_log")).toBe(true);
+    expect(f.some((x) => x.source === "outbox" && x.context === "part=viola-codex")).toBe(true);
+    expect(f.some((x) => x.source === "status")).toBe(true);
+    expect(f.some((x) => x.source === "spawn_results")).toBe(true);
+  });
+  it("render emits frontmatter + bullets", () => {
+    const md = renderArtForensics({ command: "score", topicSlug: "t", repoHash: "abc", artDir: "/a", invokedAt: "2026-05-29T00:00:00Z" },
+      [{ source: "audit_log", key: "ISSUE=no_goal_section", context: "audit.log" }]);
+    expect(md).toContain("command: score");
+    expect(md).toContain("n_findings_mechanical: 1");
+    expect(md).toContain("## Mechanical findings");
+    expect(md).toContain("- **audit_log** ISSUE=no_goal_section _(source: audit.log)_");
   });
 });

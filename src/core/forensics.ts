@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+
 export type FailureReason = "timeout" | "error_event";
 export const SCROLLBACK_LINES = 50;
 export const NO_EVENT_SENTINEL = "no error event before timeout";
@@ -87,4 +90,39 @@ export function scrapeSpawnResults(text: string): Finding[] {
 /** dispatch.log / session-summary.md: lines with [error] or log_error. */
 export function scrapeLogs(text: string, basename: string): Finding[] {
   return text.split("\n").filter((l) => l.includes("[error]") || l.includes("log_error")).map((l) => ({ source: "session_log", key: l.trim(), context: basename }));
+}
+
+/** Best-effort walk of an _score art dir + its sibling part dirs → deduped Finding[]. Each read is
+ *  individually guarded; any failure contributes nothing (never throws). Outbox/status part label =
+ *  the part dir's basename. */
+export function scrapeArtDir(artDir: string): Finding[] {
+  const out: Finding[] = [];
+  const read = (p: string): string | null => { try { return readFileSync(p, "utf8"); } catch { return null; } };
+  const a = read(join(artDir, "design-doc", "audit.log")); if (a !== null) out.push(...scrapeAuditLog(a));
+  const sr = read(join(artDir, "spawn-results.tsv")); if (sr !== null) out.push(...scrapeSpawnResults(sr));
+  try { for (const f of readdirSync(artDir)) { if (f.endsWith(".log") || f === "session-summary.md") { const t = read(join(artDir, f)); if (t !== null) out.push(...scrapeLogs(t, f)); } } } catch { /* */ }
+  // sibling part dirs live under the TOPIC dir (parent of _score): <topic>/<inst>-<model>/
+  const topicDir = dirname(artDir);
+  try {
+    for (const d of readdirSync(topicDir, { withFileTypes: true })) {
+      if (!d.isDirectory() || d.name.startsWith("_") || d.name.startsWith(".")) continue;
+      const ob = read(join(topicDir, d.name, "outbox.jsonl")); if (ob !== null) out.push(...scrapeOutbox(ob, d.name));
+      const st = read(join(topicDir, d.name, "status.json")); if (st !== null) out.push(...scrapeStatus(st, d.name));
+    }
+  } catch { /* */ }
+  const seen = new Set<string>();
+  return out.filter((f) => { const k = `${f.source}|${f.key}|${f.context}`; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+export interface ForensicsMeta { command: string; topicSlug: string; repoHash: string; artDir: string; invokedAt: string; }
+
+/** YAML frontmatter + `## Mechanical findings` bullets. */
+export function renderArtForensics(meta: ForensicsMeta, findings: Finding[]): string {
+  const fm = [
+    "---", `command: ${meta.command}`, `topic: ${meta.topicSlug}`, `topic_slug: ${meta.topicSlug}`,
+    `repo_hash: ${meta.repoHash}`, `art_dir: ${meta.artDir}`, `invoked_at: ${meta.invokedAt}`,
+    `n_findings_mechanical: ${findings.length}`, "---", "",
+  ].join("\n");
+  const body = "## Mechanical findings\n\n" + findings.map((f) => `- **${f.source}** ${f.key} _(source: ${f.context})_`).join("\n") + "\n";
+  return fm + body;
 }
