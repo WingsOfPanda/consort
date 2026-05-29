@@ -13,7 +13,7 @@ export function runnerAt(cwd: string): Runner {
         return { code: 0, stdout };
       } catch (e: unknown) {
         const err = e as { status?: number; stdout?: Buffer | string };
-        return { code: typeof err.status === "number" ? err.status : 1, stdout: err.stdout ? String(err.stdout) : "" };
+        return { code: typeof err.status === "number" ? err.status : 1, stdout: err.stdout != null ? String(err.stdout) : "" };
       }
     },
   };

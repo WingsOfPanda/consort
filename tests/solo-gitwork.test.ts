@@ -109,12 +109,13 @@ describe("finishBranch", () => {
     expect(calls).toContainEqual(["git", "checkout", "-q", "main"]);
   });
   it("remote, push ok, gh absent → pr-pushed-no-gh", () => {
-    const { r } = fakeRunner({
+    const { r, calls } = fakeRunner({
       "git remote": { code: 0, stdout: "origin" },
       "git push -q -u origin feat/solo-auth": { code: 0, stdout: "" },
       "git remote get-url origin": { code: 0, stdout: "url" },
     });
     expect(finishBranch(r, { branch: "feat/solo-auth", startBranch: "main", hasGh: false }).outcome).toBe("pr-pushed-no-gh");
+    expect(calls.some((c) => c[0] === "gh")).toBe(false);
   });
   it("push fails → pr-failed-kept", () => {
     const { r } = fakeRunner({
