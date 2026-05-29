@@ -1525,11 +1525,11 @@ const PALETTE: Record<string, Entry> = {
   vibraphone: { section: "percussion", primary: "colour243", secondary: "colour250" },
   marimba:    { section: "percussion", primary: "colour96",  secondary: "colour250" },
   xylophone:  { section: "percussion", primary: "colour250", secondary: "colour241" },
-  glockenspiel:{ section: "percussion", primary: "colour247", secondary: "colour250" },
+  glockenspiel: { section: "percussion", primary: "colour247", secondary: "colour250" },
   // keys — cream/beige
   piano:      { section: "keys", primary: "colour187", secondary: "colour250" },
   organ:      { section: "keys", primary: "colour181", secondary: "colour250" },
-  harpsichord:{ section: "keys", primary: "colour146", secondary: "colour250" },
+  harpsichord: { section: "keys", primary: "colour146", secondary: "colour250" },
   // early — mauve/plum
   lute:       { section: "early", primary: "colour139", secondary: "colour241" },
   theorbo:    { section: "early", primary: "colour97",  secondary: "colour187" },
@@ -1562,7 +1562,7 @@ export function ansiFromColor(color: string): string {
   return "";
 }
 
-const RULE = "━".repeat(41);
+const RULE = "━".repeat(43);
 export function renderBannerHead(label: string, color: string): string {
   const c = ansiFromColor(color), r = "\x1b[0m", b = "\x1b[1m";
   return [
