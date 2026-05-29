@@ -1,7 +1,7 @@
 // tests/score-core.test.ts
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode } from "../src/core/score.js";
+import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode, verifyScopeFiles, lastTag } from "../src/core/score.js";
 
 describe("score paths", () => {
   it("scoreArtDir / scoreDraftDir hang off the topic dir under _score", () => {
@@ -61,5 +61,24 @@ describe("parseMultiRepoMode", () => {
     expect(parseMultiRepoMode(" single-sub ")).toBe("single-sub");
     expect(parseMultiRepoMode("garbage")).toBe("single");
     expect(parseMultiRepoMode("")).toBe("single");
+  });
+});
+
+describe("verifyScopeFiles", () => {
+  it("N=2: only the other instrument's _only_items.txt", () => {
+    expect(verifyScopeFiles("viola", ["viola", "cello"])).toEqual(["cello_only_items.txt"]);
+    expect(verifyScopeFiles("cello", ["viola", "cello"])).toEqual(["viola_only_items.txt"]);
+  });
+  it("N=3: other singles + pairs not containing target (skip consensus + own)", () => {
+    expect(verifyScopeFiles("viola", ["viola", "cello", "harp"]))
+      .toEqual(["cello_only_items.txt", "harp_only_items.txt", "cello+harp_only.txt"]);
+  });
+});
+
+describe("lastTag", () => {
+  it("returns the last value of the tag; null when absent", () => {
+    expect(lastTag("VS=skipped\n", "VS")).toBe("skipped");
+    expect(lastTag("OFFSET=1\nVS=question\nOFFSET=9\nVS=ok\n", "VS")).toBe("ok");
+    expect(lastTag("OFFSET=1\n", "VS")).toBeNull();
   });
 });

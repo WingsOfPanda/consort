@@ -97,3 +97,27 @@ export function parsePanesFile(text: string): Map<string, string> {
   }
   return m;
 }
+
+/** Bucket filenames whose verdicts `target` should verify — every file where target is NOT a member
+ *  (port of consult-verify-send.sh): others' `<c>_only_items.txt`, then (N>=3) `<a>+<b>_only.txt` with
+ *  target ∉ {a,b}. consensus.txt is always excluded (target is a member). */
+export function verifyScopeFiles(target: string, instruments: string[]): string[] {
+  const out: string[] = [];
+  for (const c of instruments) if (c !== target) out.push(`${c}_only_items.txt`);
+  if (instruments.length >= 3) {
+    for (let i = 0; i < instruments.length; i++) {
+      for (let j = i + 1; j < instruments.length; j++) {
+        const a = instruments[i], b = instruments[j];
+        if (a !== target && b !== target) out.push(`${a}+${b}_only.txt`);
+      }
+    }
+  }
+  return out;
+}
+
+/** Last `^<tag>=<value>$` value in a KV state file's text; null if absent. */
+export function lastTag(text: string, tag: string): string | null {
+  const re = new RegExp(`^${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(.*)$`, "gm");
+  const ms = [...text.matchAll(re)];
+  return ms.length ? ms[ms.length - 1][1].trim() : null;
+}
