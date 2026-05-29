@@ -9,8 +9,9 @@ describe("solo dispatcher", () => {
   });
 });
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { freshHome } from "./helpers/tmpHome.js";
 import { soloArtDir } from "../src/core/solo.js";
 
@@ -68,3 +69,53 @@ function captureStdout() {
   (process.stdout as any).write = (chunk: any, ..._rest: any[]) => { buf += String(chunk); return true; };
   return { text: () => buf, restore: () => { (process.stdout as any).write = orig; } };
 }
+
+import { branchWith } from "../src/commands/solo.js";
+import type { Runner } from "../src/core/gitwork.js";
+
+describe("solo branch (branchWith core)", () => {
+  let h: { home: string; cleanup: () => void };
+  beforeEach(() => { h = freshHome(); });
+  afterEach(() => { h.cleanup(); });
+
+  function fake(): { r: Runner; calls: string[][] } {
+    const calls: string[][] = [];
+    const r: Runner = { run(cmd, args) {
+      calls.push([cmd, ...args]);
+      const k = [cmd, ...args].join(" ");
+      if (k === "git rev-parse --git-dir") return { code: 0, stdout: ".git" };
+      if (k === "git symbolic-ref --short HEAD") return { code: 0, stdout: "main" };
+      if (k === "git rev-parse HEAD") return { code: 0, stdout: "base000" };
+      if (k === "git status --porcelain") return { code: 0, stdout: "" };
+      if (k === "git show-ref --verify --quiet refs/heads/feat/solo-auth") return { code: 1, stdout: "" };
+      return { code: 0, stdout: "" };
+    } };
+    return { r, calls };
+  }
+
+  it("writes execute/ snapshot files and creates the branch; rc 0", async () => {
+    // pre-create _solo so atomicWrite's parent exists (init normally does this)
+    const { soloExecDir } = await import("../src/core/solo.js");
+    mkdtempSync(join(tmpdir(), "x-")); // noop to keep import order
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(soloExecDir("auth"), { recursive: true });
+
+    const { r, calls } = fake();
+    const rc = await branchWith("auth", "/proj", r);
+    expect(rc).toBe(0);
+    expect(calls).toContainEqual(["git", "checkout", "-q", "-b", "feat/solo-auth"]);
+    const exec = soloExecDir("auth");
+    expect(readFileSync(join(exec, "target_cwd.txt"), "utf8").trim()).toBe("/proj");
+    expect(readFileSync(join(exec, "start-branch.txt"), "utf8").trim()).toBe("main");
+    expect(readFileSync(join(exec, "branch-base.sha"), "utf8").trim()).toBe("base000");
+    expect(readFileSync(join(exec, "branch.txt"), "utf8").trim()).toBe("feat/solo-auth");
+  });
+
+  it("not-git target → rc 1", async () => {
+    const r: Runner = { run: () => ({ code: 128, stdout: "" }) };
+    const { mkdirSync } = await import("node:fs");
+    const { soloExecDir } = await import("../src/core/solo.js");
+    mkdirSync(soloExecDir("nope"), { recursive: true });
+    expect(await branchWith("nope", "/proj", r)).toBe(1);
+  });
+});

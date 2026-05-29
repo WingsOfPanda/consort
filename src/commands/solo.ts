@@ -10,6 +10,8 @@ import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs } from "../core/solo
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
+import { runnerAt, preSnapshot, createOrResumeBranch } from "../core/gitwork.js";
+import type { Runner } from "../core/gitwork.js";
 
 function usage(): number {
   log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|summary> ...");
@@ -64,7 +66,28 @@ async function initRun(tokens: string[]): Promise<number> {
   process.stdout.write(`SLUG=${slug}\nINSTRUMENT=${instrument}\nPROVIDER=${provider}\nFINISH=${finish ? "yes" : "no"}\nTARGET=${target}\n`);
   return 0;
 }
-async function branchRun(_a: string[]): Promise<number> { log.error("solo branch: not implemented"); return 2; }
+async function branchRun(rest: string[]): Promise<number> {
+  const topic = rest[0];
+  if (!topic) { log.error("usage: solo branch <topic>"); return 2; }
+  const target = repoRoot();
+  return branchWith(topic, target, runnerAt(target));
+}
+
+/** Testable core: snapshot + branch the target repo, recording execute/ facts. */
+export async function branchWith(topic: string, target: string, r: Runner): Promise<number> {
+  const snap = preSnapshot(r, topic);
+  if (snap.state === "not-git") { log.error(`solo branch: ${target} is not a git repository`); return 1; }
+  const branch = `feat/solo-${topic}`;
+  const onBranch = createOrResumeBranch(r, branch);
+  const exec = soloExecDir(topic);
+  atomicWrite(join(exec, "target_cwd.txt"), target + "\n");
+  atomicWrite(join(exec, "start-branch.txt"), snap.branch + "\n");
+  atomicWrite(join(exec, "branch-base.sha"), snap.baseSha + "\n");
+  atomicWrite(join(exec, "branch.txt"), branch + "\n");
+  if (!onBranch) { log.warn(`solo branch: checkout ${branch} failed; staying on ${snap.branch}`); }
+  log.ok(`solo branch: ${branch} (snapshot=${snap.state}, base=${snap.baseSha.slice(0, 8)})`);
+  return 0;
+}
 async function turnSendRun(_a: string[]): Promise<number> { log.error("solo turn-send: not implemented"); return 2; }
 async function turnWaitRun(_a: string[]): Promise<number> { log.error("solo turn-wait: not implemented"); return 2; }
 async function detectTestRun(_a: string[]): Promise<number> { log.error("solo detect-test: not implemented"); return 2; }
