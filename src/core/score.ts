@@ -63,3 +63,37 @@ export function parseMultiRepoMode(text: string): DocMode {
   const v = text.replace(/\s/g, "");
   return v === "multi" ? "multi" : v === "single-sub" ? "single-sub" : "single";
 }
+
+/** Preflight --roster arg from roster rows: "<instrument>:<provider>,..." (model = provider). */
+export function spawnRosterArg(rows: RosterRow[]): string {
+  return rows.map((r) => `${r.instrument}:${r.provider}`).join(",");
+}
+
+export interface SpawnResult { instrument: string; provider: string; rc: number; }
+
+/** spawn-results.tsv body: one `<instrument>\t<provider>\t<rc>\t<reason>` row per part (no header;
+ *  mirrors spawn-batch.sh). reason is "" on success, "spawn-failed" otherwise. */
+export function spawnResultsTsv(results: SpawnResult[]): string {
+  if (!results.length) return "";
+  return results.map((r) => `${r.instrument}\t${r.provider}\t${r.rc}\t${r.rc === 0 ? "" : "spawn-failed"}`).join("\n") + "\n";
+}
+
+/** Batch-spawn exit code, ported from spawn-batch.sh: all ok → 0; none ok → 2; partial → 1. */
+export function spawnTally(rcs: number[]): 0 | 1 | 2 {
+  const ok = rcs.filter((rc) => rc === 0).length;
+  if (ok === rcs.length) return 0;
+  if (ok === 0) return 2;
+  return 1;
+}
+
+/** Parse preflight-panes.txt (TSV `<instrument>\t<pane>`; skip #/blank) into a map. */
+export function parsePanesFile(text: string): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const [instrument, pane] = t.split("\t");
+    if (instrument && pane) m.set(instrument, pane);
+  }
+  return m;
+}
