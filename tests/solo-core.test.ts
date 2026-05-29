@@ -33,6 +33,8 @@ describe("parseSoloArgs", () => {
       .toEqual({ topicText: "fix bug", provider: "agy", finish: false });
     expect(parseSoloArgs(["--provider=opencode", "tidy", "imports", "--finish"]))
       .toEqual({ topicText: "tidy imports", provider: "opencode", finish: true });
+    expect(parseSoloArgs(["fix", "--provider", "--finish", "bug"]))
+      .toEqual({ topicText: "fix bug", provider: undefined, finish: true });
   });
 });
 
@@ -85,6 +87,8 @@ describe("renderSummary", () => {
     expect(md).toContain("aborted_phase: build");
     expect(md).toContain("aborted_reason: turn failed twice (TS=failed)");
     expect(md).toContain("RESUME.md");
+    expect(md).not.toContain("duration_seconds");
+    expect(md).not.toContain("ended:");
   });
 });
 

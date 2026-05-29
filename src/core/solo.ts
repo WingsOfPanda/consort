@@ -26,7 +26,11 @@ export function parseSoloArgs(tokens: string[]): SoloArgs {
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t === "--finish") { finish = true; continue; }
-    if (t === "--provider") { provider = tokens[i + 1]; i++; continue; }
+    if (t === "--provider") {
+      const v = tokens[i + 1];
+      if (v && !v.startsWith("--")) { provider = v; i++; }
+      continue; // drop the bare --provider token regardless
+    }
     if (t.startsWith("--provider=")) { provider = t.slice("--provider=".length); continue; }
     text.push(t);
   }
