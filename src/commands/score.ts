@@ -12,11 +12,14 @@ import {
 import { assembleDoc, SECTIONS_SINGLE, SECTIONS_MULTI, type DocMode } from "../core/scoreDoc.js";
 import { auditDoc } from "../core/audit.js";
 import { readProviderList } from "../core/providers.js";
-import { activeProvidersPath } from "../core/paths.js";
+import { activeProvidersPath, partDir } from "../core/paths.js";
 import { instrumentConsultValidated } from "../core/contracts.js";
 import { pickInstruments } from "../core/instruments.js";
+import { outboxOffset, outboxPath } from "../core/ipc.js";
+import { composeResearchPrompt } from "../core/scoreTurn.js";
+import { run as sendRun } from "./send.js";
 
-function usage(): number { log.error("usage: score <init|assemble> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
@@ -24,6 +27,7 @@ export async function run(args: string[]): Promise<number> {
   switch (verb) {
     case "init": return initRun(applyArgsFile(rest));
     case "assemble": return assembleRun(rest);
+    case "research-send": return researchSendRun(rest);
     default: return usage();
   }
 }
@@ -112,6 +116,44 @@ async function assembleRun(rest: string[]): Promise<number> {
   }
   log.ok(`score assemble: audit PASSED`);
   process.stdout.write(out + "\n");
+  return 0;
+}
+
+// ---- Phase C: escalation (spawn-all → research → diff) ----
+
+export interface ResearchSendDeps {
+  offsetFor(instrument: string, model: string, topic: string): number;
+  send(args: string[]): Promise<number>;
+}
+const liveResearchSendDeps: ResearchSendDeps = {
+  offsetFor: (i, m, t) => outboxOffset(outboxPath(i, m, t)),
+  send: sendRun,
+};
+
+async function researchSendRun(rest: string[]): Promise<number> {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) { log.error("usage: score research-send <topic> <instrument> <provider>"); return 2; }
+  return researchSendWith(topic, instrument, provider, liveResearchSendDeps);
+}
+
+export async function researchSendWith(topic: string, instrument: string, provider: string, d: ResearchSendDeps): Promise<number> {
+  const art = scoreArtDir(topic);
+  const stateFile = join(art, `research-${instrument}.txt`);
+  if (existsSync(stateFile)) { log.error(`score research-send: ${stateFile} exists; rm to retry`); return 1; }
+
+  const topicText = readIf(join(art, "topic.txt")).trim();
+  if (!topicText) { log.error(`score research-send: topic.txt missing/empty at ${art} (run score init)`); return 1; }
+
+  const findingsPath = join(partDir(instrument, provider, topic), "findings.md");
+  const promptFile = join(art, `${instrument}_research_prompt.md`);
+  atomicWrite(promptFile, composeResearchPrompt(topicText, findingsPath));
+
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}\n`);
+
+  const rc = await d.send(["--from", "maestro", instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) { log.error(`score research-send: send failed (rc=${rc}); ${stateFile} kept (rm to redo)`); return 1; }
+  log.ok(`score research-send: ${instrument} offset=${offset}`);
   return 0;
 }
 
