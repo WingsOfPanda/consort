@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, readFileSync as rfs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as F from "../src/core/forensics.js";
-import { scrapeAuditLog, scrapeOutbox, scrapeStatus, scrapeSpawnResults, scrapeLogs, scrapeArtDir, renderArtForensics } from "../src/core/forensics.js";
+import { scrapeAuditLog, scrapeOutbox, scrapeStatus, scrapeSpawnResults, scrapeLogs, scrapeArtDir, renderArtForensics, captureArtDir } from "../src/core/forensics.js";
 import { partDir } from "../src/core/paths.js";
 
 afterEach(() => { delete process.env.CONSORT_HOME; });
@@ -93,5 +93,28 @@ describe("scrapeArtDir + render", () => {
     expect(md).toContain("n_findings_mechanical: 1");
     expect(md).toContain("## Mechanical findings");
     expect(md).toContain("- **audit_log** ISSUE=no_goal_section _(source: audit.log)_");
+  });
+});
+
+describe("captureArtDir", () => {
+  let prev: string | undefined;
+  beforeEach(() => { prev = process.env.CONSORT_HOME; });
+  afterEach(() => { if (prev === undefined) delete process.env.CONSORT_HOME; else process.env.CONSORT_HOME = prev; });
+
+  it("zero findings → '' and no file", () => {
+    const home = mkdtempSync(join(tmpdir(), "fh-")); process.env.CONSORT_HOME = home;
+    const art = join(mkdtempSync(join(tmpdir(), "fa-")), "clean", "_score"); mkdirSync(art, { recursive: true });
+    expect(captureArtDir({ artDir: art, command: "score", now: new Date("2026-05-29T12:00:00Z") })).toBe("");
+  });
+  it("findings → writes under <home>/forensics/<date>/, returns the path", () => {
+    const home = mkdtempSync(join(tmpdir(), "fh-")); process.env.CONSORT_HOME = home;
+    const topicDir = join(mkdtempSync(join(tmpdir(), "ft-")), "mytopic"); const art = join(topicDir, "_score");
+    mkdirSync(join(art, "design-doc"), { recursive: true });
+    writeFileSync(join(art, "design-doc", "audit.log"), "ISSUE=no_goal_section\n");
+    const p = captureArtDir({ artDir: art, command: "score", now: new Date("2026-05-29T12:34:56Z") });
+    expect(p).toContain(join(home, "forensics", "2026-05-29"));
+    expect(p).toMatch(/12-34-56-score-mytopic\.md$/);
+    expect(existsSync(p)).toBe(true);
+    expect(rfs(p, "utf8")).toContain("ISSUE=no_goal_section");
   });
 });

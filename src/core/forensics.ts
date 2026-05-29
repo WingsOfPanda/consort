@@ -1,5 +1,7 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, readdirSync, mkdirSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
+import { globalRoot, repoHash } from "./paths.js";
+import { atomicWrite } from "./atomic.js";
 
 export type FailureReason = "timeout" | "error_event";
 export const SCROLLBACK_LINES = 50;
@@ -125,4 +127,27 @@ export function renderArtForensics(meta: ForensicsMeta, findings: Finding[]): st
   ].join("\n");
   const body = "## Mechanical findings\n\n" + findings.map((f) => `- **${f.source}** ${f.key} _(source: ${f.context})_`).join("\n") + "\n";
   return fm + body;
+}
+
+/** Best-effort forensics capture for an art dir. Returns the written path, or "" on zero findings or
+ *  ANY failure (writes nothing). Never throws — guards the entire body. Path lives under
+ *  globalRoot()/forensics/<UTC-date>/<UTC-time>-<command>-<topicSlug>.md, OUTSIDE the per-project
+ *  state tree so it survives teardown + archive. */
+export function captureArtDir(opts: { artDir: string; command: string; now?: Date }): string {
+  try {
+    const findings = scrapeArtDir(opts.artDir);
+    if (findings.length === 0) return "";
+    const now = opts.now ?? new Date();
+    const iso = now.toISOString();        // YYYY-MM-DDTHH:MM:SS.sssZ
+    const date = iso.slice(0, 10);
+    const time = iso.slice(11, 19).replace(/:/g, "-");
+    const topicSlug = basename(dirname(opts.artDir));
+    let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
+    const dir = join(globalRoot(), "forensics", date);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${time}-${opts.command}-${topicSlug}.md`);
+    const md = renderArtForensics({ command: opts.command, topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") }, findings);
+    atomicWrite(path, md);
+    return path;
+  } catch { return ""; }
 }
