@@ -32,6 +32,19 @@ export function checkDagSection(docText: string): boolean {
   return true;
 }
 
+/** The numbered `## Execution DAG` lines that fail parseDagLine (for the pre-Approve gate's stderr).
+ *  Mirrors checkDagSection's body extraction + numbered-line detection; absent/narrative-only → []. */
+export function dagMalformedLines(docText: string): string[] {
+  const body: string[] = [];
+  let inDag = false;
+  for (const l of docText.split("\n")) {
+    if (/^## Execution DAG[ \t]*$/.test(l)) { inDag = true; continue; }
+    if (/^## /.test(l)) { inDag = false; continue; }
+    if (inDag) body.push(l);
+  }
+  return body.filter((l) => /^[ \t]*\d+\./.test(l) && parseDagLine(l) === null);
+}
+
 /** Port of consult_emit_soft_dag (lib/consult-walk.sh:41-57). "1,2" deps render as "1, 2"; "none"/"" → no suffix. */
 export function emitSoftDag(rows: SoftDagRow[]): string {
   return rows

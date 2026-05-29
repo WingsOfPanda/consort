@@ -21,6 +21,7 @@ import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../
 import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier } from "../core/contracts.js";
 import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState } from "../core/scoreTurn.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
+import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
 import { walkSectionState, auditIssueToSection } from "../core/scoreWalk.js";
 import { run as sendRun } from "./send.js";
@@ -45,6 +46,8 @@ export async function run(args: string[]): Promise<number> {
     case "synthesize": return synthesizeRun(rest);
     case "walk-state": return walkStateRun(rest);
     case "detect-multi-repo": return detectMultiRepoRun(rest);
+    case "emit-dag": return emitDagRun(rest);
+    case "check-dag": return checkDagRun(rest);
     default: return usage();
   }
 }
@@ -460,6 +463,35 @@ export async function detectMultiRepoRun(rest: string[]): Promise<number> {
   for (const h of hits) process.stdout.write(`${h.slug}\t${h.marker}\n`);
   log.ok(`score detect-multi-repo: ${hits.length} hit(s) under ${cwd}`);
   return 0;
+}
+
+export async function emitDagRun(rest: string[]): Promise<number> {
+  const topic = rest[0];
+  if (!topic) { log.error("usage: score emit-dag <topic>"); return 2; }
+  const art = scoreArtDir(topic);
+  const rowsPath = join(art, "dag-rows.tsv");
+  if (!existsSync(rowsPath)) { log.error(`score emit-dag: ${rowsPath} missing (the directive writes step\\trepo\\tdesc\\tdeps rows)`); return 1; }
+  const rows: SoftDagRow[] = readFileSync(rowsPath, "utf8").split("\n")
+    .map((l) => l.replace(/\r$/, "")).filter((l) => l.length > 0 && !l.startsWith("#"))
+    .map((l) => { const [step, repo, desc, deps] = l.split("\t"); return { step, repo, desc, deps: deps ?? "none" }; })
+    .filter((r) => r.step && r.repo);
+  const draftDir = scoreDraftDir(topic);
+  mkdirSync(draftDir, { recursive: true });
+  atomicWrite(join(draftDir, "execution-dag.md"), `## Execution DAG\n\n${emitSoftDag(rows)}\n`);
+  log.ok(`score emit-dag: wrote execution-dag.md (${rows.length} steps)`);
+  return 0;
+}
+
+export async function checkDagRun(rest: string[]): Promise<number> {
+  const topic = rest[0];
+  if (!topic) { log.error("usage: score check-dag <topic>"); return 2; }
+  const draft = join(scoreDraftDir(topic), "execution-dag.md");
+  if (!existsSync(draft)) { log.error(`score check-dag: ${draft} missing (run score emit-dag first / draft the section)`); return 1; }
+  const text = readFileSync(draft, "utf8");
+  if (checkDagSection(text)) { log.ok("score check-dag: Execution DAG parses"); return 0; }
+  for (const l of dagMalformedLines(text)) process.stderr.write(l + "\n");
+  log.error("score check-dag: Execution DAG has malformed numbered lines (see above)");
+  return 1;
 }
 
 /** targets.txt may be a plain slug-per-line list (init) or a TSV (multi-repo detect, Phase E). */

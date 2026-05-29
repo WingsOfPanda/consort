@@ -7,7 +7,7 @@ import { freshHome } from "./helpers/tmpHome.js";
 import { scoreArtDir } from "../src/core/score.js";
 import { partDir } from "../src/core/paths.js";
 import { outboxPath } from "../src/core/ipc.js";
-import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun } from "../src/commands/score.js";
+import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun, emitDagRun, checkDagRun } from "../src/commands/score.js";
 
 let env: { home: string; cleanup: () => void };
 beforeEach(() => { env = freshHome(); });
@@ -342,5 +342,27 @@ describe("score detect-multi-repo", () => {
     expect(out).toContain("api\t");
     expect(out).toContain("web\t");
     expect(out).not.toContain("zzz\t"); // slug not in corpus
+  });
+});
+
+describe("score emit-dag + check-dag", () => {
+  it("emit-dag renders dag-rows.tsv to the execution-dag draft; check-dag passes it", async () => {
+    const art = scoreArtDir("t"); mkdirSync(join(art, "design-doc", ".draft"), { recursive: true });
+    writeFileSync(join(art, "dag-rows.tsv"), "1\tapi\tbuild the API\tnone\n2\tweb\tship the web app\t1\n");
+    expect(await emitDagRun(["t"])).toBe(0);
+    const draft = readFileSync(join(art, "design-doc", ".draft", "execution-dag.md"), "utf8");
+    expect(draft).toMatch(/^## Execution DAG\n/);
+    expect(draft).toContain("1. api — build the API");
+    expect(draft).toContain("2. web — ship the web app (depends on 1)");
+    expect(await checkDagRun(["t"])).toBe(0); // conformant
+  });
+  it("check-dag rc 1 + malformed line when the draft uses a hyphen", async () => {
+    const art = scoreArtDir("t"); mkdirSync(join(art, "design-doc", ".draft"), { recursive: true });
+    writeFileSync(join(art, "design-doc", ".draft", "execution-dag.md"), "## Execution DAG\n\n1. api - bad dash\n");
+    const errs: string[] = []; const s = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (x: string) => { errs.push(String(x)); return true; };
+    let rc = 0; try { rc = await checkDagRun(["t"]); } finally { (process.stderr as any).write = s; }
+    expect(rc).toBe(1);
+    expect(errs.join("")).toContain("1. api - bad dash");
   });
 });

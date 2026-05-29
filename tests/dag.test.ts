@@ -1,6 +1,17 @@
 // tests/dag.test.ts
 import { describe, it, expect } from "vitest";
-import { parseDagLine, checkDagSection, emitSoftDag } from "../src/core/dag.js";
+import { parseDagLine, checkDagSection, emitSoftDag, dagMalformedLines } from "../src/core/dag.js";
+
+describe("dagMalformedLines", () => {
+  it("returns [] for a conformant section and the bad line otherwise", () => {
+    expect(dagMalformedLines("## Execution DAG\n\n1. api — build it\n2. web — ship it (depends on 1)\n")).toEqual([]);
+    expect(dagMalformedLines("## Execution DAG\n\n1. api - build it\n2. web — ok\n")).toEqual(["1. api - build it"]);
+  });
+  it("absent section / narrative-only → []", () => {
+    expect(dagMalformedLines("## Architecture\n\nstuff\n")).toEqual([]);
+    expect(dagMalformedLines("## Execution DAG\n\nfree prose, no numbered lines\n")).toEqual([]);
+  });
+});
 
 describe("parseDagLine", () => {
   it("plain line, no deps", () => {
