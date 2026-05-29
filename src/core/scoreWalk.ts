@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Port of cw_consult_audit_issue_to_section. Section name | "ASK" | "header" | "" (unknown). */
+/** Port of consult_audit_issue_to_section (lib/consult-walk.sh:18-33). Section name | "ASK" | "header" | "" (unknown). */
 export function auditIssueToSection(key: string): string {
   switch (key) {
     case "no_goal_section": return "goal";
@@ -19,7 +19,7 @@ export function auditIssueToSection(key: string): string {
 
 export interface SectionStatus { name: string; status: "approved" | "skipped"; }
 
-/** Port of cw_consult_walk_section_state. Lists *.md basenames (sorted). A draft whose whitespace-
+/** Port of consult_walk_section_state (lib/consult-walk.sh:106-129). Lists *.md basenames (sorted). A draft whose whitespace-
  *  stripped body is exactly "_(skipped)_" is skipped; anything else approved. Missing dir → []. */
 export function walkSectionState(dir: string): string[];
 export function walkSectionState(dir: string, opts: { withStatus: true }): SectionStatus[];

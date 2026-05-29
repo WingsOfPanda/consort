@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 export interface RepoHit { slug: string; marker: string; }
 
-/** Port of cw_consult_detect_multi_repo. Sibling dirs with CLAUDE.md/AGENTS.md whose slug is a
+/** Port of consult_detect_multi_repo (lib/consult-walk.sh:75-98). Sibling dirs with CLAUDE.md/AGENTS.md whose slug is a
  *  case-insensitive substring of the corpus (= adjudicated.md content). */
 export function detectMultiRepo(cwd: string, corpus: string): RepoHit[] {
   const corpusLower = corpus.toLowerCase();

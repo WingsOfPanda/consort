@@ -1,7 +1,7 @@
 // src/core/audit.ts
 import { checkDagSection } from "./dag.js";
 
-/** clone-wars CW_SLUG_REGEX_BASE (lib/state.sh:10). */
+/** Behavioral source: SLUG_REGEX_BASE (lib/state.sh:10). */
 export const SLUG_REGEX = /^[A-Za-z0-9._-]+$/;
 
 const TARGET_HEADER = /^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+/gm;
@@ -11,7 +11,7 @@ export type TargetResult =
   | { present: true; valid: true; slug: string }
   | { present: true; valid: false };
 
-/** Port of cw_deploy_extract_target. No header → present:false; 1 valid → slug; 1 invalid or 2+ → valid:false. */
+/** Port of deploy_extract_target (lib/deploy.sh:391-419). No header → present:false; 1 valid → slug; 1 invalid or 2+ → valid:false. */
 export function extractTarget(docText: string): TargetResult {
   const matches = docText.match(TARGET_HEADER);
   if (!matches || matches.length === 0) return { present: false };
@@ -23,7 +23,7 @@ export function extractTarget(docText: string): TargetResult {
 
 export interface AuditResult { verdict: "PASS" | "FAIL"; issues: string[]; }
 
-/** Port of cw_deploy_audit_doc — a pure read-only markdown linter. Issue ORDER mirrors the Bash. */
+/** Port of deploy_audit_doc (lib/deploy.sh:68-122) — a pure read-only markdown linter. Issue ORDER mirrors the Bash. */
 export function auditDoc(docText: string): AuditResult {
   const issues: string[] = [];
   if (!/^##\s+Goal\b/m.test(docText)) issues.push("no_goal_section");

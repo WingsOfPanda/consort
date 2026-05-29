@@ -5,7 +5,7 @@ export interface SoftDagRow { step: string; repo: string; desc: string; deps: st
 const LINE_RE = /^(\d+)\.[ \t]+([A-Za-z0-9_-]+)(?:[ \t]+\((\/[^)]+)\))?[ \t]+—[ \t]+(.+)$/;
 const DEPS_RE = /^(.+?)[ \t]+\(depends[ \t]+on[ \t]+([0-9, ]+)\)[ \t]*$/;
 
-/** Port of cw_deploy_dag_parse_line. Returns the parsed node or null on a malformed line. */
+/** Port of deploy_dag_parse_line (lib/deploy-dag.sh:22-72). Returns the parsed node or null on a malformed line. */
 export function parseDagLine(line: string): DagNode | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
@@ -15,7 +15,7 @@ export function parseDagLine(line: string): DagNode | null {
   return { step, repo, path, desc: rest, deps: "none" };
 }
 
-/** Port of cw_deploy_dag_check_section. Absent/no-numbered-lines → ok; any malformed numbered line → fail. */
+/** Port of deploy_dag_check_section (lib/deploy-dag.sh:22-72). Absent/no-numbered-lines → ok; any malformed numbered line → fail. */
 export function checkDagSection(docText: string): boolean {
   const lines = docText.split("\n");
   let inDag = false;
@@ -32,7 +32,7 @@ export function checkDagSection(docText: string): boolean {
   return true;
 }
 
-/** Port of cw_consult_emit_soft_dag. "1,2" deps render as "1, 2"; "none"/"" → no suffix. */
+/** Port of consult_emit_soft_dag (lib/consult-walk.sh:41-57). "1,2" deps render as "1, 2"; "none"/"" → no suffix. */
 export function emitSoftDag(rows: SoftDagRow[]): string {
   return rows
     .filter((r) => r.step.length > 0)
