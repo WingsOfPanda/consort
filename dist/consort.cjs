@@ -8035,14 +8035,25 @@ function instrumentBootstrapSleep(name) {
   if (typeof v === "number") return v;
   return name === "claude" ? 12 : 8;
 }
+function instrumentTimeoutMultiplier(name) {
+  const raw = inst(name)?.timeout_multiplier;
+  const s = raw == null ? "" : String(raw);
+  if (/^[0-9]+(\.[0-9]+)?$/.test(s) && Number(s) > 0) return s;
+  return "1.0";
+}
 function instrumentConsultValidated(name) {
   if (!name) throw new TypeError("instrumentConsultValidated: missing provider arg");
   return inst(name)?.consult_validated === true;
 }
+function consultTimeout(kind) {
+  if (!(kind in CONSULT_DEFAULTS)) throw new Error(`consultTimeout: kind must be 'research', 'verify', 'adversary', or 'experiment'; got '${kind}'`);
+  const v = (load().consult ?? {})[`${kind}_timeout_s`];
+  return /^[1-9][0-9]*$/.test(String(v)) ? Number(v) : CONSULT_DEFAULTS[kind];
+}
 function contractsExist() {
   return (0, import_node_fs7.existsSync)(contractsPath());
 }
-var import_node_fs7, import_node_path5, import_yaml2;
+var import_node_fs7, import_node_path5, import_yaml2, CONSULT_DEFAULTS;
 var init_contracts = __esm({
   "src/core/contracts.ts"() {
     "use strict";
@@ -8050,6 +8061,7 @@ var init_contracts = __esm({
     import_node_path5 = require("node:path");
     import_yaml2 = __toESM(require_dist(), 1);
     init_paths();
+    CONSULT_DEFAULTS = { research: 600, verify: 300, adversary: 600, experiment: 1800 };
   }
 });
 
@@ -17952,9 +17964,38 @@ function formatRosterFile(rows, isoStamp) {
   return `# generated ${isoStamp} by /consort:score
 ${body}${rows.length ? "\n" : ""}`;
 }
+function parseRosterFile(text) {
+  return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#")).map((l) => {
+    const [provider, instrument] = l.split("	");
+    return { provider, instrument };
+  }).filter((r) => r.provider && r.instrument);
+}
 function parseMultiRepoMode(text) {
   const v = text.replace(/\s/g, "");
   return v === "multi" ? "multi" : v === "single-sub" ? "single-sub" : "single";
+}
+function spawnRosterArg(rows) {
+  return rows.map((r) => `${r.instrument}:${r.provider}`).join(",");
+}
+function spawnResultsTsv(results) {
+  if (!results.length) return "";
+  return results.map((r) => `${r.instrument}	${r.provider}	${r.rc}	${r.rc === 0 ? "" : "spawn-failed"}`).join("\n") + "\n";
+}
+function spawnTally(rcs) {
+  const ok = rcs.filter((rc) => rc === 0).length;
+  if (ok === rcs.length) return 0;
+  if (ok === 0) return 2;
+  return 1;
+}
+function parsePanesFile(text) {
+  const m = /* @__PURE__ */ new Map();
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const [instrument, pane] = t.split("	");
+    if (instrument && pane) m.set(instrument, pane);
+  }
+  return m;
 }
 var import_node_path19;
 var init_score = __esm({
@@ -18094,14 +18135,219 @@ var init_audit = __esm({
   }
 });
 
+// src/core/scoreDiff.ts
+function parseClaims(findings) {
+  const out = [];
+  let inClaims = false;
+  for (const line of findings.split("\n")) {
+    if (/^## Claims/.test(line)) {
+      inClaims = true;
+      continue;
+    }
+    if (/^## /.test(line)) {
+      inClaims = false;
+      continue;
+    }
+    if (inClaims && /^[0-9]+\. \[[^\]]+\] /.test(line)) {
+      const m = line.match(/\[[^\]]+\]/);
+      if (!m || m.index === void 0) continue;
+      const cite = m[0].slice(1, -1);
+      const text = line.slice(m.index + m[0].length).replace(/^[ \t]+/, "");
+      out.push({ cite, text });
+    }
+  }
+  return out;
+}
+function citationOverlaps(aRaw, bRaw) {
+  const a2 = aRaw.replace(/^\.\//, "");
+  const b = bRaw.replace(/^\.\//, "");
+  if (a2.startsWith("http") || b.startsWith("http")) return a2 === b;
+  if (a2.startsWith("runtime:") || b.startsWith("runtime:")) return a2 === b;
+  const aPath = a2.split(":")[0];
+  const bPath = b.split(":")[0];
+  if (aPath !== bPath) return false;
+  const aLines = a2.includes(":") ? a2.slice(a2.indexOf(":") + 1) : "";
+  const bLines = b.includes(":") ? b.slice(b.indexOf(":") + 1) : "";
+  if (aLines === "" || bLines === "") return true;
+  const split = (s) => s.includes("-") ? [s.slice(0, s.indexOf("-")), s.slice(s.indexOf("-") + 1)] : [s, s];
+  const [a1s, a2s] = split(aLines);
+  const [b1s, b2s] = split(bLines);
+  if (![a1s, a2s, b1s, b2s].every((x) => /^[0-9]+$/.test(x))) return false;
+  const a1 = parseInt(a1s, 10), a22 = parseInt(a2s, 10), b1 = parseInt(b1s, 10), b2 = parseInt(b2s, 10);
+  return a1 <= b2 && b1 <= a22;
+}
+function mdSection(header, lines) {
+  return header + "\n" + (lines && lines.length ? lines.map((l) => `- ${l}`).join("\n") + "\n" : "");
+}
+function diffFindings(parts) {
+  const n2 = parts.length;
+  if (n2 < 2) throw new Error(`diffFindings: need >=2 parts, got ${n2}`);
+  const names = parts.map((p) => p.name);
+  const owner = [], cite = [], text = [], flag = [];
+  const start = [], end = [];
+  for (let idx = 0; idx < n2; idx++) {
+    start[idx] = owner.length;
+    for (const c3 of parseClaims(parts[idx].findings)) {
+      owner.push(idx);
+      cite.push(c3.cite);
+      text.push(c3.text);
+      flag.push(false);
+    }
+    end[idx] = owner.length;
+  }
+  const buckets = /* @__PURE__ */ new Map();
+  const add = (key, line) => {
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(line);
+  };
+  for (let i2 = 0; i2 < n2; i2++) {
+    for (let j = start[i2]; j < end[i2]; j++) {
+      if (flag[j]) continue;
+      let memberKeys = names[i2];
+      const firstCite = cite[j];
+      let combined = text[j];
+      flag[j] = true;
+      for (let k = i2 + 1; k < n2; k++) {
+        for (let m = start[k]; m < end[k]; m++) {
+          if (flag[m]) continue;
+          if (citationOverlaps(firstCite, cite[m])) {
+            memberKeys += `,${names[k]}`;
+            combined += ` | ${text[m]}`;
+            flag[m] = true;
+            break;
+          }
+        }
+      }
+      add(memberKeys, `[${firstCite}] ${combined}`);
+    }
+  }
+  const allKey = names.join(",");
+  const files = [];
+  let diffMd = "";
+  if (n2 === 2) {
+    for (const name of names) files.push({ filename: `${name}_only_items.txt`, content: fileBody(buckets.get(name)) });
+    diffMd = mdSection("## Agreed", buckets.get(allKey)) + "\n" + mdSection(`## ${titlecase(names[0])}-only`, buckets.get(names[0])) + "\n" + mdSection(`## ${titlecase(names[1])}-only`, buckets.get(names[1]));
+  } else {
+    files.push({ filename: "consensus.txt", content: fileBody(buckets.get(allKey)) });
+    const pairKeys = [];
+    for (let i2 = 0; i2 < n2; i2++) for (let j = i2 + 1; j < n2; j++) pairKeys.push(`${names[i2]},${names[j]}`);
+    for (const key of pairKeys) {
+      const [a2, b] = key.split(",");
+      files.push({ filename: `${a2}+${b}_only.txt`, content: fileBody(buckets.get(key)) });
+    }
+    for (const name of names) files.push({ filename: `${name}_only_items.txt`, content: fileBody(buckets.get(name)) });
+    let md = mdSection("## Consensus", buckets.get(allKey));
+    for (const key of pairKeys) {
+      const [a2, b] = key.split(",");
+      md += "\n" + mdSection(`## ${titlecase(a2)}+${titlecase(b)} only`, buckets.get(key));
+    }
+    for (const name of names) md += "\n" + mdSection(`## ${titlecase(name)}-only`, buckets.get(name));
+    diffMd = md;
+  }
+  return { files, diffMd };
+}
+var titlecase, fileBody;
+var init_scoreDiff = __esm({
+  "src/core/scoreDiff.ts"() {
+    "use strict";
+    titlecase = (s) => s.length ? s[0].toUpperCase() + s.slice(1) : s;
+    fileBody = (lines) => lines && lines.length ? lines.join("\n") + "\n" : "";
+  }
+});
+
+// src/core/scoreTurn.ts
+function findingsStatus(text) {
+  if (text === null) return "missing";
+  if (parseClaims(text).length > 0) return "ok";
+  let inClaims = false;
+  let count2 = 0;
+  for (const line of text.split("\n")) {
+    if (/^## Claims/.test(line)) {
+      inClaims = true;
+      continue;
+    }
+    if (/^## /.test(line)) {
+      inClaims = false;
+    }
+    if (inClaims && line.trim() !== "") count2++;
+  }
+  return count2 > 0 ? "malformed" : "empty";
+}
+function researchState(ev, findingsText) {
+  if (!ev) return "timeout";
+  if (ev.event === "question") return "question";
+  if (ev.event === "done") return findingsStatus(findingsText);
+  return "failed";
+}
+function parseLatestOffset(stateText) {
+  const ms = [...stateText.matchAll(/^OFFSET=(\d+)\s*$/gm)];
+  return ms.length ? Number(ms[ms.length - 1][1]) : null;
+}
+function scaledTimeout(baseSec, multiplier) {
+  const m = Number(multiplier);
+  return Math.floor(baseSec * (Number.isFinite(m) && m > 0 ? m : 1) + 0.5);
+}
+function composeResearchPrompt(topicText, findingsPath) {
+  const topic = topicText.trim();
+  return [
+    "Investigate the following topic and produce structured findings.",
+    "",
+    `Topic: ${topic}`,
+    "",
+    `Output requirements \u2014 write to ${findingsPath} with this EXACT structure:`,
+    "",
+    `  # Findings: ${topic}`,
+    "",
+    "  ## Summary",
+    "  <2-3 sentence overview, free-form prose>",
+    "",
+    "  ## Claims",
+    "  1. [<source citation>] <one-sentence claim>",
+    "  2. [<source citation>] <one-sentence claim>",
+    "  ...",
+    "",
+    "  ## Notes",
+    "  <any free-form additions; not parsed>",
+    "",
+    "Citation format options:",
+    "  - <file path>:<line>          e.g. src/auth/store.py:42",
+    "  - <file path>:<line-range>    e.g. src/auth/refresh.py:15-30",
+    "  - <URL>                       e.g. https://datatracker.ietf.org/doc/html/rfc6749",
+    "  - runtime: <command>          e.g. runtime: pytest tests/test_auth.py",
+    "",
+    "Each claim must have a citation in [brackets]. Claims without citations will be silently",
+    "dropped \u2014 and if NO claim has a citation, your findings will be flagged as malformed.",
+    "",
+    "Research methods: use any tool available in your environment. When local repository evidence is",
+    "insufficient or the topic references external knowledge (RFCs, standards, library docs, vendor",
+    "APIs, recent CVEs, design patterns), you SHOULD use web search / fetch to find authoritative",
+    "sources and cite them as URL citations. Prefer primary sources over blog posts. If a tool is",
+    "unavailable, fall back to local-only investigation and note the gap as an [unverified] claim.",
+    "",
+    RESEARCH_BLOCKERS
+  ].join("\n");
+}
+var RESEARCH_BLOCKERS;
+var init_scoreTurn = __esm({
+  "src/core/scoreTurn.ts"() {
+    "use strict";
+    init_scoreDiff();
+    RESEARCH_BLOCKERS = 'IF YOU ARE BLOCKED:\n- If a referenced path, file, command, env var, or assumption is wrong or missing, do NOT guess\n  or silently work around it. Append a question event to your outbox and stop:\n  {"event":"question","message":"<what you need and why>","ts":"<iso>"}\n  The Maestro will reply via your inbox, then re-engage you.\n';
+  }
+});
+
 // src/commands/score.ts
 var score_exports = {};
 __export(score_exports, {
+  diffRun: () => diffRun,
   initWith: () => initWith2,
-  run: () => run10
+  researchSendWith: () => researchSendWith,
+  researchWaitWith: () => researchWaitWith,
+  run: () => run10,
+  spawnAllWith: () => spawnAllWith
 });
 function usage2() {
-  log.error("usage: score <init|assemble> ...");
+  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff> ...");
   return 2;
 }
 async function run10(args) {
@@ -18112,6 +18358,14 @@ async function run10(args) {
       return initRun2(applyArgsFile(rest));
     case "assemble":
       return assembleRun(rest);
+    case "spawn-all":
+      return spawnAllRun(rest);
+    case "research-send":
+      return researchSendRun(rest);
+    case "research-wait":
+      return researchWaitRun(rest);
+    case "diff":
+      return diffRun(rest);
     default:
       return usage2();
   }
@@ -18166,6 +18420,7 @@ ${targets.join("\n")}
 N=${rows.length}
 ENSEMBLE=${ensemble ? "yes" : "no"}
 MODE=${mode}
+ART=${art}
 ` + rows.map((r) => `PART=${r.instrument}:${r.provider}`).join("\n") + "\n"
   );
   return 0;
@@ -18212,10 +18467,173 @@ async function assembleRun(rest) {
   process.stdout.write(out + "\n");
   return 0;
 }
+async function spawnAllRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: score spawn-all <topic>");
+    return 2;
+  }
+  return spawnAllWith(topic, liveSpawnAllDeps);
+}
+async function spawnAllWith(topic, d) {
+  const art = scoreArtDir(topic);
+  const rosterPath = (0, import_node_path20.join)(art, "roster.txt");
+  if (!(0, import_node_fs24.existsSync)(rosterPath)) {
+    log.error(`score spawn-all: roster.txt missing at ${rosterPath} (run score init)`);
+    return 2;
+  }
+  const rows = parseRosterFile((0, import_node_fs24.readFileSync)(rosterPath, "utf8"));
+  if (rows.length < 2) {
+    log.error(`score spawn-all: need >=2 parts in roster.txt, got ${rows.length}`);
+    return 2;
+  }
+  const pf = await d.preflight([topic, String(rows.length), "--roster", spawnRosterArg(rows), "--art-dir", art]);
+  if (pf !== 0) {
+    log.error(`score spawn-all: preflight failed (rc=${pf})`);
+    return 2;
+  }
+  const panesPath = (0, import_node_path20.join)(art, "preflight-panes.txt");
+  if (!(0, import_node_fs24.existsSync)(panesPath)) {
+    log.error(`score spawn-all: preflight wrote no ${panesPath}`);
+    return 2;
+  }
+  const panes = parsePanesFile((0, import_node_fs24.readFileSync)(panesPath, "utf8"));
+  const orphans = rows.filter((r) => !panes.has(r.instrument));
+  if (orphans.length) {
+    log.error(`score spawn-all: parts missing a preflight pane: ${orphans.map((r) => r.instrument).join(", ")}`);
+    return 2;
+  }
+  const cwd = d.repoRoot();
+  const results = await Promise.all(rows.map(async (r) => {
+    const rc2 = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd]);
+    return { instrument: r.instrument, provider: r.provider, rc: rc2 };
+  }));
+  atomicWrite((0, import_node_path20.join)(art, "spawn-results.tsv"), spawnResultsTsv(results));
+  const rc = spawnTally(results.map((r) => r.rc));
+  const nOk = results.filter((r) => r.rc === 0).length;
+  if (rc === 0) log.ok(`score spawn-all: ${nOk}/${rows.length} parts ready`);
+  else log.warn(`score spawn-all: ${nOk}/${rows.length} parts ready (rc=${rc})`);
+  return rc;
+}
+async function researchSendRun(rest) {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) {
+    log.error("usage: score research-send <topic> <instrument> <provider>");
+    return 2;
+  }
+  return researchSendWith(topic, instrument, provider, liveResearchSendDeps);
+}
+async function researchSendWith(topic, instrument, provider, d) {
+  const art = scoreArtDir(topic);
+  const stateFile = (0, import_node_path20.join)(art, `research-${instrument}.txt`);
+  if ((0, import_node_fs24.existsSync)(stateFile)) {
+    log.error(`score research-send: ${stateFile} exists; rm to retry`);
+    return 1;
+  }
+  const topicText = readIf((0, import_node_path20.join)(art, "topic.txt")).trim();
+  if (!topicText) {
+    log.error(`score research-send: topic.txt missing/empty at ${art} (run score init)`);
+    return 1;
+  }
+  const findingsPath = (0, import_node_path20.join)(partDir(instrument, provider, topic), "findings.md");
+  const promptFile = (0, import_node_path20.join)(art, `${instrument}_research_prompt.md`);
+  atomicWrite(promptFile, composeResearchPrompt(topicText, findingsPath));
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}
+`);
+  const rc = await d.send(["--from", "maestro", instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) {
+    log.error(`score research-send: send failed (rc=${rc}); ${stateFile} kept (rm to redo)`);
+    return 1;
+  }
+  log.ok(`score research-send: ${instrument} offset=${offset}`);
+  return 0;
+}
+async function researchWaitRun(rest) {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) {
+    log.error("usage: score research-wait <topic> <instrument> <provider>");
+    return 2;
+  }
+  return researchWaitWith(topic, instrument, provider, liveResearchWaitDeps);
+}
+async function researchWaitWith(topic, instrument, provider, d) {
+  const art = scoreArtDir(topic);
+  const stateFile = (0, import_node_path20.join)(art, `research-${instrument}.txt`);
+  if (!(0, import_node_fs24.existsSync)(stateFile)) {
+    log.error(`score research-wait: ${stateFile} missing (run score research-send first)`);
+    return 1;
+  }
+  const offset = parseLatestOffset((0, import_node_fs24.readFileSync)(stateFile, "utf8"));
+  if (offset === null) {
+    log.error(`score research-wait: OFFSET not set in ${stateFile}`);
+    return 1;
+  }
+  const timeout = scaledTimeout(consultTimeout("research"), d.multiplier(provider));
+  log.info(`score research-wait: ${instrument} offset=${offset} timeout=${timeout}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], timeout);
+  const findingsPath = (0, import_node_path20.join)(partDir(instrument, provider, topic), "findings.md");
+  const findingsText = (0, import_node_fs24.existsSync)(findingsPath) ? (0, import_node_fs24.readFileSync)(findingsPath, "utf8") : null;
+  const fs = researchState(ev, findingsText);
+  if (fs === "question" && ev) {
+    atomicWrite((0, import_node_path20.join)(art, `question-${instrument}.txt`), JSON.stringify(ev) + "\n");
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    (0, import_node_fs24.appendFileSync)(stateFile, `OFFSET=${bumped}
+FS=question
+`);
+  } else {
+    (0, import_node_fs24.appendFileSync)(stateFile, `FS=${fs}
+`);
+  }
+  (0, import_node_fs24.writeFileSync)((0, import_node_path20.join)(art, `research-${instrument}.done`), "");
+  log.ok(`score research-wait: ${instrument} FS=${fs}`);
+  return 0;
+}
+async function diffRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: score diff <topic>");
+    return 2;
+  }
+  const art = scoreArtDir(topic);
+  if (!(0, import_node_fs24.existsSync)(art)) {
+    log.error(`score diff: ${art} not found`);
+    return 1;
+  }
+  if ((0, import_node_fs24.existsSync)((0, import_node_path20.join)(art, "diff.md"))) {
+    log.error("score diff: diff.md exists; rm to retry");
+    return 1;
+  }
+  const rosterPath = (0, import_node_path20.join)(art, "roster.txt");
+  if (!(0, import_node_fs24.existsSync)(rosterPath)) {
+    log.error("score diff: roster.txt missing \u2014 run score init first");
+    return 1;
+  }
+  const rows = parseRosterFile((0, import_node_fs24.readFileSync)(rosterPath, "utf8"));
+  if (rows.length < 2) {
+    log.error(`score diff: need >=2 parts in roster.txt, got ${rows.length}`);
+    return 1;
+  }
+  const parts = [];
+  for (const r of rows) {
+    const f = (0, import_node_path20.join)(partDir(r.instrument, r.provider, topic), "findings.md");
+    if (!(0, import_node_fs24.existsSync)(f)) {
+      log.error(`score diff: ${r.instrument} findings.md missing: ${f}`);
+      return 1;
+    }
+    parts.push({ name: r.instrument, findings: (0, import_node_fs24.readFileSync)(f, "utf8") });
+  }
+  const result = diffFindings(parts);
+  for (const file of result.files) atomicWrite((0, import_node_path20.join)(art, file.filename), file.content);
+  atomicWrite((0, import_node_path20.join)(art, "diff.md"), result.diffMd);
+  const summary = result.files.filter((f) => f.filename.endsWith("_only_items.txt") || f.filename === "consensus.txt").map((f) => `${f.filename.replace(/\.txt$/, "")}=${f.content.split("\n").filter(Boolean).length}`).join(" ");
+  log.ok(`score diff: wrote ${(0, import_node_path20.join)(art, "diff.md")} (${rows.length} parts) ${summary}`);
+  return 0;
+}
 function parseRosterTargets(text) {
   return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#")).map((l) => l.split("	")[0]).filter(Boolean);
 }
-var import_node_fs24, import_node_path20, liveInitDeps2;
+var import_node_fs24, import_node_path20, liveInitDeps2, liveSpawnAllDeps, liveResearchSendDeps, liveResearchWaitDeps;
 var init_score2 = __esm({
   "src/commands/score.ts"() {
     "use strict";
@@ -18230,12 +18648,27 @@ var init_score2 = __esm({
     init_audit();
     init_providers();
     init_paths();
-    init_contracts();
     init_instruments();
+    init_ipc();
+    init_contracts();
+    init_scoreTurn();
+    init_scoreDiff();
+    init_send2();
+    init_spawn();
+    init_preflight();
     liveInitDeps2 = {
       activeProviders: () => readProviderList(activeProvidersPath()),
       isValidated: instrumentConsultValidated,
       pickInstruments
+    };
+    liveSpawnAllDeps = { preflight: run7, spawn: run, repoRoot };
+    liveResearchSendDeps = {
+      offsetFor: (i2, m, t) => outboxOffset(outboxPath(i2, m, t)),
+      send: run2
+    };
+    liveResearchWaitDeps = {
+      wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to),
+      multiplier: instrumentTimeoutMultiplier
     };
   }
 });
