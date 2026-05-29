@@ -10,3 +10,23 @@ export function readProviderList(path: string): string[] {
   if (!existsSync(path)) return [];
   try { return parseProviderList(readFileSync(path, "utf8")); } catch { return []; }
 }
+
+export type RosterDecision = "skip" | "auto" | "prompt";
+
+export interface RosterPlan {
+  detected: string[];   // validated, detected (menu is built from this)
+  prior: string[];      // prior selection reconciled against `detected`
+  dropped: string[];    // human-readable notes for prior entries no longer present
+  decision: RosterDecision;
+  auto?: string;        // present only when decision === "auto"
+}
+
+/** Pure: reconcile the prior selection against the validated-detected set; compute the prompt decision. */
+export function planRoster(input: { detectedValidated: string[]; prior: string[] }): RosterPlan {
+  const detected = [...input.detectedValidated];
+  const prior = input.prior.filter((p) => detected.includes(p));
+  const dropped = input.prior.filter((p) => !detected.includes(p)).map((p) => `${p} (no longer detected)`);
+  if (detected.length === 0) return { detected, prior, dropped, decision: "skip" };
+  if (detected.length === 1) return { detected, prior, dropped, decision: "auto", auto: detected[0] };
+  return { detected, prior, dropped, decision: "prompt" };
+}
