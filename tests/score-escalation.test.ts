@@ -6,7 +6,7 @@ import { freshHome } from "./helpers/tmpHome.js";
 import { scoreArtDir } from "../src/core/score.js";
 import { partDir } from "../src/core/paths.js";
 import { outboxPath } from "../src/core/ipc.js";
-import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun } from "../src/commands/score.js";
+import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun } from "../src/commands/score.js";
 
 let env: { home: string; cleanup: () => void };
 beforeEach(() => { env = freshHome(); });
@@ -312,5 +312,18 @@ describe("score synthesize", () => {
     expect(await synthesizeRun(["t"])).toBe(0);
     expect(readFileSync(join(art, "design-doc", ".draft", "goal.md"), "utf8")).toContain("[Goal] ship it");
     expect(existsSync(join(art, "design-doc", ".draft", "success-criteria.md"))).toBe(true);
+  });
+});
+
+describe("score walk-state", () => {
+  it("prints section\\tstatus (skipped detected) to stdout", async () => {
+    const dd = join(scoreArtDir("t"), "design-doc", ".draft"); mkdirSync(dd, { recursive: true });
+    writeFileSync(join(dd, "goal.md"), "## Goal\n\nship it\n");
+    writeFileSync(join(dd, "problem.md"), "_(skipped)_");
+    let out = ""; const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout as any).write = (s: string) => { out += s; return true; };
+    try { await walkStateRun(["t"]); } finally { (process.stdout as any).write = orig; }
+    expect(out).toContain("goal\tapproved");
+    expect(out).toContain("problem\tskipped");
   });
 });

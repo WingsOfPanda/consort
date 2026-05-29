@@ -21,6 +21,7 @@ import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier
 import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState } from "../core/scoreTurn.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
+import { walkSectionState, auditIssueToSection } from "../core/scoreWalk.js";
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
@@ -41,6 +42,7 @@ export async function run(args: string[]): Promise<number> {
     case "verify-wait": return verifyWaitRun(rest);
     case "adjudicate": return adjudicateRun(rest);
     case "synthesize": return synthesizeRun(rest);
+    case "walk-state": return walkStateRun(rest);
     default: return usage();
   }
 }
@@ -124,6 +126,7 @@ async function assembleRun(rest: string[]): Promise<number> {
   atomicWrite(join(art, "design-doc", "audit.log"), auditText);
   if (result.verdict === "FAIL") {
     for (const i of result.issues) process.stderr.write(`ISSUE=${i}\n`);
+    for (const i of result.issues) process.stderr.write(`SECTION=${auditIssueToSection(i)}\n`);
     log.error(`score assemble: audit FAILED on ${out} (see design-doc/audit.log)`);
     return 1;
   }
@@ -417,6 +420,14 @@ export async function synthesizeRun(rest: string[]): Promise<number> {
   const seeds = synthesizeSeeds(adjText);
   for (const s of seeds) atomicWrite(join(draftDir, `${s.section}.md`), s.body);
   log.ok(`score synthesize: wrote ${seeds.length} seed drafts to ${draftDir}`);
+  return 0;
+}
+
+export async function walkStateRun(rest: string[]): Promise<number> {
+  const topic = rest[0];
+  if (!topic) { log.error("usage: score walk-state <topic>"); return 2; }
+  const states = walkSectionState(scoreDraftDir(topic), { withStatus: true });
+  for (const s of states) process.stdout.write(`${s.name}\t${s.status}\n`);
   return 0;
 }
 

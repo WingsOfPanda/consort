@@ -50,5 +50,6 @@ describe("score assemble", () => {
     s.mockRestore();
     expect(rc).toBe(1);
     expect(errs.join("")).toContain("ISSUE=no_goal_section");
+    expect(errs.join("")).toContain("SECTION=goal"); // mapped target for the directive's re-walk
   });
 });
