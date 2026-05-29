@@ -7,7 +7,7 @@ import { freshHome } from "./helpers/tmpHome.js";
 import { scoreArtDir } from "../src/core/score.js";
 import { partDir } from "../src/core/paths.js";
 import { outboxPath } from "../src/core/ipc.js";
-import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun, emitDagRun, checkDagRun, drilldownWith } from "../src/commands/score.js";
+import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun, emitDagRun, checkDagRun, drilldownWith, forensicsRun, archiveRun } from "../src/commands/score.js";
 
 let env: { home: string; cleanup: () => void };
 beforeEach(() => { env = freshHome(); });
@@ -369,6 +369,24 @@ describe("score drilldown", () => {
       { offsetFor: () => 0, send: async () => 0, wait: async () => ({ event: "done" }), multiplier: () => "1.0" }, {});
     expect(rc).toBe(1); // no file written
     expect(await drilldownWith(["t", "Arch"], { offsetFor: () => 0, send: async () => 0, wait: async () => null, multiplier: () => "1.0" }, {})).toBe(2);
+  });
+});
+
+describe("score forensics + archive", () => {
+  it("forensics prints a path when there are findings, else empty (rc 0)", async () => {
+    const art = scoreArtDir("t"); mkdirSync(join(art, "design-doc"), { recursive: true });
+    writeFileSync(join(art, "design-doc", "audit.log"), "ISSUE=no_goal_section\n");
+    let out = ""; const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout as any).write = (s: string) => { out += s; return true; };
+    let rc = 0; try { rc = await forensicsRun(["t"]); } finally { (process.stdout as any).write = orig; }
+    expect(rc).toBe(0);
+    expect(out).toMatch(/forensics[/\\]2\d{3}-\d\d-\d\d[/\\].*-score-t\.md/);
+  });
+  it("archive moves _score and rmdirs the topic (rc 0)", async () => {
+    const art = scoreArtDir("t"); mkdirSync(join(art, "design-doc"), { recursive: true });
+    writeFileSync(join(art, "topic.txt"), "t");
+    expect(await archiveRun(["t"])).toBe(0);
+    expect(existsSync(art)).toBe(false); // moved to archive
   });
 });
 
