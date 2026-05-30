@@ -352,3 +352,66 @@ describe("buildConsensus", () => {
     expect(md).toMatch(/\| notes \| had a note \| — \|/);
   });
 });
+
+import {
+  parseState, renderState, mergeState, reconcileFromOutbox, readHaltFlag,
+} from "../src/core/rehearsalState.js";
+
+describe("state KV round-trip", () => {
+  it("parses and renders KV, preserving '=' in values and escaping newlines", () => {
+    const txt = renderState({ phase: "working", current_exp_id: "exp-003", note: "a=b\nsecond" });
+    expect(txt).toContain("phase=working");
+    expect(txt).toContain("note=a=b\\nsecond"); // newline escaped to literal \n
+    const kv = parseState(txt);
+    expect(kv.phase).toBe("working");
+    expect(kv.note).toBe("a=b\nsecond");        // round-trips back to a real newline
+  });
+});
+
+describe("mergeState", () => {
+  it("overwrites touched keys, keeps the rest", () => {
+    const existing = renderState({ exp_counter: "2", phase: "working", current_exp_id: "exp-002" });
+    const merged = parseState(mergeState(existing, { phase: "idle" }));
+    expect(merged.phase).toBe("idle");
+    expect(merged.exp_counter).toBe("2");
+    expect(merged.current_exp_id).toBe("exp-002");
+  });
+  it("creates fresh state when none exists", () => {
+    const merged = parseState(mergeState(null, { phase: "idle", exp_counter: "0" }));
+    expect(merged.phase).toBe("idle");
+  });
+});
+
+describe("reconcileFromOutbox", () => {
+  it("error anywhere in the tail wins -> failed", () => {
+    const tail = '{"event":"done","ts":"t"}\n{"event":"error","ts":"t"}';
+    expect(reconcileFromOutbox(tail, true)).toBe("failed");
+  });
+  it("terminal done with result present -> idle", () => {
+    expect(reconcileFromOutbox('{"event":"progress"}\n{"event":"done"}', true)).toBe("idle");
+  });
+  it("done without result present -> no write", () => {
+    expect(reconcileFromOutbox('{"event":"done"}', false)).toBeNull();
+  });
+  it("no terminal event -> no write", () => {
+    expect(reconcileFromOutbox('{"event":"progress"}\n{"event":"heartbeat"}', true)).toBeNull();
+  });
+});
+
+describe("readHaltFlag", () => {
+  it("missing on null / empty", () => {
+    expect(readHaltFlag(null).format).toBe("missing");
+    expect(readHaltFlag("   ").format).toBe("missing");
+  });
+  it("structured when the first non-blank line is halted_by=", () => {
+    const h = readHaltFlag("halted_by=maestro\nhalted_at=t\nreason=target met\ntarget_met=yes");
+    expect(h.format).toBe("structured");
+    expect(h.fields?.halted_by).toBe("maestro");
+    expect(h.fields?.target_met).toBe("yes");
+  });
+  it("prose otherwise, collapsing newlines into the reason", () => {
+    const h = readHaltFlag("stopped because\nthe user said so");
+    expect(h.format).toBe("prose");
+    expect(h.reason).toBe("stopped because the user said so");
+  });
+});
