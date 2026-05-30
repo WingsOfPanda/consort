@@ -1,10 +1,10 @@
 // tests/rehearsal-tail-cmd.test.ts — rehearsal tail CLI verbs (Phase D).
 // Extended by later D tasks; today: refine (stateless mid-experiment scope-narrowing).
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
-import { refineWith, handoffExtractWith, forensicsRun, type RehearsalRefineDeps } from "../src/commands/rehearsal.js";
+import { refineWith, handoffExtractWith, forensicsRun, teardownWith, type RehearsalRefineDeps, type RehearsalTeardownDeps } from "../src/commands/rehearsal.js";
 import { experimentDir, rehearsalArtDir } from "../src/core/rehearsal.js";
 
 const cleanups: Array<() => void> = [];
@@ -279,5 +279,135 @@ describe("forensics", () => {
     } finally { stdout.mockRestore(); }
     expect(lines.length).toBe(1);
     expect(lines[0].trim()).toMatch(/forensics\/.*-rehearsal-buggy\.md$/);
+  });
+});
+
+describe("teardown", () => {
+  // Scoreboard with a top-1 ok row -> winner violin/exp-003.
+  const WINNER_SB =
+    "| rank | exp | instrument | metric | status |\n" +
+    "| --- | --- | --- | --- | --- |\n" +
+    "| 1 | exp-003 | violin | 0.9950 | ok |\n" +
+    "| 2 | exp-002 | viola | 0.9100 | ok |\n";
+  // Scoreboard whose only data row is partial (~) -> no ok row -> no winner.
+  const PARTIAL_SB =
+    "| rank | exp | instrument | metric | status |\n" +
+    "| --- | --- | --- | --- | --- |\n" +
+    "| ~1 | exp-001 | violin | n/a | ~partial |\n";
+
+  function deps(over: Partial<RehearsalTeardownDeps> = {}): RehearsalTeardownDeps {
+    return {
+      killPane: async () => {},
+      archiveTopic: () => "/fake/archive/dest",
+      now: () => "T",
+      ...over,
+    };
+  }
+
+  it("rc 2 when no topic", async () => {
+    home();
+    expect(await teardownWith([], deps())).toBe(2);
+  });
+
+  it("rc 1 when the art dir is missing", async () => {
+    const h = home();
+    expect(await teardownWith(["nope"], deps({ opts: { home: h.home, cwd: h.home } }))).toBe(1);
+  });
+
+  it("winner symlink is created BEFORE archive; dest written to stdout; rc 0", async () => {
+    const h = home();
+    const opts = { home: h.home, cwd: h.home };
+    const art = rehearsalArtDir("tune-model", opts);
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "scoreboard.md"), WINNER_SB);
+    // REAL top-1 code dir.
+    mkdirSync(join(art, "parts", "violin", "experiments", "exp-003", "code"), { recursive: true });
+
+    // Fake archiveTopic asserts the symlink already exists at call time (ordering proof).
+    let symlinkAtArchive: { isLink: boolean; target: string } | null = null;
+    const fakeArchive = (topic: string, suite: "rehearsal"): string => {
+      expect(topic).toBe("tune-model");
+      expect(suite).toBe("rehearsal");
+      const w = join(art, "winner");
+      symlinkAtArchive = { isLink: lstatSync(w).isSymbolicLink(), target: readlinkSync(w) };
+      return "/archive/here/_rehearsal-20260530T000000Z";
+    };
+    const lines: string[] = [];
+    const rc = await teardownWith(["tune-model"], deps({
+      opts, archiveTopic: fakeArchive, stdout: (l) => { lines.push(l); },
+    }));
+    expect(rc).toBe(0);
+    // Symlink existed at archive time, relative target rides along inside _rehearsal.
+    expect(symlinkAtArchive).not.toBeNull();
+    expect(symlinkAtArchive!.isLink).toBe(true);
+    expect(symlinkAtArchive!.target).toBe("parts/violin/experiments/exp-003/code");
+    // The archive dest is written to stdout for the directive.
+    expect(lines).toContain("/archive/here/_rehearsal-20260530T000000Z");
+  });
+
+  it("no ok row in scoreboard -> no winner symlink, still archives (rc 0)", async () => {
+    const h = home();
+    const opts = { home: h.home, cwd: h.home };
+    const art = rehearsalArtDir("partial-topic", opts);
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "scoreboard.md"), PARTIAL_SB);
+
+    let archived = false;
+    const rc = await teardownWith(["partial-topic"], deps({
+      opts, archiveTopic: () => { archived = true; return "/d"; },
+    }));
+    expect(rc).toBe(0);
+    expect(existsSync(join(art, "winner"))).toBe(false);
+    expect(archived).toBe(true);
+  });
+
+  it("killPane is NOT called when preflight-panes.txt is absent", async () => {
+    const h = home();
+    const opts = { home: h.home, cwd: h.home };
+    const art = rehearsalArtDir("no-panes", opts);
+    mkdirSync(art, { recursive: true });
+
+    const killPane = vi.fn(async () => {});
+    const rc = await teardownWith(["no-panes"], deps({ opts, killPane }));
+    expect(rc).toBe(0);
+    expect(killPane).not.toHaveBeenCalled();
+  });
+
+  it("sweeps *.tmp and *.lock under shared/ (depth <=2), leaves other files", async () => {
+    const h = home();
+    const opts = { home: h.home, cwd: h.home };
+    const art = rehearsalArtDir("sweep-topic", opts);
+    mkdirSync(join(art, "shared", "sub"), { recursive: true });
+    writeFileSync(join(art, "scoreboard.md"), PARTIAL_SB);
+    writeFileSync(join(art, "shared", "a.tmp"), "x");
+    writeFileSync(join(art, "shared", "b.lock"), "x");
+    writeFileSync(join(art, "shared", "keep.txt"), "x");
+    writeFileSync(join(art, "shared", "sub", "c.tmp"), "x");
+    // A .tmp OUTSIDE shared/ must survive.
+    writeFileSync(join(art, "outside.tmp"), "x");
+
+    const rc = await teardownWith(["sweep-topic"], deps({ opts }));
+    expect(rc).toBe(0);
+    expect(existsSync(join(art, "shared", "a.tmp"))).toBe(false);
+    expect(existsSync(join(art, "shared", "b.lock"))).toBe(false);
+    expect(existsSync(join(art, "shared", "sub", "c.tmp"))).toBe(false);
+    expect(existsSync(join(art, "shared", "keep.txt"))).toBe(true);
+    expect(existsSync(join(art, "outside.tmp"))).toBe(true);
+  });
+
+  it("preflight orphan kill: reads non-blank pane ids from preflight-panes.txt", async () => {
+    const h = home();
+    const opts = { home: h.home, cwd: h.home };
+    const art = rehearsalArtDir("kill-topic", opts);
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "preflight-panes.txt"), "violin\t%1\n\nviola\t%2\n");
+
+    const killed: string[] = [];
+    const rc = await teardownWith(["kill-topic"], deps({
+      opts, killPane: async (p) => { killed.push(p); },
+    }));
+    expect(rc).toBe(0);
+    // Each non-blank line is passed to killPane (whole line; best-effort).
+    expect(killed.length).toBe(2);
   });
 });

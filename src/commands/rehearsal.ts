@@ -7,7 +7,7 @@ import { join, relative, resolve } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile, kvParse } from "../args.js";
 import { atomicWrite } from "../core/atomic.js";
-import { isoUtc } from "../core/archive.js";
+import { archiveTopic, isoUtc } from "../core/archive.js";
 import { deriveSlug } from "../core/solo.js";
 import { extractMetric, formatMetricBlock, formatSotaBlock, parseMetricMd } from "../core/rehearsalMetric.js";
 import { rehearsalArtDir, partsDir, partStateDir, experimentsDir, experimentDir } from "../core/rehearsal.js";
@@ -27,7 +27,7 @@ import { captureArtDir } from "../core/forensics.js";
 import { parseScoreboard, buildHandoffKv, type HandoffInput } from "../core/rehearsalHandoff.js";
 import { instrumentBinary, consultTimeout } from "../core/contracts.js";
 import { inboxWrite, inboxPath, outboxPath, paneMetaRead, resolveModel } from "../core/ipc.js";
-import { paneSend } from "../core/tmux.js";
+import { paneSend, killNow } from "../core/tmux.js";
 import { haveCmd } from "../core/deps.js";
 import { spawnRosterArg, parsePanesFile, spawnResultsTsv, spawnTally, type SpawnResult } from "../core/score.js";
 import { pickInstruments } from "../core/instruments.js";
@@ -1132,6 +1132,95 @@ export async function handoffExtractWith(args: string[], deps: RehearsalHandoffD
 
 const liveHandoffDeps: RehearsalHandoffDeps = { now: () => isoUtc() };
 
+// ---- Phase D: teardown — the rehearsal-state ARCHIVE step. ----
+// Ports deep-research-teardown.sh, consort-idiomatic: do the rehearsal-specific
+// pre-steps (best-effort preflight orphan kill + shared/ sweep + winner symlink),
+// then call the shipped archiveTopic (status-stamp + mv _rehearsal -> archive +
+// rmdir-if-empty). The PANE teardown is the separate top-level `coda --pairs`
+// (run by the directive BEFORE this verb) — NOT this verb's job.
+
+export interface RehearsalTeardownDeps {
+  killPane(pane: string): Promise<void>;
+  archiveTopic(topic: string, suite: "rehearsal"): string | null;
+  now(): string;
+  stdout?: (l: string) => void;
+  opts?: PathOpts;
+}
+
+/** Recursively delete *.tmp / *.lock under `dir` to a max depth (best-effort). */
+function sweepTmpLock(dir: string, depth: number): void {
+  if (depth < 0) return;
+  let entries: import("node:fs").Dirent[];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) { sweepTmpLock(p, depth - 1); }
+    else if (e.isFile() && (e.name.endsWith(".tmp") || e.name.endsWith(".lock"))) {
+      try { rmSync(p, { force: true }); } catch { /* best-effort */ }
+    }
+  }
+}
+
+export async function teardownWith(args: string[], deps: RehearsalTeardownDeps): Promise<number> {
+  const out = deps.stdout ?? ((l: string): void => { process.stdout.write(l + "\n"); });
+  const topic = args[0];
+  if (!topic) { log.error("rehearsal teardown: topic required"); return 2; }
+
+  const art = rehearsalArtDir(topic, deps.opts);
+  if (!existsSync(art) || !statSync(art).isDirectory()) { log.error(`${art} not found`); return 1; }
+
+  // 1. Preflight orphan kill (best-effort). Normally already dead from `coda
+  //    --pairs`; no-op when preflight-panes.txt is absent (tests/dogfood).
+  const pf = join(art, "preflight-panes.txt");
+  if (existsSync(pf)) {
+    for (const line of readFileSync(pf, "utf8").split("\n")) {
+      const pane = line.trim();
+      if (!pane) continue;
+      try { await deps.killPane(pane); } catch { /* best-effort */ }
+    }
+  }
+
+  // 2. shared/ sweep (best-effort): drop *.tmp / *.lock leak shapes (depth <= 2).
+  //    Scoped to shared/ so part experiment dirs are untouched.
+  const shared = join(art, "shared");
+  if (existsSync(shared) && statSync(shared).isDirectory()) sweepTmpLock(shared, 2);
+
+  // 3. winner symlink (best-effort): scoreboard top-1 ok row ->
+  //    parts/<instrument>/experiments/<exp-id>/code (RELATIVE so it survives the
+  //    archive mv; the symlink rides along inside _rehearsal).
+  const sbPath = join(art, "scoreboard.md");
+  if (existsSync(sbPath)) {
+    const { winner } = parseScoreboard(readFileSync(sbPath, "utf8"));
+    if (winner) {
+      const rel = `parts/${winner.instrument}/experiments/${winner.expId}/code`;
+      if (existsSync(join(art, rel)) && statSync(join(art, rel)).isDirectory()) {
+        const link = join(art, "winner");
+        try { rmSync(link, { force: true }); } catch { /* nothing to replace */ }
+        symlinkSync(rel, link);
+        log.ok(`[teardown] winner symlink -> ${rel} (${winner.instrument}/${winner.expId})`);
+      } else {
+        log.warn(`[teardown] scoreboard top-1 dir missing: ${join(art, rel)}; no symlink`);
+      }
+    } else {
+      log.info("[teardown] scoreboard has no ok rows; no winner symlink");
+    }
+  }
+
+  // 4. archive: status-stamp + mv _rehearsal -> archive + rmdir-if-empty topic dir.
+  const dest = deps.archiveTopic(topic, "rehearsal");
+  if (dest) {
+    out(dest);
+    log.ok(`[teardown] archived ${topic} -> ${dest}`);
+  }
+  return 0;
+}
+
+const liveTeardownDeps: RehearsalTeardownDeps = {
+  killPane: (p) => killNow(p),
+  archiveTopic: (t, s) => archiveTopic(t, s),
+  now: () => isoUtc(),
+};
+
 // ---- Phase D: forensics — thin captureArtDir wrapper (mirrors score.ts::forensicsRun). ----
 
 export async function forensicsRun(rest: string[]): Promise<number> {
@@ -1157,6 +1246,7 @@ export async function run(args: string[]): Promise<number> {
     case "finalize": return finalizeWith(rest, liveFinalizeDeps);
     case "refine": return refineWith(applyArgsFile(rest), liveRefineDeps);
     case "handoff-extract": return handoffExtractWith(rest, liveHandoffDeps);
+    case "teardown": return teardownWith(rest, liveTeardownDeps);
     case "forensics": return forensicsRun(rest);
     default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
   }
