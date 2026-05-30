@@ -318,3 +318,37 @@ describe("checkTimeBudget", () => {
     expect(() => checkTimeBudget("3600", "not-a-date", startEpoch)).toThrow();
   });
 });
+
+import { buildConsensus } from "../src/core/rehearsalConsensus.js";
+
+describe("buildConsensus", () => {
+  const nowIso = "2026-05-30T12:00:00Z";
+  it("agrees on identical fields and ε-close metric_value; contests divergence", () => {
+    const md = buildConsensus({
+      oboe:  { branch_id: "b", approach_label: "cnn", metric_name: "accuracy", metric_value: 0.980, status: "ok", runtime_s: 10, notes: "n" },
+      viola: { branch_id: "b", approach_label: "mlp", metric_name: "accuracy", metric_value: 0.985, status: "ok", runtime_s: 12, notes: "n" },
+    }, { topic: "mnist", nowIso, epsilon: 0.01 });
+    expect(md).toContain("## Agreed");
+    expect(md).toContain("| metric_name | accuracy | oboe, viola |");
+    expect(md).toContain("| metric_value | 0.98 | oboe, viola |"); // 0.980 vs 0.985 within ε
+    expect(md).toContain("## Contested");
+    expect(md).toMatch(/\| approach_label \| cnn \| mlp \|/);       // diverge -> contested
+  });
+  it("buckets a field missing from every part as All-missing", () => {
+    const md = buildConsensus({
+      oboe:  { metric_name: "accuracy", metric_value: 0.9, status: "ok" },
+      viola: { metric_name: "accuracy", metric_value: 0.9, status: "ok" },
+    }, { topic: "t", nowIso });
+    expect(md).toContain("## All-missing");
+    expect(md).toContain("- notes");
+    expect(md).toContain("- branch_id");
+  });
+  it("contests a field present in some parts but missing in others", () => {
+    const md = buildConsensus({
+      oboe:  { notes: "had a note", metric_name: "accuracy", metric_value: 0.9, status: "ok" },
+      viola: { metric_name: "accuracy", metric_value: 0.9, status: "ok" },
+    }, { topic: "t", nowIso });
+    // notes present in oboe, missing in viola -> contested (— for the missing cell), not All-missing.
+    expect(md).toMatch(/\| notes \| had a note \| — \|/);
+  });
+});
