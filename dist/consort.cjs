@@ -325,8 +325,8 @@ function haveCmd(name) {
     return false;
   }
 }
-function tmuxVersionString(run14) {
-  if (run14) return run14();
+function tmuxVersionString(run15) {
+  if (run15) return run15();
   if (!haveCmd("tmux")) return null;
   try {
     return (0, import_node_child_process2.execFileSync)("tmux", ["-V"], { encoding: "utf8" }).trim();
@@ -23911,12 +23911,889 @@ var init_rehearsal2 = __esm({
   }
 });
 
+// src/core/prelude.ts
+function preludeArtDir(topic, opts) {
+  return (0, import_node_path32.join)(topicDir(topic, opts), "_prelude");
+}
+var import_node_path32;
+var init_prelude = __esm({
+  "src/core/prelude.ts"() {
+    "use strict";
+    import_node_path32 = require("node:path");
+    init_paths();
+    init_solo();
+  }
+});
+
+// src/core/preludeConfidence.ts
+function topApproach(draft) {
+  let inApproaches = false;
+  for (const line of draft.split("\n")) {
+    if (/^## Approaches/.test(line)) {
+      inApproaches = true;
+      continue;
+    }
+    if (/^## /.test(line)) {
+      inApproaches = false;
+      continue;
+    }
+    if (inApproaches) {
+      const m = line.match(/^[0-9]+\.\s+(.+)$/);
+      if (m) return m[1].replace(/\s+$/, "").replace(/\s+—.*$/, "").replace(/\s+$/, "");
+    }
+  }
+  return "";
+}
+function draftCitations(draft) {
+  const re = /[A-Za-z_./-]+\.[a-z]+(?::[0-9]+)?|https?:\/\/[^ )"\\]+/g;
+  const seen = /* @__PURE__ */ new Set();
+  for (const m of draft.matchAll(re)) {
+    const tok = m[0];
+    if (!seen.has(tok)) seen.add(tok);
+  }
+  return [...seen];
+}
+function matrixBadRows(draft) {
+  let inMatrix = false, bad = 0;
+  for (const line of draft.split("\n")) {
+    if (/^## Tradeoff matrix/.test(line)) {
+      inMatrix = true;
+      continue;
+    }
+    if (/^## /.test(line)) {
+      inMatrix = false;
+      continue;
+    }
+    if (inMatrix && /^\| [^|]+\| [^|]+\| [^/:][^|]*\|$/.test(line)) bad++;
+  }
+  return bad;
+}
+function computeSignals(draft, findings) {
+  const n2 = findings.length;
+  const top = topApproach(draft);
+  const hits = top ? findings.filter((f) => f.toLowerCase().includes(top.toLowerCase())).length : 0;
+  const s1 = top !== "" && hits >= n2 - 1;
+  let solo = 0;
+  for (const cite of draftCitations(draft)) {
+    const citers = findings.filter((f) => f.includes(cite)).length;
+    if (citers < 2) solo++;
+  }
+  const s2 = solo === 0;
+  const s3 = !/CONTESTED/i.test(draft);
+  const s4 = matrixBadRows(draft) === 0;
+  const s5 = findings.some((f) => UNCERTAIN.test(f));
+  return { s1, s2, s3, s4, s5, allHold: s1 && s2 && s3 && s4 && s5 };
+}
+function renderSkipRecord(input) {
+  const s = input.signals;
+  return `timestamp: ${input.now}
+signals_passed: S1=${s.s1} S2=${s.s2} S3=${s.s3} S4=${s.s4} S5=${s.s5}
+user_decision: ${input.decision}
+`;
+}
+var UNCERTAIN;
+var init_preludeConfidence = __esm({
+  "src/core/preludeConfidence.ts"() {
+    "use strict";
+    UNCERTAIN = /uncertain|unclear|depends on|could not determine|not sure|gap in evidence/i;
+  }
+});
+
+// src/core/preludeHandoff.ts
+function buildHandoffKv2(i2) {
+  const L = [];
+  L.push(`mode=${i2.topApproach ? "prelude" : "prelude-no-convergence"}`);
+  L.push(`topic=${i2.topic}`);
+  if (i2.landscapeDoc) L.push(`landscape_doc=${i2.landscapeDoc}`);
+  if (i2.topApproach) L.push(`top_approach=${i2.topApproach}`);
+  if (i2.findingsPaths.length) L.push(`findings_paths=${i2.findingsPaths.join(",")}`);
+  if (i2.confidenceSignals) L.push(`confidence_signals=${i2.confidenceSignals}`);
+  if (i2.adversaryFindingsPaths.length) L.push(`adversary_findings_paths=${i2.adversaryFindingsPaths.join(",")}`);
+  L.push(`tradeoff_matrix_present=${i2.tradeoffMatrixPresent}`);
+  L.push("session_path=.");
+  L.push("topic_txt_path=topic.txt");
+  L.push(`generated_ts=${i2.generatedTs}`);
+  return L.join("\n") + "\n";
+}
+function readIf2(p) {
+  return (0, import_node_fs34.existsSync)(p) ? (0, import_node_fs34.readFileSync)(p, "utf8") : null;
+}
+function extractHandoffData(artDir, now) {
+  if (!(0, import_node_fs34.existsSync)(artDir) || !(0, import_node_fs34.statSync)(artDir).isDirectory()) return null;
+  const topicTxt = readIf2((0, import_node_path33.join)(artDir, "topic.txt"));
+  if (topicTxt === null) return null;
+  const topic = topicTxt.replace(/\n/g, " ").replace(/ +$/, "");
+  const names = (0, import_node_fs34.readdirSync)(artDir);
+  const landscapes = names.filter((n2) => /^landscape-.*\.md$/.test(n2)).sort();
+  const landscapeDoc = landscapes.find((n2) => n2 !== "landscape-draft.md") ?? (landscapes.includes("landscape-draft.md") ? "landscape-draft.md" : void 0);
+  const findingsPaths = names.filter((n2) => /^findings-.*\.md$/.test(n2)).sort();
+  const adversaryFindingsPaths = names.filter((n2) => /^adversary-.*\.md$/.test(n2)).sort();
+  let top = "", tradeoff = false;
+  if (landscapeDoc) {
+    const doc = (0, import_node_fs34.readFileSync)((0, import_node_path33.join)(artDir, landscapeDoc), "utf8");
+    top = topApproach(doc);
+    tradeoff = /^## Tradeoff matrix/m.test(doc);
+  }
+  let confidenceSignals = "";
+  const skip = readIf2((0, import_node_path33.join)(artDir, "adversary-skip.txt"));
+  if (skip) {
+    const m = skip.split("\n").find((l) => l.startsWith("signals_passed:"));
+    if (m) confidenceSignals = m.replace(/^signals_passed:\s*/, "").trim().replace(/\s+/g, ",");
+  }
+  const body = buildHandoffKv2({
+    topic,
+    landscapeDoc,
+    topApproach: top,
+    findingsPaths,
+    confidenceSignals,
+    adversaryFindingsPaths,
+    tradeoffMatrixPresent: tradeoff,
+    generatedTs: isoUtc(now)
+  });
+  const dest = (0, import_node_path33.join)(artDir, "handoff-data.kv");
+  atomicWrite(dest, body);
+  return dest;
+}
+var import_node_fs34, import_node_path33;
+var init_preludeHandoff = __esm({
+  "src/core/preludeHandoff.ts"() {
+    "use strict";
+    import_node_fs34 = require("node:fs");
+    import_node_path33 = require("node:path");
+    init_atomic();
+    init_archive();
+    init_preludeConfidence();
+  }
+});
+
+// src/core/preludeLit.ts
+function esc(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function classifyTopic(topic) {
+  const t = (topic ?? "").trim();
+  if (!t) return "OFF";
+  const padded = ` ${t.toLowerCase()} `;
+  for (const kw of LIT_KEYWORDS) {
+    if (new RegExp(`[^a-z0-9]${esc(kw)}[^a-z0-9]`).test(padded)) return "ON";
+  }
+  return "OFF";
+}
+var LIT_KEYWORDS;
+var init_preludeLit = __esm({
+  "src/core/preludeLit.ts"() {
+    "use strict";
+    LIT_KEYWORDS = [
+      "loss",
+      "embedding",
+      "network",
+      "model",
+      "architecture",
+      "training",
+      "optimizer",
+      "scheduler",
+      "transformer",
+      "mamba",
+      "attention",
+      "regularization",
+      "augmentation",
+      "fine-tune",
+      "sota",
+      "state-of-the-art",
+      "benchmark",
+      "paper",
+      "arxiv",
+      "algorithm",
+      "inference",
+      "quantization",
+      "distillation",
+      "pruning"
+    ];
+  }
+});
+
+// src/core/preludeTurn.ts
+function litGuidance(track) {
+  return track === "ON" ? "The topic is academic / SOTA-shaped. Prioritize peer-reviewed papers (arXiv, conference proceedings) over blog posts or vendor docs. List 3+ recent papers, projects, or benchmarks with citations including authors, year, venue, URL/DOI where available." : "The topic is not academic-shaped. Brief SOTA-evidence section is fine \u2014 list 1-2 anchor sources or write 'Not applicable' with a one-line reason.";
+}
+function composePreludeResearchPrompt(topic, writeTo, lit) {
+  const t = topic.trim();
+  return [
+    "Investigate the following topic from multiple angles. Your job is not to",
+    "recommend; your job is to expose the landscape \u2014 approaches, tradeoffs,",
+    "SOTA evidence, and open questions.",
+    "",
+    `Topic: ${t}`,
+    "",
+    `Output requirements \u2014 write to ${writeTo} with this EXACT structure:`,
+    "",
+    `  # Findings: ${t}`,
+    "",
+    "  ## Summary",
+    "  <2-3 sentence overview, free-form prose>",
+    "",
+    "  ## Approaches",
+    "  1. [<citation>] <approach name> \u2014 <one-line description>",
+    "  2. [<citation>] <approach name> \u2014 <one-line description>",
+    "  ...",
+    "",
+    "  ## SOTA evidence",
+    `  ${lit}`,
+    "",
+    "  ## Tradeoffs",
+    "  - <approach A> wins on <criterion> because <reason with citation>",
+    "  - <approach A> loses on <criterion> because <reason with citation>",
+    "  ...",
+    "",
+    "  ## Independent Discovery",
+    "  Files / URLs / papers you opened during research that go beyond what the",
+    "  Maestro's identity prompt suggested. Cite at least 3 sources you found on",
+    "  your own \u2014 this is an anti-correlated-blind-spots guard.",
+    "",
+    "  ## Open questions",
+    "  - <question 1 that the research could not resolve>",
+    "  - <question 2>",
+    "",
+    "  ## Notes",
+    "  <any free-form additions; not parsed by the Maestro>",
+    "",
+    "Citation format options:",
+    "  - <file path>:<line>          e.g. src/auth/store.py:42",
+    "  - <file path>:<line-range>    e.g. src/auth/refresh.py:15-30",
+    "  - <URL>                       e.g. https://arxiv.org/abs/2401.04088",
+    "  - paper:<id>                  e.g. paper:arxiv:2401.04088",
+    "  - runtime: <command>          e.g. runtime: pytest tests/test_x.py",
+    "",
+    "Every Approach AND every Tradeoff bullet MUST have a citation in [brackets].",
+    "Bullets without citations will be silently dropped by the Maestro's synthesis \u2014",
+    "and if NO approach has a citation, your findings will be flagged as malformed.",
+    "",
+    "Research methods: use any tool available in your environment. When local",
+    "evidence is insufficient or the topic references external knowledge (papers,",
+    "RFCs, library docs, vendor APIs, benchmarks), you SHOULD use WebSearch /",
+    "WebFetch (or the equivalent in your TUI) to find authoritative sources. Prefer",
+    "primary sources over blog posts. If a tool is not available, fall back to",
+    "local-only investigation and note the gap as an [unverified] claim.",
+    "",
+    'Important: this is NOT a recommendation phase. Do not pick a "best" approach.',
+    "Surface the landscape; the Maestro will synthesize the tradeoff matrix and a",
+    "separate adversary round will challenge the synthesis before the final landscape",
+    "doc is written.",
+    DONE_AND_FENCE("researched " + t)
+  ].join("\n");
+}
+function composeAdversaryPrompt(landscapeDraft, instrument, outPath) {
+  return [
+    "You are now playing adversary against a synthesized landscape doc that",
+    "was built from your earlier research findings (and the findings of your",
+    "fellow parts). Your job is to break confidence in the synthesis \u2014 not",
+    "to validate it.",
+    "",
+    "Default to skepticism. Assume the synthesis can fail in subtle, high-cost,",
+    "or hard-to-detect ways until evidence says otherwise. Do not give credit",
+    "for good intent or partial coverage.",
+    "",
+    "The synthesis to challenge:",
+    "",
+    landscapeDraft,
+    "",
+    "Attack surface \u2014 prioritize these failure modes:",
+    "- Approaches that were missed or wrongly excluded from the landscape",
+    '- Tradeoff matrix rows where the "Best fit" assignment is wrong or weakly justified',
+    "- Citations that don't actually support the claim attached to them",
+    "  (open the cited file/URL and verify the claim is grounded)",
+    "- Convergent findings across parts that may share a correlated blind spot",
+    "  (e.g., all read the same paper, all missed the same recent development)",
+    "- Frames the synthesis adopted that exclude valid alternative frames",
+    "  (e.g., assumed online inference when batch is also valid)",
+    "- Open questions that should have been answered but were filed instead",
+    '- SOTA claims that are stale (paper from 3+ years ago marked "current SOTA")',
+    "",
+    `Output requirements \u2014 write to ${outPath}:`,
+    "",
+    `  # Adversary critique: ${instrument}'s pass`,
+    "",
+    "  ## Verdict",
+    "  <one line: needs-attention | minor-revisions | accept>",
+    "",
+    "  ## Material findings",
+    "  Each finding answers:",
+    "  1. What is the weakness in the synthesis?",
+    "  2. Why is that synthesis claim vulnerable?",
+    "  3. What concrete change to the landscape doc would reduce the risk?",
+    "",
+    "  ### Finding 1: <one-line summary>",
+    "  - **Targets:** <which section/row/citation in the draft>",
+    "  - **Why vulnerable:** <evidence the claim is shaky, with new citation>",
+    "  - **Concrete fix:** <what to change in the landscape doc>",
+    "",
+    "  ### Finding 2: ...",
+    "",
+    "  ## Notes",
+    "  <optional free-form additions>",
+    "",
+    "Calibration rules:",
+    "- Prefer one strong finding over several weak ones",
+    "- Do not dilute serious issues with stylistic nits",
+    "- If the synthesis looks defensible, say so directly and return zero findings",
+    "  (verdict: accept). Padding with weak adversarial reaches is worse than admitting",
+    "  the draft is sound.",
+    "- Be aggressive but stay grounded \u2014 every finding must be defensible from the",
+    "  cited evidence, not speculative",
+    DONE_AND_FENCE("adversary critique done")
+  ].join("\n");
+}
+var DONE_AND_FENCE;
+var init_preludeTurn = __esm({
+  "src/core/preludeTurn.ts"() {
+    "use strict";
+    DONE_AND_FENCE = (summary) => `
+Then emit {"event":"done", "summary":"${summary}", "ts":"<iso>"} to your outbox.
+
+END_OF_INSTRUCTION
+`;
+  }
+});
+
+// src/commands/prelude.ts
+var prelude_exports = {};
+__export(prelude_exports, {
+  adversarySendWith: () => adversarySendWith,
+  adversaryWaitWith: () => adversaryWaitWith,
+  classifyRun: () => classifyRun,
+  confidenceRun: () => confidenceRun,
+  forensicsRun: () => forensicsRun4,
+  handoffExtractRun: () => handoffExtractRun,
+  initWith: () => initWith5,
+  researchSendWith: () => researchSendWith2,
+  researchWaitWith: () => researchWaitWith2,
+  run: () => run14,
+  spawnAllWith: () => spawnAllWith3,
+  synthFinalRun: () => synthFinalRun,
+  synthPreliminaryRun: () => synthPreliminaryRun,
+  teardownWith: () => teardownWith2
+});
+function usage4() {
+  log.error("usage: prelude <init|classify|spawn-all|research-send|research-wait|synth-preliminary|confidence|adversary-send|adversary-wait|synth-final|forensics|teardown|handoff-extract> ...");
+  return 2;
+}
+async function run14(args) {
+  const verb = args[0];
+  const rest = args.slice(1);
+  switch (verb) {
+    case "init":
+      return initRun4(applyArgsFile(rest));
+    case "classify":
+      return classifyRun(rest);
+    case "spawn-all":
+      return spawnAllRun2(rest);
+    case "research-send":
+      return researchSendRun2(rest);
+    case "research-wait":
+      return researchWaitRun2(rest);
+    case "synth-preliminary":
+      return synthPreliminaryRun(rest);
+    case "confidence":
+      return confidenceRun(rest);
+    case "adversary-send":
+      return adversarySendRun(rest);
+    case "adversary-wait":
+      return adversaryWaitRun(rest);
+    case "synth-final":
+      return synthFinalRun(rest);
+    case "forensics":
+      return forensicsRun4(rest);
+    case "teardown":
+      return teardownRun(rest);
+    case "handoff-extract":
+      return handoffExtractRun(rest);
+    default:
+      return usage4();
+  }
+}
+async function initRun4(tokens) {
+  return initWith5(tokens, livePreludeInitDeps);
+}
+async function initWith5(tokens, d) {
+  const topicText = tokens.join(" ").trim();
+  if (!topicText) {
+    log.error("prelude init: topic text is empty");
+    return 1;
+  }
+  const topic = deriveSlug(topicText);
+  if (!topic) {
+    log.error("prelude init: topic produced an empty slug; provide alphanumerics");
+    return 1;
+  }
+  let roster = d.activeProviders().filter((p) => d.isValidated(p));
+  if (roster.length < 2) {
+    log.error(`prelude init: needs >=2 consult-validated providers; got ${roster.length}`);
+    log.error("  just ask Claude directly (this session) \u2014 no /consort:prelude orchestration needed");
+    return 1;
+  }
+  if (roster.length > 3) {
+    log.warn(`prelude init: ${roster.length} providers available; capping to the first 3`);
+    roster = roster.slice(0, 3);
+  }
+  const art = preludeArtDir(topic);
+  if ((0, import_node_fs35.existsSync)(art)) {
+    log.error(`prelude init: topic already in flight: ${art}`);
+    log.error("  run /consort:coda or pick a different topic");
+    return 2;
+  }
+  const instruments = d.pickInstruments(topic, roster.length);
+  if (instruments.length < roster.length) {
+    log.error(`prelude init: instrument pool exhausted (need ${roster.length}, got ${instruments.length})`);
+    return 1;
+  }
+  const rows = roster.map((provider, i2) => ({ provider, instrument: instruments[i2] }));
+  (0, import_node_fs35.mkdirSync)(art, { recursive: true });
+  atomicWrite((0, import_node_path34.join)(art, "topic.txt"), topicText);
+  atomicWrite((0, import_node_path34.join)(art, "roster.txt"), formatRosterFile(rows, isoUtc()));
+  log.ok(`prelude init: topic=${topic} N=${rows.length}`);
+  process.stdout.write(
+    `TOPIC=${topic}
+N=${rows.length}
+ART=${art}
+` + rows.map((r) => `PART=${r.instrument}:${r.provider}`).join("\n") + "\n"
+  );
+  return 0;
+}
+async function classifyRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: prelude classify <topic>");
+    return 2;
+  }
+  const art = preludeArtDir(topic);
+  if (!(0, import_node_fs35.existsSync)(art)) {
+    log.error(`prelude classify: ${art} not found (run prelude init)`);
+    return 1;
+  }
+  const topicText = readIf3((0, import_node_path34.join)(art, "topic.txt")).trim();
+  const track = classifyTopic(topicText);
+  atomicWrite((0, import_node_path34.join)(art, "lit-track.txt"), `${track}
+reason: auto-detect via keyword scan
+`);
+  log.ok(`prelude classify: lit-track=${track}`);
+  return 0;
+}
+async function spawnAllRun2(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: prelude spawn-all <topic>");
+    return 2;
+  }
+  return spawnAllWith3(topic, livePreludeSpawnAllDeps);
+}
+async function spawnAllWith3(topic, d) {
+  const art = preludeArtDir(topic);
+  const rosterPath = (0, import_node_path34.join)(art, "roster.txt");
+  if (!(0, import_node_fs35.existsSync)(rosterPath)) {
+    log.error(`prelude spawn-all: roster.txt missing at ${rosterPath} (run prelude init)`);
+    return 2;
+  }
+  const rows = parseRosterFile((0, import_node_fs35.readFileSync)(rosterPath, "utf8"));
+  if (rows.length < 2) {
+    log.error(`prelude spawn-all: need >=2 parts in roster.txt, got ${rows.length}`);
+    return 2;
+  }
+  const pf = await d.preflight([topic, String(rows.length), "--roster", spawnRosterArg(rows), "--art-dir", art]);
+  if (pf !== 0) {
+    log.error(`prelude spawn-all: preflight failed (rc=${pf})`);
+    return 2;
+  }
+  const panesPath = (0, import_node_path34.join)(art, "preflight-panes.txt");
+  if (!(0, import_node_fs35.existsSync)(panesPath)) {
+    log.error(`prelude spawn-all: preflight wrote no ${panesPath}`);
+    return 2;
+  }
+  const panes = parsePanesFile((0, import_node_fs35.readFileSync)(panesPath, "utf8"));
+  const orphans = rows.filter((r) => !panes.has(r.instrument));
+  if (orphans.length) {
+    log.error(`prelude spawn-all: parts missing a preflight pane: ${orphans.map((r) => r.instrument).join(", ")}`);
+    return 2;
+  }
+  const cwd = d.repoRoot();
+  const results = await Promise.all(rows.map(async (r) => {
+    const rc2 = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd]);
+    return { instrument: r.instrument, provider: r.provider, rc: rc2 };
+  }));
+  atomicWrite((0, import_node_path34.join)(art, "spawn-results.tsv"), spawnResultsTsv(results));
+  const rc = spawnTally(results.map((r) => r.rc));
+  const nOk = results.filter((r) => r.rc === 0).length;
+  if (rc === 0) log.ok(`prelude spawn-all: ${nOk}/${rows.length} parts ready`);
+  else log.warn(`prelude spawn-all: ${nOk}/${rows.length} parts ready (rc=${rc})`);
+  return rc;
+}
+async function researchSendRun2(rest) {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) {
+    log.error("usage: prelude research-send <topic> <instrument> <provider>");
+    return 2;
+  }
+  return researchSendWith2(topic, instrument, provider, liveResearchSendDeps2);
+}
+async function researchSendWith2(topic, instrument, provider, d) {
+  const art = preludeArtDir(topic);
+  const stateFile = (0, import_node_path34.join)(art, `research-${instrument}.txt`);
+  if ((0, import_node_fs35.existsSync)(stateFile)) {
+    log.error(`prelude research-send: ${stateFile} exists; rm to retry`);
+    return 1;
+  }
+  const topicText = readIf3((0, import_node_path34.join)(art, "topic.txt")).trim();
+  if (!topicText) {
+    log.error(`prelude research-send: topic.txt missing/empty at ${art} (run prelude init)`);
+    return 1;
+  }
+  const track = readIf3((0, import_node_path34.join)(art, "lit-track.txt")).startsWith("ON") ? "ON" : "OFF";
+  const findingsPath = (0, import_node_path34.join)(art, `findings-${instrument}.md`);
+  const promptFile = (0, import_node_path34.join)(art, `${instrument}_research_prompt.md`);
+  atomicWrite(promptFile, composePreludeResearchPrompt(topicText, findingsPath, litGuidance(track)));
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}
+`);
+  const rc = await d.send(["--from", "maestro", instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) {
+    log.error(`prelude research-send: send failed (rc=${rc}); ${stateFile} kept (rm to redo)`);
+    return 1;
+  }
+  log.ok(`prelude research-send: ${instrument} offset=${offset}`);
+  return 0;
+}
+async function researchWaitRun2(rest) {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) {
+    log.error("usage: prelude research-wait <topic> <instrument> <provider>");
+    return 2;
+  }
+  return researchWaitWith2(topic, instrument, provider, liveResearchWaitDeps2);
+}
+async function researchWaitWith2(topic, instrument, provider, d) {
+  const art = preludeArtDir(topic);
+  const stateFile = (0, import_node_path34.join)(art, `research-${instrument}.txt`);
+  if (!(0, import_node_fs35.existsSync)(stateFile)) {
+    log.error(`prelude research-wait: ${stateFile} missing (run prelude research-send first)`);
+    return 1;
+  }
+  const offset = parseLatestOffset((0, import_node_fs35.readFileSync)(stateFile, "utf8"));
+  if (offset === null) {
+    log.error(`prelude research-wait: OFFSET not set in ${stateFile}`);
+    return 1;
+  }
+  const timeout = scaledTimeout(consultTimeout("research"), d.multiplier(provider));
+  log.info(`prelude research-wait: ${instrument} offset=${offset} timeout=${timeout}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], timeout);
+  const findingsPath = (0, import_node_path34.join)(art, `findings-${instrument}.md`);
+  const findingsText = (0, import_node_fs35.existsSync)(findingsPath) ? (0, import_node_fs35.readFileSync)(findingsPath, "utf8") : null;
+  const fs = researchState(ev, findingsText);
+  if (fs === "question" && ev) {
+    atomicWrite((0, import_node_path34.join)(art, `question-${instrument}.txt`), JSON.stringify(ev) + "\n");
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    (0, import_node_fs35.appendFileSync)(stateFile, `OFFSET=${bumped}
+FS=question
+`);
+  } else {
+    (0, import_node_fs35.appendFileSync)(stateFile, `FS=${fs}
+`);
+  }
+  (0, import_node_fs35.writeFileSync)((0, import_node_path34.join)(art, `research-${instrument}.done`), "");
+  log.ok(`prelude research-wait: ${instrument} FS=${fs}`);
+  return 0;
+}
+async function synthPreliminaryRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: prelude synth-preliminary <topic>");
+    return 2;
+  }
+  const art = preludeArtDir(topic);
+  if (!(0, import_node_fs35.existsSync)(art)) {
+    log.error(`prelude synth-preliminary: ${art} not found \u2014 run prelude init`);
+    return 1;
+  }
+  for (const f of ["topic.txt", "roster.txt"]) {
+    if (!readIf3((0, import_node_path34.join)(art, f)).trim()) {
+      log.error(`prelude synth-preliminary: missing or empty: ${(0, import_node_path34.join)(art, f)}`);
+      return 1;
+    }
+  }
+  const rows = parseRosterFile(readIf3((0, import_node_path34.join)(art, "roster.txt")));
+  const missing = rows.filter((r) => !readIf3((0, import_node_path34.join)(art, `findings-${r.instrument}.md`)).trim()).map((r) => `findings-${r.instrument}.md`);
+  if (missing.length) {
+    log.error("prelude synth-preliminary: blocked \u2014 missing or empty findings:");
+    for (const m of missing) log.error(`  - ${(0, import_node_path34.join)(art, m)}`);
+    return 1;
+  }
+  const out = (0, import_node_path34.join)(art, "landscape-draft.md");
+  log.ok(`prelude synth-preliminary: inputs validated for ${topic}`);
+  process.stdout.write(out + "\n");
+  return 0;
+}
+async function confidenceRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: prelude confidence <topic> [--decision skip|continue]");
+    return 2;
+  }
+  let decision = null;
+  const di = rest.indexOf("--decision");
+  if (di >= 0) {
+    const v = rest[di + 1];
+    if (v !== "skip" && v !== "continue") {
+      log.error("prelude confidence: --decision must be 'skip' or 'continue'");
+      return 2;
+    }
+    decision = v;
+  }
+  const art = preludeArtDir(topic);
+  const draft = readIf3((0, import_node_path34.join)(art, "landscape-draft.md"));
+  if (!draft.trim()) {
+    log.error(`prelude confidence: landscape-draft.md missing/empty at ${art}`);
+    return 1;
+  }
+  const rows = parseRosterFile(readIf3((0, import_node_path34.join)(art, "roster.txt")));
+  const findings = rows.map((r) => readIf3((0, import_node_path34.join)(art, `findings-${r.instrument}.md`)));
+  const s = computeSignals(draft, findings);
+  log.info(`prelude confidence: S1=${s.s1} S2=${s.s2} S3=${s.s3} S4=${s.s4} S5=${s.s5} \u2014 ALL_HOLD=${s.allHold}`);
+  process.stdout.write(`ALL_HOLD=${s.allHold}
+`);
+  if (decision) {
+    atomicWrite((0, import_node_path34.join)(art, "adversary-skip.txt"), renderSkipRecord({ signals: s, decision, now: isoUtc() }));
+    return 0;
+  }
+  if (!s.allHold) {
+    atomicWrite((0, import_node_path34.join)(art, "adversary-skip.txt"), renderSkipRecord({ signals: s, decision: "not-offered", now: isoUtc() }));
+  }
+  return 0;
+}
+async function adversarySendRun(rest) {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) {
+    log.error("usage: prelude adversary-send <topic> <instrument> <provider>");
+    return 2;
+  }
+  return adversarySendWith(topic, instrument, provider, liveResearchSendDeps2);
+}
+async function adversarySendWith(topic, instrument, provider, d) {
+  const art = preludeArtDir(topic);
+  const draft = readIf3((0, import_node_path34.join)(art, "landscape-draft.md"));
+  if (!draft.trim()) {
+    log.error("prelude adversary-send: landscape-draft.md missing or empty \u2014 run synth-preliminary first");
+    return 1;
+  }
+  const stateFile = (0, import_node_path34.join)(art, `adversary-${instrument}.txt`);
+  if ((0, import_node_fs35.existsSync)(stateFile)) {
+    log.error(`prelude adversary-send: ${stateFile} exists; rm to retry`);
+    return 1;
+  }
+  const outPath = (0, import_node_path34.join)(art, `adversary-${instrument}.md`);
+  const promptFile = (0, import_node_path34.join)(art, `${instrument}_adversary_prompt.md`);
+  atomicWrite(promptFile, composeAdversaryPrompt(draft, instrument, outPath));
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}
+`);
+  const rc = await d.send(["--from", "maestro", instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) {
+    log.error(`prelude adversary-send: send failed (rc=${rc}); ${stateFile} kept (rm to redo)`);
+    return 1;
+  }
+  log.ok(`prelude adversary-send: ${instrument} offset=${offset}`);
+  return 0;
+}
+async function adversaryWaitRun(rest) {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) {
+    log.error("usage: prelude adversary-wait <topic> <instrument> <provider>");
+    return 2;
+  }
+  return adversaryWaitWith(topic, instrument, provider, liveResearchWaitDeps2);
+}
+async function adversaryWaitWith(topic, instrument, provider, d) {
+  const art = preludeArtDir(topic);
+  const stateFile = (0, import_node_path34.join)(art, `adversary-${instrument}.txt`);
+  if (!(0, import_node_fs35.existsSync)(stateFile)) {
+    log.error(`prelude adversary-wait: ${stateFile} missing (run prelude adversary-send first)`);
+    return 1;
+  }
+  const offset = parseLatestOffset((0, import_node_fs35.readFileSync)(stateFile, "utf8"));
+  if (offset === null) {
+    log.error(`prelude adversary-wait: OFFSET not set in ${stateFile}`);
+    return 1;
+  }
+  const timeout = scaledTimeout(consultTimeout("adversary"), d.multiplier(provider));
+  log.info(`prelude adversary-wait: ${instrument} offset=${offset} timeout=${timeout}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], timeout);
+  const outPath = (0, import_node_path34.join)(art, `adversary-${instrument}.md`);
+  const text = (0, import_node_fs35.existsSync)(outPath) ? (0, import_node_fs35.readFileSync)(outPath, "utf8") : null;
+  const as = verifyState(ev, text);
+  if (as === "question" && ev) {
+    atomicWrite((0, import_node_path34.join)(art, `question-${instrument}.txt`), JSON.stringify(ev) + "\n");
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    (0, import_node_fs35.appendFileSync)(stateFile, `OFFSET=${bumped}
+AS=question
+`);
+  } else {
+    (0, import_node_fs35.appendFileSync)(stateFile, `AS=${as}
+`);
+  }
+  (0, import_node_fs35.writeFileSync)((0, import_node_path34.join)(art, `adversary-${instrument}.done`), "");
+  log.ok(`prelude adversary-wait: ${instrument} AS=${as}`);
+  return 0;
+}
+async function synthFinalRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: prelude synth-final <topic>");
+    return 2;
+  }
+  const art = preludeArtDir(topic);
+  if (!(0, import_node_fs35.existsSync)(art)) {
+    log.error(`prelude synth-final: ${art} not found`);
+    return 1;
+  }
+  if (!readIf3((0, import_node_path34.join)(art, "landscape-draft.md")).trim()) {
+    log.error("prelude synth-final: landscape-draft.md missing");
+    return 1;
+  }
+  if (!readIf3((0, import_node_path34.join)(art, "topic.txt")).trim()) {
+    log.error("prelude synth-final: topic.txt missing");
+    return 1;
+  }
+  const skipped = /^user_decision: skip$/m.test(readIf3((0, import_node_path34.join)(art, "adversary-skip.txt")));
+  if (!skipped) {
+    const rows = parseRosterFile(readIf3((0, import_node_path34.join)(art, "roster.txt")));
+    const missing = rows.filter((r) => !readIf3((0, import_node_path34.join)(art, `adversary-${r.instrument}.md`)).trim()).map((r) => `adversary-${r.instrument}.md`);
+    if (missing.length) {
+      log.error("prelude synth-final: blocked \u2014 adversary ran but critiques missing:");
+      for (const m of missing) log.error(`  - ${(0, import_node_path34.join)(art, m)}`);
+      return 1;
+    }
+  }
+  const today = isoUtc().slice(0, 10);
+  const out = (0, import_node_path34.join)(art, `landscape-${today}-${topic}.md`);
+  log.ok(`prelude synth-final: inputs validated for ${topic} (adversary_ran=${skipped ? 0 : 1})`);
+  process.stdout.write(out + "\n");
+  return 0;
+}
+async function forensicsRun4(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: prelude forensics <topic>");
+    return 2;
+  }
+  const path6 = captureArtDir({ artDir: preludeArtDir(topic), command: "prelude" });
+  if (path6) {
+    log.ok(`prelude forensics: captured ${path6}`);
+    process.stdout.write(path6 + "\n");
+  } else log.info("prelude forensics: no mechanical findings (no file written)");
+  return 0;
+}
+async function teardownRun(rest) {
+  return teardownWith2(rest, livePreludeTeardownDeps);
+}
+async function teardownWith2(args, deps) {
+  const out = deps.stdout ?? ((l) => {
+    process.stdout.write(l + "\n");
+  });
+  const topic = args[0];
+  if (!topic) {
+    log.error("prelude teardown: topic required");
+    return 2;
+  }
+  const art = preludeArtDir(topic);
+  if (!(0, import_node_fs35.existsSync)(art) || !(0, import_node_fs35.statSync)(art).isDirectory()) {
+    log.error(`${art} not found`);
+    return 1;
+  }
+  const pf = (0, import_node_path34.join)(art, "preflight-panes.txt");
+  if ((0, import_node_fs35.existsSync)(pf)) {
+    for (const line of (0, import_node_fs35.readFileSync)(pf, "utf8").split("\n")) {
+      const pane = line.trim();
+      if (!pane) continue;
+      try {
+        await deps.killPane(pane);
+      } catch {
+      }
+    }
+  }
+  const dest = deps.archiveTopic(topic, "prelude");
+  if (dest) {
+    out(dest);
+    log.ok(`[teardown] archived ${topic} -> ${dest}`);
+  }
+  return 0;
+}
+async function handoffExtractRun(rest) {
+  const artDir = rest[0];
+  if (!artDir) {
+    log.error("usage: prelude handoff-extract <art-dir>");
+    return 2;
+  }
+  const path6 = extractHandoffData(artDir);
+  if (!path6) {
+    log.error(`prelude handoff-extract: art-dir or topic.txt missing under ${artDir}`);
+    return 2;
+  }
+  log.ok(`prelude handoff-extract: wrote ${path6}`);
+  process.stdout.write(path6 + "\n");
+  return 0;
+}
+var import_node_fs35, import_node_path34, readIf3, livePreludeInitDeps, livePreludeSpawnAllDeps, liveResearchSendDeps2, liveResearchWaitDeps2, livePreludeTeardownDeps;
+var init_prelude2 = __esm({
+  "src/commands/prelude.ts"() {
+    "use strict";
+    import_node_fs35 = require("node:fs");
+    import_node_path34 = require("node:path");
+    init_log();
+    init_args();
+    init_atomic();
+    init_archive();
+    init_prelude();
+    init_preludeHandoff();
+    init_forensics();
+    init_tmux();
+    init_score();
+    init_providers();
+    init_paths();
+    init_instruments();
+    init_contracts();
+    init_preludeLit();
+    init_preludeConfidence();
+    init_ipc();
+    init_scoreTurn();
+    init_preludeTurn();
+    init_send2();
+    init_spawn();
+    init_preflight();
+    readIf3 = (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : "";
+    livePreludeInitDeps = {
+      activeProviders: () => readProviderList(activeProvidersPath()),
+      isValidated: instrumentConsultValidated,
+      pickInstruments
+    };
+    livePreludeSpawnAllDeps = { preflight: run7, spawn: run, repoRoot };
+    liveResearchSendDeps2 = {
+      offsetFor: (i2, m, t) => outboxOffset(outboxPath(i2, m, t)),
+      send: run2
+    };
+    liveResearchWaitDeps2 = {
+      wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to),
+      multiplier: instrumentTimeoutMultiplier
+    };
+    livePreludeTeardownDeps = {
+      killPane: (p) => killNow(p),
+      archiveTopic: (t, s) => archiveTopic(t, s)
+    };
+  }
+});
+
 // src/consort.ts
 init_args();
 init_paths();
 init_colors();
 async function loadHandlers() {
-  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform, playback, rehearsal] = await Promise.all([
+  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform, playback, rehearsal, prelude] = await Promise.all([
     Promise.resolve().then(() => (init_spawn(), spawn_exports)),
     Promise.resolve().then(() => (init_send2(), send_exports)),
     Promise.resolve().then(() => (init_collect(), collect_exports)),
@@ -23929,7 +24806,8 @@ async function loadHandlers() {
     Promise.resolve().then(() => (init_score2(), score_exports)),
     Promise.resolve().then(() => (init_perform2(), perform_exports)),
     Promise.resolve().then(() => (init_playback2(), playback_exports)),
-    Promise.resolve().then(() => (init_rehearsal2(), rehearsal_exports))
+    Promise.resolve().then(() => (init_rehearsal2(), rehearsal_exports)),
+    Promise.resolve().then(() => (init_prelude2(), prelude_exports))
   ]);
   return {
     spawn: spawn2.run,
@@ -23944,7 +24822,8 @@ async function loadHandlers() {
     score: score.run,
     perform: perform.run,
     playback: playback.run,
-    rehearsal: rehearsal.run
+    rehearsal: rehearsal.run,
+    prelude: prelude.run
   };
 }
 async function banner(label, color) {
