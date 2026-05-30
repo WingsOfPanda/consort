@@ -27,3 +27,64 @@ export function extractMetric(topic: string): string {
   }
   return bestWord;
 }
+
+/** Render metric.md from K=V fields. Required: primary_metric, direction(maximize|minimize).
+ *  Defaults: min_acceptable=(not set), K_corroboration=1, plateau_window=5, plateau_threshold=0.01.
+ *  Throws on missing required keys / bad direction. Byte-faithful to format_metric_block. */
+export function formatMetricBlock(fields: Record<string, string>): string {
+  const primary = fields.primary_metric ?? "";
+  const direction = fields.direction ?? "";
+  if (!primary) throw new Error("missing required key: primary_metric");
+  if (!direction) throw new Error("missing required key: direction");
+  if (direction !== "maximize" && direction !== "minimize") {
+    throw new Error(`direction must be 'maximize' or 'minimize'; got '${direction}'`);
+  }
+  const min = fields.min_acceptable || "(not set)";
+  const K = fields.K_corroboration || "1";
+  const pw = fields.plateau_window || "5";
+  const pt = fields.plateau_threshold || "0.01";
+
+  const lines = ["# Research goal", ""];
+  lines.push(`**Primary metric:** ${primary}`);
+  lines.push(`**Direction:** ${direction}`);
+  lines.push(`**min_acceptable:** ${min}`);
+  if (fields.target) lines.push(`**target:** ${fields.target}`);
+  lines.push(`**K_corroboration:** ${K}`);
+  lines.push(`**plateau_window:** ${pw}`);
+  lines.push(`**plateau_threshold:** ${pt}`);
+  if (fields.acceptable) lines.push(`**acceptable (legacy):** ${fields.acceptable}`);
+  if (fields.hard_constraints) lines.push(`**Hard constraints:** ${fields.hard_constraints}`);
+  let out = lines.join("\n") + "\n";
+  if (fields.notes) out += `\n**Notes:** ${fields.notes}\n`;
+  return out;
+}
+
+export interface MetricThresholds {
+  primaryMetric: string;
+  minOp?: string; minVal?: string;
+  tgtOp?: string; tgtVal?: string;
+  kRequired: number; plateauWindow: number; plateauThreshold: number;
+}
+
+/** Parse the thresholds out of a rendered metric.md. `**min_acceptable:** >= 0.95` -> op ">=", val "0.95".
+ *  Unparseable / "(not set)" values leave op/val as-is (a later numeric compare against them simply fails). */
+export function parseMetricMd(text: string): MetricThresholds {
+  let primaryMetric = "";
+  let minOp: string | undefined, minVal: string | undefined;
+  let tgtOp: string | undefined, tgtVal: string | undefined;
+  let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
+  const opVal = (s: string): [string, string] => {
+    const parts = s.trim().split(/\s+/);
+    return [parts[0] ?? "", parts.slice(1).join(" ")];
+  };
+  for (const line of text.split("\n")) {
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^\*\*Primary metric:\*\*\s+(.*)$/))) { primaryMetric = m[1].trim(); }
+    else if ((m = line.match(/^\*\*min_acceptable:\*\*\s+(.*)$/))) { [minOp, minVal] = opVal(m[1]); }
+    else if ((m = line.match(/^\*\*target:\*\*\s+(.*)$/))) { [tgtOp, tgtVal] = opVal(m[1]); }
+    else if ((m = line.match(/^\*\*K_corroboration:\*\*\s+(.*)$/))) { kRequired = parseInt(m[1].trim(), 10) || 1; }
+    else if ((m = line.match(/^\*\*plateau_window:\*\*\s+(.*)$/))) { plateauWindow = parseInt(m[1].trim(), 10) || 5; }
+    else if ((m = line.match(/^\*\*plateau_threshold:\*\*\s+(.*)$/))) { plateauThreshold = parseFloat(m[1].trim()) || 0.01; }
+  }
+  return { primaryMetric, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
+}

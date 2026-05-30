@@ -4,6 +4,7 @@ import {
   rehearsalArtDir, partsDir, partStateDir, experimentsDir, experimentDir,
 } from "../src/core/rehearsal.js";
 import { extractMetric, METRIC_VOCAB } from "../src/core/rehearsalMetric.js";
+import { formatMetricBlock, parseMetricMd } from "../src/core/rehearsalMetric.js";
 
 describe("rehearsal art-dir paths", () => {
   it("layers _rehearsal/parts/<instrument>/experiments/<exp-id>", () => {
@@ -41,5 +42,56 @@ describe("extractMetric", () => {
     expect(extractMetric("costly auc then cost")).toBe("cost");
     // 'accuracy' eligible (whole-word at end), substring in 'accuracyx' is earliest.
     expect(extractMetric("accuracyx loss accuracy")).toBe("accuracy");
+  });
+});
+
+describe("formatMetricBlock", () => {
+  it("renders required + defaulted fields", () => {
+    const md = formatMetricBlock({
+      primary_metric: "accuracy", direction: "maximize",
+      min_acceptable: ">= 0.95", target: ">= 0.99",
+    });
+    expect(md).toContain("**Primary metric:** accuracy");
+    expect(md).toContain("**Direction:** maximize");
+    expect(md).toContain("**min_acceptable:** >= 0.95");
+    expect(md).toContain("**target:** >= 0.99");
+    expect(md).toContain("**K_corroboration:** 1");       // default
+    expect(md).toContain("**plateau_window:** 5");        // default
+    expect(md).toContain("**plateau_threshold:** 0.01");  // default
+  });
+  it("defaults min_acceptable to (not set) and omits absent optionals", () => {
+    const md = formatMetricBlock({ primary_metric: "loss", direction: "minimize" });
+    expect(md).toContain("**min_acceptable:** (not set)");
+    expect(md).not.toContain("**target:**");
+    expect(md).not.toContain("**Hard constraints:**");
+  });
+  it("throws on missing primary_metric / direction or bad direction", () => {
+    expect(() => formatMetricBlock({ direction: "maximize" })).toThrow(/primary_metric/);
+    expect(() => formatMetricBlock({ primary_metric: "auc" })).toThrow(/direction/);
+    expect(() => formatMetricBlock({ primary_metric: "auc", direction: "sideways" })).toThrow(/maximize/);
+  });
+});
+
+describe("parseMetricMd round-trips formatMetricBlock", () => {
+  it("recovers ops, values, and thresholds", () => {
+    const md = formatMetricBlock({
+      primary_metric: "accuracy", direction: "maximize",
+      min_acceptable: ">= 0.95", target: ">= 0.99",
+      K_corroboration: "3", plateau_window: "4", plateau_threshold: "0.005",
+    });
+    const t = parseMetricMd(md);
+    expect(t.primaryMetric).toBe("accuracy");
+    expect(t.minOp).toBe(">="); expect(t.minVal).toBe("0.95");
+    expect(t.tgtOp).toBe(">="); expect(t.tgtVal).toBe("0.99");
+    expect(t.kRequired).toBe(3);
+    expect(t.plateauWindow).toBe(4);
+    expect(t.plateauThreshold).toBe(0.005);
+  });
+  it("applies defaults when fields are absent", () => {
+    const t = parseMetricMd("**Primary metric:** f1\n**Direction:** maximize\n");
+    expect(t.kRequired).toBe(1);
+    expect(t.plateauWindow).toBe(5);
+    expect(t.plateauThreshold).toBe(0.01);
+    expect(t.tgtOp).toBeUndefined();
   });
 });
