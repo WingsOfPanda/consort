@@ -52,3 +52,51 @@ describe("parseMechanicalFindings", () => {
     expect(parseMechanicalFindings("- not a finding\nrandom text")).toEqual([]);
   });
 });
+
+import { findingSignature, normalizeVolatile } from "../src/core/playback.js";
+
+describe("normalizeVolatile", () => {
+  it("strips ts / sha / path / bare ints", () => {
+    expect(normalizeVolatile("at /home/x/y.ts:42 sha 3827f1c4f6 t 2026-05-30T00:00:00Z n 7"))
+      .toBe("at <path> sha <sha> t <ts> n <n>");
+  });
+});
+
+describe("findingSignature (per-source)", () => {
+  it("audit_log -> first ISSUE token (drops trailing fields)", () => {
+    expect(findingSignature({ source: "audit_log", key: "ISSUE=unresolved_placeholder", context: "audit.log" }))
+      .toBe("audit_log||ISSUE=unresolved_placeholder");
+    expect(findingSignature({ source: "audit_log", key: "ISSUE=todo_marker SECTION=ASK", context: "audit.log" }))
+      .toBe("audit_log||ISSUE=todo_marker");
+  });
+  it("status -> state verbatim", () => {
+    expect(findingSignature({ source: "status", key: "state=error", context: "part=oboe" }))
+      .toBe("status||state=error");
+  });
+  it("spawn_results -> rc + reason word (lowercased)", () => {
+    expect(findingSignature({ source: "spawn_results", key: "rc=124 reason=Timeout waiting", context: "part=oboe" }))
+      .toBe("spawn_results||rc=124 reason=timeout");
+  });
+  it("spawn_results with no reason -> bare rc (empty reason column)", () => {
+    expect(findingSignature({ source: "spawn_results", key: "rc=124", context: "part=oboe" }))
+      .toBe("spawn_results||rc=124");
+  });
+  it("outbox -> event + reason from JSON (volatile bits ignored)", () => {
+    expect(findingSignature({ source: "outbox", key: '{"event":"error","reason":"dispatch_timeout","ts":"2026-05-30T00:00:00Z"}', context: "part=oboe" }))
+      .toBe("outbox||event=error reason=dispatch_timeout");
+    expect(findingSignature({ source: "outbox", key: '{"event":"question"}', context: "part=oboe" }))
+      .toBe("outbox||event=question");
+  });
+  it("outbox non-JSON key -> normalized-class fallback", () => {
+    expect(findingSignature({ source: "outbox", key: "not json sha 3827f1c4f6", context: "part=oboe" }))
+      .toBe("outbox||not json sha <sha>");
+  });
+  it("session_log -> volatile-normalized error class", () => {
+    expect(findingSignature({ source: "session_log", key: "[error] failed at /home/x/y.ts:42 sha 3827f1c4f6", context: "dispatch.log" }))
+      .toBe("session_log||[error] failed at <path> sha <sha>");
+  });
+  it("unknown source -> coarse fallback", () => {
+    expect(findingSignature({ source: "weird", key: "x 2026-05-30T00:00:00Z", context: "c" }))
+      .toBe("weird||x <ts>");
+  });
+});

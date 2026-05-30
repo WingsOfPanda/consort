@@ -34,3 +34,41 @@ export function parseSince(spec: string, now: number): number {
   const n = Number(m[1]);
   return now - (m[2] === "d" ? n * 86_400_000 : n * 3_600_000);
 }
+
+/** Replace per-run volatile tokens so the "same problem" in a different run collapses to one class.
+ *  Order matters: ISO timestamps first (they contain digits), then SHA-like hex, then absolute
+ *  paths, then any remaining bare integers. */
+export function normalizeVolatile(s: string): string {
+  return s
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g, "<ts>")
+    .replace(/\b[0-9a-f]{7,40}\b/g, "<sha>")
+    .replace(/\/[^\s"']+/g, "<path>")
+    .replace(/\b\d+\b/g, "<n>")
+    .trim();
+}
+
+/** Deterministic per-source trend signature `<source>||<class>` (spec §6). */
+export function findingSignature(f: Finding): string {
+  const sig = (cls: string): string => `${f.source}||${cls}`;
+  switch (f.source) {
+    case "audit_log":
+      return sig(f.key.match(/ISSUE=\S+/)?.[0] ?? normalizeVolatile(f.key));
+    case "status":
+      return sig(f.key);                                  // already `state=error`
+    case "spawn_results": {
+      const rc = f.key.match(/rc=\S+/)?.[0] ?? "rc=?";
+      const reason = f.key.match(/reason=(\S+)/)?.[1];
+      return sig(reason ? `${rc} reason=${reason.toLowerCase()}` : rc);
+    }
+    case "outbox":
+      try {
+        const o = JSON.parse(f.key) as { event?: string; reason?: string };
+        const reason = typeof o.reason === "string" ? ` reason=${o.reason.split(/\s+/)[0].toLowerCase()}` : "";
+        return sig(`event=${o.event ?? "?"}${reason}`);
+      } catch { return sig(normalizeVolatile(f.key)); }
+    case "session_log":
+      return sig(normalizeVolatile(f.key));
+    default:
+      return sig(normalizeVolatile(f.key));
+  }
+}
