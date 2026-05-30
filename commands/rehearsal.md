@@ -9,7 +9,8 @@ allowed-tools: Bash, Write, Read, Edit, AskUserQuestion, WebSearch, Skill
 Run an executable research session: you (the Maestro, the conductor) lock a metric with the user, sweep
 the SOTA, spawn 2-3 persistent **codex parts** (PhD-student executors) once, then adaptively dispatch
 single-config **experiments** until a stop condition fires. **Explore-only** — never touch the user's real
-source. This directive covers Phases 0-3 (setup + spawn); the experiment loop is Phase 4+ (added next).
+source. This directive covers Phases 0-4 (setup + spawn + the adaptive experiment loop); the wind-down
+(Phases 5-7: synthesis + teardown + handoff) is the remaining tail (Phase D, added next).
 
 Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
@@ -68,5 +69,179 @@ panes off your pane (main-vertical), batch-spawns them as codex, and writes `$AR
   archive). Else **AskUserQuestion**: **Proceed degraded (<k>/<N>)** / **Abort** — degraded drops the failed
   instruments and continues with the rest.
 
-> Phase 4 (the experiment loop) is added in the next phase. For now, after a successful spawn, report the
-> roster + that setup is complete.
+## Phase 4 — Initial dispatch (runs ONCE, before the loop)
+
+After a successful `spawn-all`, set up per-part liveness + seed direction, then dispatch the first
+round. This phase runs **once**; its last step ENTERS THE LOOP (do NOT end the turn).
+
+1. **Seed per-part state.** `$ART/parts.txt` already exists (one instrument per line, from `spawn-all`).
+   For **each** instrument in `$ART/parts.txt`, create its experiments dir and write its initial
+   `state.txt` — one small `printf` per part:
+   ```bash
+   while IFS= read -r INST; do
+     [ -n "$INST" ] || continue
+     mkdir -p "$ART/parts/$INST/experiments"
+     printf 'exp_counter=0\nphase=idle\ncurrent_exp_id=\nlast_event=spawn\n' > "$ART/parts/$INST/state.txt"
+   done < "$ART/parts.txt"
+   ```
+   The `phase` vocabulary (set throughout the loop): `idle` (between experiments — eligible for
+   dispatch) | `working` (executing) | `stale` / `stuck` (Monitor liveness escalation) | `blocked`
+   (emitted a `question` — awaiting user) | `failed` (errored, manual recovery) | `complete` /
+   `incomplete` (terminal) | `abandoned` (Maestro retired the lane via Lane-D; dispatch refuses with rc 2).
+
+2. **Start one persistent Monitor task per part.** Use the **Monitor TOOL** (NOT a Bash call) once per
+   instrument, with config:
+   - `command`: `node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs rehearsal monitor <TOPIC> <instrument>`
+   - `persistent`: `true`
+   - `description`: `rehearsal monitor for <instrument>`
+
+   Each task watches that part's outbox for `done`/`error`/`question`/`heartbeat` events AND emits
+   `stale`/`stuck` when the outbox mtime exceeds the probe/stuck thresholds. Capture each returned task
+   ID and append it to `$ART/monitor-tasks.txt`, one per line (Step 2 of the loop `TaskStop`s every ID
+   from this file at the hard cap).
+
+3. **Write the initial `session-summary.md`.** Compose `$ART/session-summary.md` (a mechanical
+   roster/metric header — roster instruments, the metric block, time budget) and append a
+   `## Current direction` section (1-3 sentence opening strategy note, incl. the diversity rationale
+   from Phase 2) plus a `## Recent decisions` section (placeholder bullets, filled on first dispatch).
+   Use the Write tool (atomic single-shot).
+
+4. **First dispatch round — PARALLEL, one Bash call per part in ONE message.** For each instrument,
+   compose a 1-2 sentence opening direction informed by `$ART/topic.txt`, `$ART/metric.md`, and
+   `$ART/seed-from.txt` (if present), then dispatch:
+   ```bash
+   $CS rehearsal experiment-send <TOPIC> <instrument> exp-001 "<approach-label>" "<direction>"
+   ```
+   **Diversity:** assign a different pipeline / approach family per part (e.g. single-pass / typed-routing
+   / hybrid) — identical pipelines produce no triangulation signal. The verb creates
+   `parts/<instrument>/experiments/exp-001/`, writes `prompt.md` from the experiment template, writes the
+   inbox, sets `phase=working, current_exp_id=exp-001, exp_counter=1`, and nudges the pane.
+
+5. **Render the initial status brief:** `$CS rehearsal status-brief <TOPIC>` (no `--latest-*` flags on
+   the first render — approach labels come from each part's freshly-written `prompt.md`, metric shows
+   `(running)`, scoreboard says `_(scoreboard absent)_`). **Print its stdout verbatim** to chat.
+
+6. **ENTER THE LOOP.** Do NOT end the turn — fall straight into the inline loop below.
+
+## The inline loop (Steps 1-8 — repeat until Step 2 or Step 4 stops)
+
+You are the Maestro mid-session. Unlike the bash predecessor (which ended the turn at Step 8 and waited
+for a hook to re-enter), consort runs this loop **inline** — the same idiom `score`/`perform` use for
+their wait barriers, but **UNBOUNDED**. **Step 8 is the LOOP TAIL → go to Step 1; it is NOT a turn end.**
+The loop BLOCKS in-process for the next part-completion notification (the persistent Monitor tasks surface
+`done`/`error`/`question`/`heartbeat`/`stale`/`stuck`), then continues.
+
+### Step 1 — Read state baseline
+Read (capped): `$ART/scoreboard.md`, each part's `$ART/parts/<instrument>/state.txt`, the existence of
+`$ART/halt.flag`, and `$ART/time-budget.txt` + `$ART/session-start.txt` (for the elapsed-time check).
+Then **block on the next part `done`/`error`/`question` notification** — a Monitor task fires it (a
+`stale`/`stuck`/`heartbeat` notification also wakes the loop; route it in Step 3 and keep going). When a
+notification arrives, continue to Step 2 with it queued.
+
+### Step 2 — Hard-cap check
+IF `$ART/halt.flag` exists OR the time budget has elapsed (`now - session-start >= time-budget`, unless
+the budget is `none`):
+1. `$CS rehearsal score <TOPIC>` — write the final scoreboard.
+2. **`TaskStop` every task ID in `$ART/monitor-tasks.txt`** (the `TaskStop` tool is a harness primitive,
+   one call per ID; idempotent).
+3. Proceed to synthesis + teardown. **Synthesis (Phase 5), teardown (Phase 6), and the `finalize` /
+   `handoff` verbs are Phase D — added next.** For now: read the final `$ART/scoreboard.md`, present the
+   final scoreboard + the winner row to the user, and note that the wind-down tail (synthesis doc +
+   `coda` teardown + handoff) is pending. **EXIT THE LOOP** (this is a real stop).
+
+### Step 3 — Process the queued notification(s)
+Initialize `RAN_SCORE=0`, `LAST_INSTRUMENT=`, `LAST_EXP=`. Route each queued notification by event type:
+- **`done` / `error`** → `$CS rehearsal score <TOPIC>` (re-scores every part, sets each scored part's
+  `phase=idle`). On rc 0 set `RAN_SCORE=1` and record `LAST_INSTRUMENT=<instrument>` / `LAST_EXP=<exp-id>`
+  from the event JSON (`instrument` field + the `summary`-derived `exp-NNN`). If the event's part has a
+  non-empty `probe_sent_ts` in its `state.txt`, clear it (the part recovered — the pending probe is stale).
+- **`question`** → surface the part's question to the user in chat; set that part's `phase=blocked`. Do
+  **NOT** auto-dispatch it — wait for user direction.
+- **`stale`** → send a probe: `$CS send --from maestro <instrument> <TOPIC> "status? brief update on the
+  current experiment please"`; set that part's `phase=stale, probe_sent_ts=<now UTC ISO>`. **Debounce:**
+  skip the probe if `probe_sent_ts` was already set within the stuck window.
+- **`stuck`** → Maestro judgment: either **abort** the pane (Ctrl-C via tmux, set `phase=failed`) OR
+  **extend** (clear `probe_sent_ts` to give more time).
+- **`heartbeat`** → bump that part's `last_event_ts`; if `probe_sent_ts` is set, clear it (the part is
+  responsive — the pending probe is no longer relevant). No further action.
+
+Then, **IF `RAN_SCORE`**: `$CS rehearsal status-brief <TOPIC> --latest-instrument <LAST_INSTRUMENT>
+--latest-exp <LAST_EXP>` and **print its stdout verbatim** — exactly **ONCE per loop iteration**, even if
+multiple `done` events queued (score per event, but render the brief once with the LAST values). Skip the
+brief entirely when `RAN_SCORE=0` (only heartbeat/question/stale/stuck fired — no new scored state).
+
+### Step 4 — Completion check + DECISION POLICY
+The `status-brief` you just printed already shows the `**Completion check:**` line (computed by the same
+core the CLI uses: `floor_met` / `target_met` / `K_so_far` / `K_required` / `plateau`). Apply the FROZEN
+decision policy below. If the decision is **STOP**, write `$ART/halt.flag` as a structured `key=value`
+file (one entry per line) — required keys `halted_by=maestro`, `halted_at=<UTC ISO>`, `reason=<one line>`,
+plus optional `target_met` / `floor_met` / `k_so_far` / `k_required` / `plateau` — then **jump to Step 2**.
+
+```
+Decision policy (apply at Step 4):
+  Hard rules (no judgment):
+  - floor_met=no AND no hard cap -> keep going.
+  - hard_cap=yes OR halt.flag present -> stop (go to Step 2).
+  Soft rules (Maestro judgment, default-stop, override allowed):
+  - All of floor + target + K satisfied -> default stop. Override if variance looks
+    suspicious or the user asked to keep exploring.
+  - Floor met + plateau detected + target not met -> default stop. Override to pivot
+    direction or request user input.
+  If decision = stop, touch halt.flag with reason text, then jump to Step 2.
+
+NEVER STOP the loop at Step 5. If at least one part has phase=idle and no halt.flag exists,
+dispatch the next experiment -- do not pause to ask "should I continue?" or "is this a good
+stopping point?". Stop conditions are owned by Step 2 (halt.flag / time budget) and Step 4
+(completion check). If results look thin: rotate the approach mix, escalate via a question,
+or document the concern in session-summary.md Recent decisions -- and dispatch.
+
+Lane-D abandon (per part, at Step 5 -- ALL THREE must hold):
+  1. >= 3 completed (status=ok) experiments for this part;
+  2. NONE of this part's LAST 3 experiments scored >= min_acceptable;
+  3. this part's best metric >= 5 x plateau_threshold BELOW the current overall leader.
+  -> transition phase=abandoned + lane_abandon_reason + lane_abandon_ts; skip dispatch;
+     surface in chat. (experiment-send refuses an abandoned lane with rc 2.)
+```
+
+### Step 5 — Dispatch round
+For **each** part with `phase=idle` and no `$ART/halt.flag`:
+1. **Lane-D abandon check FIRST** (the frozen block above — all three criteria must hold). When all hold,
+   write that part's `state.txt` to `phase=abandoned` + `lane_abandon_reason=<short reason>` +
+   `lane_abandon_ts=<UTC ISO>`, skip dispatch for it, and surface the retirement in chat ("`<instrument>`
+   lane retired: …"). The `phase=idle` filter then excludes it from all future rounds.
+2. **Otherwise dispatch.** Compose a ~50-token direction ("direction, not plan") from
+   `$ART/session-summary.md` (Current direction + Recent decisions), the recent `$ART/scoreboard.md` rows,
+   and the topic/metric. Read `exp_counter` from the part's `state.txt`, increment, format `exp-NNN`, then:
+   ```bash
+   $CS rehearsal experiment-send <TOPIC> <instrument> exp-NNN "<approach-label>" "<direction>"
+   ```
+   The verb increments `exp_counter`, sets `phase=working, current_exp_id=exp-NNN`, and nudges the pane.
+
+**NEVER STOP the loop here** — see the frozen NEVER-STOP banner in Step 4. Stop conditions are owned by
+Step 2 and Step 4 only.
+
+### Step 6 — Handle a user message
+If this iteration was triggered by a user message (not solely a notification):
+- **Halt intent** ("stop", "halt", "we're done", "call it") → write `$ART/halt.flag` with
+  `halted_by=user`, `halted_at=<UTC ISO>`, `reason=user-halted via slash directive`; **jump to Step 2**.
+- **Direction-change intent** ("focus on Y for `<instrument>`", "stop exploring X") → record it in
+  `session-summary.md`'s Recent decisions section; factor it into the next Step 5 direction.
+- **Extension intent** ("extend by 2 hours") → add the seconds to `$ART/time-budget.txt` and refresh
+  `$ART/session-start.txt` (`date -u +%Y-%m-%dT%H:%M:%SZ`).
+- **Negated halt** ("don't stop") → ignore (no halt).
+- **Uncertain** → ask "Halt now? (yes/no)".
+
+An out-of-band `$ART/halt.flag` (e.g. written by another process) is also caught by Step 2 on the next
+iteration.
+
+### Step 7 — Re-render `session-summary.md`
+Re-compose `$ART/session-summary.md`: the mechanical sections (Status, Scoreboard top 5, Completion check,
+Recent events) plus a filled `## Current direction` (1-3 sentence strategy note) and `## Recent decisions`
+(the last ~5 dispatches, one-line rationale each). Write tool, atomic single-shot.
+
+### Step 8 — LOOP TAIL
+**Go to Step 1. Do NOT end the turn.** The loop continues blocking on the next notification and repeats
+Steps 1-8 until Step 2 (halt.flag / time budget) or Step 4 (completion-check stop) exits it.
+
+> Phases 5-7 (synthesis doc → `coda` teardown → handoff) are the remaining tail (Phase D, added next).
+> Until then, Step 2's exit presents the final scoreboard + winner and notes the wind-down is pending.
