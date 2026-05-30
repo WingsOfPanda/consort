@@ -24,6 +24,10 @@ import { outboxOffset, outboxPath, outboxWaitSince, statusPath, type OutboxEvent
 import { instrumentTimeoutMultiplier } from "../core/contracts.js";
 import { scaledTimeout, parseLatestOffset } from "../core/scoreTurn.js";
 import { parseDagLine, dagTopological, dagSectionBody } from "../core/dag.js";
+import {
+  enumerateSiblings, captureSiblingBaseline, formatBaselineFile,
+  parseBaselineFile, diffSiblingAgainstBaseline,
+} from "../core/performSibling.js";
 import { run as sendRun } from "./send.js";
 
 const PART = "cody";
@@ -39,7 +43,7 @@ function detectRouting(docText: string): "single" | "multi" {
   return /^\*\*Target Sub-Project\(s\):\*\*/m.test(docText) && /^## Execution DAG[ \t]*$/m.test(docText) ? "multi" : "single";
 }
 function usage(): number {
-  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|summary|finish|forensics|archive|dag-parse|wave-wait|multi-init|send-unit> ...");
+  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|sibling-baseline|sibling-verify|summary|finish|forensics|archive|dag-parse|wave-wait|multi-init|send-unit> ...");
   return 2;
 }
 
@@ -52,6 +56,8 @@ export async function run(args: string[]): Promise<number> {
     case "pre-snapshot": return preSnapshotRun(rest);
     case "branch":       return branchRun(applyArgsFile(rest));
     case "scope-check":  return scopeCheckRun(rest);
+    case "sibling-baseline": return siblingBaselineRun(rest);
+    case "sibling-verify":   return siblingVerifyRun(rest);
     case "summary":      return summaryRun(rest);
     case "finish":       return finishRun(rest);
     case "forensics":    return forensicsRun(rest);
@@ -253,6 +259,63 @@ export async function scopeCheckWith(topic: string, d: ScopeDeps): Promise<numbe
   atomicWrite(oosPath, oos.length ? oos.join("\n") + "\n" : "");
   if (oos.length > 0) log.warn(`scope conformance: ${oos.length} out-of-scope path(s) detected`);
   process.stdout.write(`OOS_COUNT=${oos.length}\nOOS_PATH=${oosPath}\n`); return 0;
+}
+
+// ---- sibling guard (deploy-sibling-baseline.sh / deploy-sibling-verify.sh / deploy-sibling.sh) ----
+export interface SiblingDeps { runnerFor(cwd: string): Runner; }
+const liveSiblingDeps: SiblingDeps = { runnerFor: runnerAt };
+
+async function siblingBaselineRun(rest: string[]): Promise<number> {
+  const [topic, hub] = rest;
+  if (!topic || !hub) { log.error("usage: perform sibling-baseline <topic> <hub-cwd>"); return 2; }
+  return siblingBaselineWith(topic, hub, liveSiblingDeps);
+}
+export async function siblingBaselineWith(topic: string, hubCwd: string, d: SiblingDeps): Promise<number> {
+  const art = performArtDir(topic);
+  if (!existsSync(art)) { log.error(`perform sibling-baseline: art-dir missing: ${art}`); return 1; }
+  if (!isDir(hubCwd)) { log.error(`perform sibling-baseline: hub-cwd not a directory: ${hubCwd}`); return 1; }
+  const declared = iterTargets(topic).map((t) => basename(t.cwd)).filter((x) => x.length > 0);
+  const { outcome, siblings } = enumerateSiblings(hubCwd, declared);
+  if (outcome === "not-a-directory") { log.error(`perform sibling-baseline: hub-cwd not enumerable: ${hubCwd}`); return 1; }
+  const rows: string[] = [];
+  for (const slug of siblings) {
+    const sibCwd = join(hubCwd, slug);
+    const res = captureSiblingBaseline(d.runnerFor(sibCwd), sibCwd);
+    if (res.outcome === "ok" && res.row) rows.push(res.row);
+    else log.warn(`perform sibling-baseline: skipped ${slug} (${res.outcome})`);
+  }
+  atomicWrite(join(art, "sibling-baseline.txt"), formatBaselineFile(rows));
+  log.info(`perform sibling-baseline: ${rows.length} sibling repo(s) captured`);
+  return 0;
+}
+
+async function siblingVerifyRun(rest: string[]): Promise<number> {
+  const [topic, hub] = rest;
+  if (!topic || !hub) { log.error("usage: perform sibling-verify <topic> <hub-cwd>"); return 2; }
+  return siblingVerifyWith(topic, hub, liveSiblingDeps);
+}
+export async function siblingVerifyWith(topic: string, hubCwd: string, d: SiblingDeps): Promise<number> {
+  const art = performArtDir(topic);
+  const baselineFile = join(art, "sibling-baseline.txt");
+  if (!isDir(hubCwd)) { log.error(`perform sibling-verify: hub-cwd not a directory: ${hubCwd}`); return 1; }
+  if (!existsSync(baselineFile)) { log.error(`perform sibling-verify: no sibling-baseline.txt under ${art} (run sibling-baseline first)`); return 1; }
+  const rows = parseBaselineFile(readFileSync(baselineFile, "utf8"));
+  const out: string[] = [];
+  for (const { slug, sha, branch } of rows) {
+    const sibCwd = join(hubCwd, slug);
+    const res = diffSiblingAgainstBaseline(d.runnerFor(sibCwd), sha, branch);
+    if (res.outcome !== "ok") { log.warn(`perform sibling-verify: diff failed for ${slug} (${res.outcome}); skipping`); continue; }
+    for (const line of (res.log ?? "").split("\n")) {
+      if (line.length === 0) continue;
+      const sp = line.indexOf(" ");
+      const csha = sp === -1 ? line : line.slice(0, sp);
+      const subject = sp === -1 ? line : line.slice(sp + 1);   // byte-faithful to bash ${line#* }
+      out.push(`${slug}\t${csha}\t${subject}`);
+    }
+  }
+  atomicWrite(join(art, "sibling-rogue.txt"), out.length ? out.join("\n") + "\n" : "");
+  if (out.length > 0) log.warn(`perform sibling-verify: ${out.length} rogue commit(s) on undeclared sibling main branches`);
+  return 0;
 }
 
 // ---- summary (deploy-summary.sh) ----
