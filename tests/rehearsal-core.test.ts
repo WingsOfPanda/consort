@@ -8,6 +8,7 @@ import { formatMetricBlock, parseMetricMd } from "../src/core/rehearsalMetric.js
 import { formatSotaBlock } from "../src/core/rehearsalMetric.js";
 import { validateResult, type ResultJson } from "../src/core/rehearsalResult.js";
 import { renderScoreboardRow, buildScoreboard, type ScoreRow } from "../src/core/rehearsalResult.js";
+import { normalizeResult } from "../src/core/rehearsalResult.js";
 
 describe("rehearsal art-dir paths", () => {
   it("layers _rehearsal/parts/<instrument>/experiments/<exp-id>", () => {
@@ -200,5 +201,41 @@ describe("buildScoreboard", () => {
     const sb = buildScoreboard(rows);
     expect(sb).toContain("<!-- scoreboard schema_version=2 -->");
     expect(sb).toContain("| Rank | Experiment | Instrument | Metric | Status | Runtime | Approach | metric_name |");
+  });
+});
+
+describe("normalizeResult", () => {
+  const base = {
+    branch_id: "b", approach_label: "a", metric_name: "accuracy",
+    runtime_s: 1, log_paths: [], checkpoint_path: null, notes: "",
+  };
+  it("ok + null metric -> partial", () => {
+    const out = normalizeResult({ ...base, status: "ok", metric_value: null });
+    expect(out.status).toBe("partial");
+  });
+  it("fail + self_reported_ratio -> partial, promotes ratio into null metric_value", () => {
+    const out = normalizeResult({ ...base, status: "fail", metric_value: null, self_reported_ratio: 0.42 });
+    expect(out.status).toBe("partial");
+    expect(out.metric_value).toBe(0.42);
+  });
+  it("fail + ratio: promotes only when metric_value was null; timeout is never promoted", () => {
+    const out = normalizeResult({ ...base, status: "fail", metric_value: null, self_reported_ratio: 0.42 });
+    expect(out.metric_value).toBe(0.42);
+    const out2 = normalizeResult({ ...base, status: "timeout", metric_value: null, self_reported_ratio: 0.9 });
+    expect(out2.status).toBe("timeout"); // only fail (not timeout) is promoted
+  });
+  it("fail + ratio leaves an existing metric_value untouched", () => {
+    const out = normalizeResult({ ...base, status: "fail", metric_value: 0.7, self_reported_ratio: 0.42 });
+    expect(out.status).toBe("partial");
+    expect(out.metric_value).toBe(0.7); // not overwritten by the ratio
+  });
+  it("is idempotent (re-normalizing a normalized result is a no-op)", () => {
+    const once = normalizeResult({ ...base, status: "ok", metric_value: null });
+    // a 'partial' status falls through both branches unchanged
+    expect(normalizeResult(once as unknown as Parameters<typeof normalizeResult>[0])).toEqual(once);
+  });
+  it("leaves a clean ok result unchanged", () => {
+    const r = { ...base, status: "ok" as const, metric_value: 0.99 };
+    expect(normalizeResult(r)).toEqual(r);
   });
 });

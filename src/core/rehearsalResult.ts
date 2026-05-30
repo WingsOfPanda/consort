@@ -113,3 +113,22 @@ export function buildScoreboard(rows: ScoreRow[]): string {
   }
   return lines.join("\n") + "\n";
 }
+
+export type NormalizedStatus = ResultStatus | "partial";
+export type NormalizedResult = Omit<ResultJson, "status"> & { status: NormalizedStatus };
+
+/** Normalize one result: ok+null→partial; fail+non-null self_reported_ratio→partial (promoting
+ *  the ratio into metric_value when it was null). Everything else passes through unchanged.
+ *  Faithful to deep-research.sh normalize_result. */
+export function normalizeResult(json: ResultJson): NormalizedResult {
+  const { status, metric_value: mv, self_reported_ratio: srr } = json;
+  if (status === "ok" && (mv === null || mv === undefined)) {
+    return { ...json, status: "partial" };
+  }
+  if (status === "fail" && srr !== undefined && srr !== null) {
+    const out: NormalizedResult = { ...json, status: "partial" };
+    if (mv === null || mv === undefined) out.metric_value = srr;
+    return out;
+  }
+  return json;
+}
