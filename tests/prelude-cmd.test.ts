@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
-import { initWith, classifyRun, spawnAllWith, researchSendWith, researchWaitWith, synthPreliminaryRun, confidenceRun, type PreludeInitDeps, type PreludeSpawnAllDeps, type ResearchSendDeps, type ResearchWaitDeps } from "../src/commands/prelude.js";
+import { initWith, classifyRun, spawnAllWith, researchSendWith, researchWaitWith, synthPreliminaryRun, confidenceRun, adversarySendWith, adversaryWaitWith, type PreludeInitDeps, type PreludeSpawnAllDeps, type ResearchSendDeps, type ResearchWaitDeps } from "../src/commands/prelude.js";
 import { preludeArtDir } from "../src/core/prelude.js";
 
 function initDeps(over: Partial<PreludeInitDeps> = {}): PreludeInitDeps {
@@ -189,6 +189,55 @@ describe("prelude confidence", () => {
       const rc = await confidenceRun(["x"]);
       expect(rc).toBe(0);
       expect(existsSync(join(art, "adversary-skip.txt"))).toBe(false);
+    } finally { cleanup(); }
+  });
+});
+
+describe("prelude adversary-send/wait", () => {
+  it("send guards the draft, renders the prompt, writes offset state", async () => {
+    const { cleanup } = freshHome();
+    try {
+      await initWith(["x"], initDeps());
+      const art = preludeArtDir("x");
+      writeFileSync(join(art, "landscape-draft.md"), "## Approaches\n1. A");
+      let sent: string[] = [];
+      const rc = await adversarySendWith("x", "viola", "codex", { offsetFor: () => 3, send: async (a) => { sent = a; return 0; } });
+      expect(rc).toBe(0);
+      expect(readFileSync(join(art, "viola_adversary_prompt.md"), "utf8")).toContain(join(art, "adversary-viola.md"));
+      expect(readFileSync(join(art, "adversary-viola.txt"), "utf8")).toContain("OFFSET=3");
+      expect(sent[0]).toBe("--from");
+    } finally { cleanup(); }
+  });
+  it("send rc1 when the draft is missing", async () => {
+    const { cleanup } = freshHome();
+    try {
+      await initWith(["x"], initDeps());
+      expect(await adversarySendWith("x", "viola", "codex", { offsetFor: () => 0, send: async () => 0 })).toBe(1);
+    } finally { cleanup(); }
+  });
+  it("wait marks AS=ok on a done event with a non-empty critique", async () => {
+    const { cleanup } = freshHome();
+    try {
+      await initWith(["x"], initDeps());
+      const art = preludeArtDir("x");
+      writeFileSync(join(art, "adversary-viola.txt"), "OFFSET=0\n");
+      writeFileSync(join(art, "adversary-viola.md"), "## Verdict\naccept");
+      const rc = await adversaryWaitWith("x", "viola", "codex", { wait: async () => ({ event: "done" } as any), multiplier: () => "1" });
+      expect(rc).toBe(0);
+      expect(existsSync(join(art, "adversary-viola.done"))).toBe(true);
+      expect(readFileSync(join(art, "adversary-viola.txt"), "utf8")).toContain("AS=ok");
+    } finally { cleanup(); }
+  });
+  it("wait marks AS=missing on a done event with an EMPTY critique (locks verifyState, not researchState)", async () => {
+    const { cleanup } = freshHome();
+    try {
+      await initWith(["x"], initDeps());
+      const art = preludeArtDir("x");
+      writeFileSync(join(art, "adversary-viola.txt"), "OFFSET=0\n");
+      writeFileSync(join(art, "adversary-viola.md"), ""); // empty critique → missing (researchState would say "empty")
+      const rc = await adversaryWaitWith("x", "viola", "codex", { wait: async () => ({ event: "done" } as any), multiplier: () => "1" });
+      expect(rc).toBe(0);
+      expect(readFileSync(join(art, "adversary-viola.txt"), "utf8")).toContain("AS=missing");
     } finally { cleanup(); }
   });
 });

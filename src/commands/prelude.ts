@@ -19,8 +19,8 @@ import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier
 import { classifyTopic } from "../core/preludeLit.js";
 import { computeSignals, renderSkipRecord, type Decision } from "../core/preludeConfidence.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
-import { parseLatestOffset, scaledTimeout, researchState } from "../core/scoreTurn.js";
-import { composePreludeResearchPrompt, litGuidance } from "../core/preludeTurn.js";
+import { parseLatestOffset, scaledTimeout, researchState, verifyState } from "../core/scoreTurn.js";
+import { composePreludeResearchPrompt, composeAdversaryPrompt, litGuidance } from "../core/preludeTurn.js";
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
@@ -42,6 +42,8 @@ export async function run(args: string[]): Promise<number> {
     case "research-wait": return researchWaitRun(rest);
     case "synth-preliminary": return synthPreliminaryRun(rest);
     case "confidence": return confidenceRun(rest);
+    case "adversary-send": return adversarySendRun(rest);
+    case "adversary-wait": return adversaryWaitRun(rest);
     default: return usage();
   }
 }
@@ -276,5 +278,61 @@ export async function confidenceRun(rest: string[]): Promise<number> {
     atomicWrite(join(art, "adversary-skip.txt"), renderSkipRecord({ signals: s, decision: "not-offered", now: isoUtc() }));
   }
   // ALL_HOLD=true with no flag: write nothing — the Maestro asks, then re-invokes with --decision.
+  return 0;
+}
+
+// ---- adversary-send / adversary-wait ----
+async function adversarySendRun(rest: string[]): Promise<number> {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) { log.error("usage: prelude adversary-send <topic> <instrument> <provider>"); return 2; }
+  return adversarySendWith(topic, instrument, provider, liveResearchSendDeps);
+}
+export async function adversarySendWith(topic: string, instrument: string, provider: string, d: ResearchSendDeps): Promise<number> {
+  const art = preludeArtDir(topic);
+  const draft = readIf(join(art, "landscape-draft.md"));
+  if (!draft.trim()) { log.error("prelude adversary-send: landscape-draft.md missing or empty — run synth-preliminary first"); return 1; }
+  const stateFile = join(art, `adversary-${instrument}.txt`);
+  if (existsSync(stateFile)) { log.error(`prelude adversary-send: ${stateFile} exists; rm to retry`); return 1; }
+
+  const outPath = join(art, `adversary-${instrument}.md`);
+  const promptFile = join(art, `${instrument}_adversary_prompt.md`);
+  atomicWrite(promptFile, composeAdversaryPrompt(draft, instrument, outPath));
+
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}\n`);
+  const rc = await d.send(["--from", "maestro", instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) { log.error(`prelude adversary-send: send failed (rc=${rc}); ${stateFile} kept (rm to redo)`); return 1; }
+  log.ok(`prelude adversary-send: ${instrument} offset=${offset}`);
+  return 0;
+}
+
+async function adversaryWaitRun(rest: string[]): Promise<number> {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) { log.error("usage: prelude adversary-wait <topic> <instrument> <provider>"); return 2; }
+  return adversaryWaitWith(topic, instrument, provider, liveResearchWaitDeps);
+}
+export async function adversaryWaitWith(topic: string, instrument: string, provider: string, d: ResearchWaitDeps): Promise<number> {
+  const art = preludeArtDir(topic);
+  const stateFile = join(art, `adversary-${instrument}.txt`);
+  if (!existsSync(stateFile)) { log.error(`prelude adversary-wait: ${stateFile} missing (run prelude adversary-send first)`); return 1; }
+  const offset = parseLatestOffset(readFileSync(stateFile, "utf8"));
+  if (offset === null) { log.error(`prelude adversary-wait: OFFSET not set in ${stateFile}`); return 1; }
+
+  const timeout = scaledTimeout(consultTimeout("adversary"), d.multiplier(provider));
+  log.info(`prelude adversary-wait: ${instrument} offset=${offset} timeout=${timeout}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], timeout);
+
+  const outPath = join(art, `adversary-${instrument}.md`);
+  const text = existsSync(outPath) ? readFileSync(outPath, "utf8") : null;
+  const as = verifyState(ev, text); // done -> ok iff non-empty; mirrors the adversary wait's -s check
+  if (as === "question" && ev) {
+    atomicWrite(join(art, `question-${instrument}.txt`), JSON.stringify(ev) + "\n");
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    appendFileSync(stateFile, `OFFSET=${bumped}\nAS=question\n`);
+  } else {
+    appendFileSync(stateFile, `AS=${as}\n`);
+  }
+  writeFileSync(join(art, `adversary-${instrument}.done`), "");
+  log.ok(`prelude adversary-wait: ${instrument} AS=${as}`);
   return 0;
 }
