@@ -90,3 +90,14 @@ export function checkCompletion(scoreboardMd: string, metricMd: string): Complet
   if (kSoFar > t.kRequired) kSoFar = t.kRequired;
   return { floorMet, targetMet, kSoFar, kRequired: t.kRequired, plateau };
 }
+
+/** Has the time budget elapsed? budget: "none" | positive integer seconds.
+ *  nowEpochS is injected (epoch seconds). Throws on malformed budget / unparseable start. */
+export function checkTimeBudget(budget: string, sessionStartIso: string, nowEpochS: number): boolean {
+  const b = budget.replace(/\s/g, "");
+  if (b === "none") return false;
+  if (!/^[1-9][0-9]*$/.test(b)) throw new Error(`malformed budget: '${b}' (expected 'none' or positive integer)`);
+  const startMs = Date.parse(sessionStartIso.replace(/\s/g, ""));
+  if (Number.isNaN(startMs)) throw new Error(`could not parse session-start: '${sessionStartIso}'`);
+  return nowEpochS - Math.floor(startMs / 1000) >= parseInt(b, 10);
+}

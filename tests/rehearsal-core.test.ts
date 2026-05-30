@@ -296,3 +296,25 @@ describe("checkCompletion", () => {
     expect(checkCompletion(sb, metricMd).plateau).toBe(false);
   });
 });
+
+import { checkTimeBudget } from "../src/core/rehearsalComplete.js";
+
+describe("checkTimeBudget", () => {
+  const start = "2026-05-30T00:00:00Z";
+  const startEpoch = Math.floor(Date.parse(start) / 1000);
+  it("returns false for budget 'none'", () => {
+    expect(checkTimeBudget("none", start, startEpoch + 999_999)).toBe(false);
+  });
+  it("true once elapsed >= budget, false before", () => {
+    expect(checkTimeBudget("3600", start, startEpoch + 3599)).toBe(false);
+    expect(checkTimeBudget("3600", start, startEpoch + 3600)).toBe(true);
+  });
+  it("tolerates surrounding whitespace", () => {
+    expect(checkTimeBudget("  3600 ", " 2026-05-30T00:00:00Z ", startEpoch + 3600)).toBe(true);
+  });
+  it("throws on malformed budget or unparseable start", () => {
+    expect(() => checkTimeBudget("-5", start, startEpoch)).toThrow();
+    expect(() => checkTimeBudget("abc", start, startEpoch)).toThrow();
+    expect(() => checkTimeBudget("3600", "not-a-date", startEpoch)).toThrow();
+  });
+});
