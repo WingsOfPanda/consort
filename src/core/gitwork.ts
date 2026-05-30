@@ -88,3 +88,34 @@ export function finishBranch(r: Runner, o: FinishOpts): FinishResult {
   r.run("git", ["checkout", "-q", o.startBranch]);
   return { action, outcome };
 }
+
+export interface FinishActionOpts {
+  branch: string; startBranch: string; action: "merge" | "pr" | "keep" | "discard";
+  hasGh: boolean; originUrl?: string; title?: string; body?: string;
+}
+/** Action-driven finisher (port of deploy_finish_branch @ deploy.sh:651). Restores startBranch
+ *  (best-effort). New additive export; the auto finishBranch (used by solo) is unchanged. */
+export function finishBranchAction(r: Runner, o: FinishActionOpts): string {
+  if (!o.branch || o.branch === o.startBranch ||
+      r.run("git", ["show-ref", "--verify", "--quiet", `refs/heads/${o.branch}`]).code !== 0) return "no-branch";
+  switch (o.action) {
+    case "merge":
+      r.run("git", ["checkout", "-q", o.startBranch]);
+      if (r.run("git", ["merge", "--no-edit", "-q", o.branch]).code === 0) { r.run("git", ["branch", "-q", "-D", o.branch]); return "merged"; }
+      r.run("git", ["merge", "--abort"]); return "merge-conflict-left";
+    case "keep":    r.run("git", ["checkout", "-q", o.startBranch]); return "kept";
+    case "discard": r.run("git", ["checkout", "-q", o.startBranch]); r.run("git", ["branch", "-q", "-D", o.branch]); return "discarded";
+    case "pr": {
+      let outcome: string;
+      if (r.run("git", ["push", "-q", "-u", "origin", o.branch]).code === 0) {
+        const url = o.originUrl ?? r.run("git", ["remote", "get-url", "origin"]).stdout.trim();
+        if (o.hasGh && r.run("gh", ["pr", "create", "--repo", url, "--base", o.startBranch, "--head", o.branch,
+          "--title", o.title ?? `perform: ${o.branch}`,
+          "--body", o.body ?? `Automated perform branch. Review and merge into ${o.startBranch}.`]).code === 0) outcome = "pr-opened";
+        else outcome = "pr-pushed-no-gh";
+      } else outcome = "pr-failed-kept";
+      r.run("git", ["checkout", "-q", o.startBranch]); return outcome;
+    }
+    default: return "no-branch";
+  }
+}

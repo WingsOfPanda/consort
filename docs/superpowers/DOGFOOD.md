@@ -414,3 +414,160 @@ ran `score drilldown drilltest Architecture <dd> <focus> <doc> viola codex`.
 - Phase F built subagent-driven: 4 fresh implementers (forensics core / drilldown core / command verbs /
   directive) each through two-stage review (spec → quality), all approved. The `score` command (A–F) is
   now complete; `perform`/`prelude`/`rehearsal`/`playback` remain as separate future commands.
+
+---
+
+# Consort `perform` — Phase B (single-repo) Dogfood Result
+
+**Date:** 2026-05-30 · **Branch:** `feat/perform` · **Verdict:** ✅ PASS (perform logic validated live)
+
+Live single-repo run of the `perform` command against a throwaway non-plugin git repo
+(`/tmp/perf-dogfood`, isolated `CONSORT_HOME`), a tiny audit-passing design doc, and real git/IPC.
+
+## Run
+
+| Stage | Result |
+|---|---|
+| `perform init` | ✅ rc 0; byte-perfect state files — `topic.txt` (no trailing `\n`, `od`-confirmed), `target_cwd.txt`/`provider.txt`/`multi-repo.txt` each `+\n`, `design.md` copied; `ROUTING=single PROVIDER=codex` |
+| `perform pre-snapshot` | ✅ `baselines/main.tsv` with the exact key order + `state=clean` + `baseline_sha` |
+| `perform branch` | ✅ created `feat/perform-perf-dogfood`, `perform-branches.tsv` + `branch-base.sha` recorded |
+| `perform turn-wait 1` | ✅ read the `done` event from the real outbox, gated `ok` on the non-empty `verify-report-1.md` → `TS=ok` + `.done` sentinel |
+| `perform scope-check` | ✅ correctly flagged `OOS_COUNT=2` (see finding below) — the drift-detection path |
+| `perform summary` | ✅ real per-target block: branch-changed WARNING, `35ed8fd (clean) → 9cbb962`, "2 files changed, 7 insertions(+)", commit list |
+| `perform finish keep` | ✅ `main → keep → kept`; feat branch preserved, repo restored to `master` |
+| `coda` | ✅ tore down + archived the part dir, handling the already-dead pane gracefully |
+| `perform archive` | ✅ moved `_perform` → `archive/.../_perform-<ts>` |
+
+## Scope of the live run
+
+The codex part-spawn itself was **blocked by an external-binary issue**, so the part's *completed
+turn* (the implementation commit on the feat branch + `verify-report-1.md` + the `done` outbox event)
+was stood in for by the conductor, and every `perform` verb downstream ran against the resulting real
+git/IPC state. All of Phase B's new logic — the `turn-wait` state machine + verify-report gating,
+`scope-check`, `summary`/`postSweep`/`formatSummaryBlock`, `finish`/`finishBranchAction`, and
+`archive` — is validated live; `init`/`pre-snapshot`/`branch` ran fully live with no simulation.
+
+## Findings / notes
+
+- **`scope-check` OOS_COUNT=2 is correct, not a bug.** `extractComponentsPaths` parses the markdown
+  **table** that `score` produces; the hand-written dogfood doc used a **bullet-list** Components
+  section, so 0 paths were declared and both changed files were (correctly) flagged as drift. The
+  table path is unit-covered (`tests/perform-scope.test.ts`); this run exercised the drift path. In a
+  real `score → perform` flow the Components table covers the diff.
+- **codex 0.135.0 directory-trust prompt blocks the live part-spawn (follow-up, not Phase B).** On an
+  untrusted target dir, `codex --dangerously-bypass-approvals-and-sandbox` shows a "Do you trust the
+  contents of this directory?" menu and never reaches `{ready}`; the frozen `spawn` primitive doesn't
+  answer it, and auto-trusting via `~/.codex/config.toml` is off-limits (standing user constraint).
+  This affects any `perform`/`score` dogfood whose target dir isn't already codex-trusted. Candidate
+  follow-ups: have `spawn` handle the trust prompt, or run dogfoods against a codex-trusted dir.
+- **Fixed a Phase-A defect during Phase B:** the `performTurn` BLOCKERS prompt referenced
+  `bin/part-ask.sh`/`bin/inbox-ack.sh` (a byte-faithful port of deploy's bin scripts) — but consort
+  parts emit events by appending JSONL directly to `outbox.jsonl`. Rewritten to instruct a direct
+  `{"event":"question",...}` / `{"event":"ack",...}` append (Task B1).
+
+## Verification context
+
+- **528 vitest unit tests green** (+ the perform command/turn/git/wind-down suites); `tsc --noEmit` 0,
+  eslint 0, stale-token gate (now scanning `commands/perform.md`) green; `dist/consort.cjs` rebuilt
+  (740.7kb) + committed so `/consort:perform` dispatches.
+- Phase B built subagent-driven: 3 implementers (B1 core extensions / B2a init+turn / B2b git+wind-down),
+  each through two-stage review (spec → quality), all SPEC PASS / QUALITY APPROVED. Single-repo
+  `perform` is complete; multi-repo DAG execution (Phase C) + verify/fix/finish (Phase D) remain.
+
+---
+
+# Consort `perform` — Phase C (multi-repo DAG) Dogfood Result
+
+**Date:** 2026-05-30 · **Branch:** `feat/perform` · **Verdict:** ✅ PASS (multi-repo executor validated live)
+
+2-repo / 2-wave run against a throwaway hub with two sibling sub-repos (`api/`, `web/`, each a real
+`git init` + a commit + a `CLAUDE.md` marker) and a design doc with `**Target Sub-Project(s):** api,
+web` + a `## Execution DAG` (`1. api — build`; `2. web — consume (depends on 1)`).
+
+## Run
+
+| Stage | Result |
+|---|---|
+| `perform init` | ✅ `ROUTING=multi`, `TARGET_CWD=<hub>`, `provider=codex` (hub no plugin.json) |
+| `perform dag-parse` | ✅ `WAVES=2 STEPS=2`; `dag-waves.txt` = `1\t1\tapi\tnone\tbuild the lib` / `2\t2\tweb\tnone\tconsume it` (correct topological order), `dag-edges.txt` = `1\t2` |
+| `perform multi-init <hub>` | ✅ `parts.txt` = `oboe\t<hub>/api\tcodex` / `viola\t<hub>/web\tcodex` (instruments in DAG first-occurrence order, per-repo provider), per-part `oboe/viola-branch-base.sha` = each sub-repo's HEAD |
+| `perform pre-snapshot` | ✅ 2 clean; `baselines/oboe.tsv` + `baselines/viola.tsv` |
+| `perform branch` | ✅ `feat/perform-perf-c` created in BOTH sub-repos; `perform-branches.tsv` 2 rows |
+| `perform send-unit api` / `web` | ✅ prompt composition exact — api: "Step 1 of 2 … depend on: none (wave-1 root)"; web: "Step 2 of 2 … depend on: api" |
+| `perform wave-wait <instr> codex` | ✅ read each part's `done` → `wave-<instr>.txt` `TS=ok`/`EVENT=done` + `.done` sentinel |
+
+## Scope of the live run
+
+`init → dag-parse → multi-init → pre-snapshot → branch` ran **fully live against real git** — the
+multi-repo materialization (DAG → waves → one part per repo in DAG order → per-repo baseline + branch)
+is byte-verified. The **wave dispatch** (`send-unit` per repo, `wave-wait` barrier per part) was
+validated against real IPC by standing in for the parts' `done` events — the live `spawn` of each
+sub-repo's part is blocked by codex 0.135.0's directory-trust prompt (Phase B finding; each sub-repo
+cwd would need to be codex-trusted). `send-unit`'s `send` step failed (no live pane) but it writes the
+per-repo prompt first, so the composition — the Phase C deliverable — is verified.
+
+## Verification context
+
+- **574 vitest unit tests green** (+ the dag-parse / wave-wait / multi-init / composeDagUnitPrompt /
+  dagSectionBody suites); `tsc` 0, eslint 0, stale-tokens (incl. the rewritten `commands/perform.md`
+  Stages 3a/3b/3z) green; `dist/consort.cjs` rebuilt (752.9kb) + committed.
+- Phase C built subagent-driven: 3 implementers (C1 core / C2 dag-parse+wave-wait / C3
+  multi-init+send-unit), each through two-stage review — all SPEC PASS / QUALITY APPROVED. Multi-repo
+  **dispatch** is complete; cross-repo verify + per-repo fix-loop + per-repo finish (Phase D) remain
+  (the `dagFanInRepos` "feels unsafe" heuristic is wired and unit-tested, ready for Phase D's
+  cross-verify).
+
+---
+
+# Consort `perform` — Phase D (multi-repo verify/fix/finish COMPLETE) Dogfood Result
+
+**Date:** 2026-05-30 · **Branch:** `feat/perform` · **Verdict:** ✅ PASS — `perform` is now complete
+(single-repo + multi-repo, both paths end to end).
+
+Same 2-repo / 2-wave hub as Phase C (`api/`, `web/` declared sub-repos), extended with one
+**undeclared** sibling repo (`libx/`) and a non-repo dir (`docs/`) to exercise the adjacent-tree
+(sibling) commit guard. Design doc carries a `## Components` **table** (`api/src.txt`, `web/src.txt`)
+so multi-repo `scope-check` has declared paths. Parts are **simulated** (codex 0.135.0 directory-trust
+blocker — Phase B/C finding); every consort verb ran **live against real throwaway git repos**.
+
+## Run (every Phase D verb live)
+
+| Stage / verb | Result |
+|---|---|
+| `init` → `dag-parse` → `multi-init` → `pre-snapshot` → `branch` | ✅ `ROUTING=multi`; `WAVES=2`; `parts.txt` = 2 instruments in DAG order; `feat/perform-perf-d` in both sub-repos (Phase C path, re-confirmed) |
+| **`sibling-baseline <topic> <hub>`** | ✅ captured the one undeclared sibling `libx\t<sha>\tmain`; `api`/`web` excluded (declared), `docs` excluded (non-repo) |
+| **`cross-signal <topic>`** | ✅ `WAVE_COUNT=2`, `FAN_IN_REPOS=` (linear), `SHARED_PATHS=src.txt` (touched by both parts), **`UNSAFE=1`** — shared-path trigger fired |
+| **`sibling-verify <topic> <hub>`** | ✅ after a simulated rogue commit on `libx` main → `sibling-rogue.txt` per-commit TSV `libx\tf54d018\tlibx: rogue change` |
+| **`sibling-rescue <topic> <hub>`** | ✅ `rescued libx`; **`feat/perform-perf-d-rescue` branch created** in libx; `sibling-rescue.txt` = `libx\trescued` |
+| **`scope-check <topic>`** (multi-aware) | ✅ `diff-paths.txt` = `api/src.txt` / `web/rogue.txt` / `web/src.txt` (each prefixed `<repo>/`); `OOS_COUNT=1` → `scope-out-of-scope.txt` = `web/rogue.txt` (the out-of-scope stray) |
+| `summary <topic>` | ✅ one per-repo block per part (branch, baseline/HEAD, diff stat, commit list) |
+| **`finish-one <topic> <slug> keep`** (per repo) | ✅ both targets finished independently, **appended** to `finish-results.tsv` in order (`<instr>\tkeep\tkept` ×2; no truncation between calls) |
+| `forensics` → `coda` → `archive` | ✅ forensics (no findings), archive stamped + moved; `coda` is a no-op here (parts simulated → no live panes to tear down) |
+
+## Scope of the live run
+
+The whole Phase D verb chain — sibling baseline/verify/rescue, the cross-repo unsafe heuristic, the
+multi-repo-aware scope-check, and per-repo `finish-one` — ran **fully live against real git**, byte-
+verifying: the undeclared-sibling exclusion (declared sub-repos + non-repos skipped), the rogue-commit
+per-commit TSV, the two-phase revert-and-replay rescue (a real `feat/perform-<topic>-rescue` branch),
+the `<repo>/`-prefixed multi-repo diff + out-of-scope detection, and append (not truncate) per-repo
+finish. The **cross-verify bug-collection + fix-loop dispatch** (Stages 3c/3d) and the AskUserQuestion
+intercepts are Maestro/directive work, not verbs — exercised by the directive, not this verb-level
+dogfood; their inputs (`cross-signal`'s `UNSAFE=1`, `multi-verify-bugs.txt` re-dispatch via the
+existing `send`/`wave-wait`) are all validated. The live `spawn` of each part remains blocked by the
+codex 0.135.0 trust prompt (each sub-repo cwd would need to be codex-trusted), so the parts' build
+turns were stood in for — identical boundary to Phases B and C.
+
+## Verification context
+
+- **593 vitest unit tests green** (+ the D1–D5 suites: sibling verbs, sibling-rescue, cross-signal,
+  multi-repo scope-check, finish-one); `tsc --noEmit` 0, eslint 0, stale-token gate (incl. the
+  rewritten `commands/perform.md` Stages 3c/3d/4) green; `dist/consort.cjs` rebuilt (767.1kb) +
+  committed so `/consort:perform` dispatches the new verbs.
+- Phase D built subagent-driven: 5 implementers (D1 sibling-baseline+verify / D2 sibling-rescue / D3
+  cross-signal / D4 multi-repo scope-check / D5 finish-one), each through two-stage review (spec →
+  quality) — all SPEC PASS / QUALITY APPROVED (two Minor byte-faithfulness/test-coverage fixes folded
+  back into D1 and D2). The directive (Stages 3c/3d/4) + dist + phase-guard refresh were
+  conductor-authored.
+- **`perform` is COMPLETE.** The remaining high-level commands (`prelude`, `rehearsal`, `playback`)
+  are out of scope until each gets its own spec (the refreshed `CLAUDE.md` phase guard reflects this).
