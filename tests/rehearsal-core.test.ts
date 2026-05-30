@@ -5,6 +5,7 @@ import {
 } from "../src/core/rehearsal.js";
 import { extractMetric, METRIC_VOCAB } from "../src/core/rehearsalMetric.js";
 import { formatMetricBlock, parseMetricMd } from "../src/core/rehearsalMetric.js";
+import { formatSotaBlock } from "../src/core/rehearsalMetric.js";
 
 describe("rehearsal art-dir paths", () => {
   it("layers _rehearsal/parts/<instrument>/experiments/<exp-id>", () => {
@@ -93,5 +94,29 @@ describe("parseMetricMd round-trips formatMetricBlock", () => {
     expect(t.plateauWindow).toBe(5);
     expect(t.plateauThreshold).toBe(0.01);
     expect(t.tgtOp).toBeUndefined();
+  });
+});
+
+describe("formatSotaBlock", () => {
+  it("renders header + a row per ref (cap 7)", () => {
+    const refs = Array.from({ length: 9 }, (_, i) =>
+      `family${i + 1}|0.9${i}|ok|src${i + 1}|note${i + 1}`);
+    const md = formatSotaBlock({ topic: "mnist", metric: "accuracy", sweep_date: "2026-05-30", queries: "q1; q2", refs });
+    expect(md).toContain("# SOTA reference — mnist");
+    expect(md).toContain("> **Sweep date:** 2026-05-30");
+    expect(md).toContain("> **Optimizing for:** accuracy");
+    expect(md).toContain("> **Queries fired:** q1; q2");
+    expect(md).toContain("| family1 | 0.90 | ok | src1 | note1 |");
+    expect(md).toContain("| family7 |");
+    expect(md).not.toContain("| family8 |"); // capped at 7
+  });
+  it("emits the fallback note when no refs render", () => {
+    const md = formatSotaBlock({ topic: "x", metric: "loss", sweep_date: "2026-05-30", refs: [] });
+    expect(md).toContain("sweep returned no usable references");
+  });
+  it("throws on missing required keys", () => {
+    expect(() => formatSotaBlock({ topic: "", metric: "loss", sweep_date: "d", refs: [] })).toThrow(/topic/);
+    expect(() => formatSotaBlock({ topic: "x", metric: "", sweep_date: "d", refs: [] })).toThrow(/metric/);
+    expect(() => formatSotaBlock({ topic: "x", metric: "loss", sweep_date: "", refs: [] })).toThrow(/sweep_date/);
   });
 });

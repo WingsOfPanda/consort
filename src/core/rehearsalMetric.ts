@@ -88,3 +88,39 @@ export function parseMetricMd(text: string): MetricThresholds {
   }
   return { primaryMetric, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
 }
+
+export interface SotaInput {
+  topic: string; metric: string; sweep_date: string; queries?: string;
+  /** Each ref is "family|best|compliance|source|notes". Capped at 7. */
+  refs: string[];
+}
+
+/** Render the SOTA reference block. Faithful to format_sota_block. */
+export function formatSotaBlock(input: SotaInput): string {
+  if (!input.topic) throw new Error("missing required key: topic");
+  if (!input.metric) throw new Error("missing required key: metric");
+  if (!input.sweep_date) throw new Error("missing required key: sweep_date");
+
+  const lines: string[] = [];
+  lines.push(`# SOTA reference — ${input.topic}`, "");
+  lines.push(`> **Sweep date:** ${input.sweep_date}`);
+  lines.push(`> **Optimizing for:** ${input.metric}`);
+  if (input.queries) lines.push(`> **Queries fired:** ${input.queries}`);
+  lines.push("");
+  lines.push("| Approach family | Best known | Constraint compliance | Source | Notes |");
+  lines.push("|---|---|---|---|---|");
+
+  let rendered = 0;
+  for (const row of input.refs.slice(0, 7)) {
+    if (!row) continue;
+    const [family = "", best = "", compliance = "", source = "", ...rest] = row.split("|");
+    const notes = rest.join("|");
+    lines.push(`| ${family} | ${best} | ${compliance} | ${source} | ${notes} |`);
+    rendered++;
+  }
+  let out = lines.join("\n") + "\n";
+  if (rendered === 0) {
+    out += "\n_Note: sweep returned no usable references; part-side web search remains available._\n";
+  }
+  return out;
+}
