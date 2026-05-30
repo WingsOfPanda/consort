@@ -2,7 +2,7 @@
 // Byte-faithful port of the prior bash plugin's deploy verb set; WIRES the Phase-A core modules.
 // Rebrand: _deploy/->_perform/, feat/deploy-->feat/perform-, conductor sender->From: maestro.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile, kvParse } from "../args.js";
 import { atomicWrite } from "../core/atomic.js";
@@ -17,7 +17,8 @@ import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/perf
 import { runnerAt, preSnapshot, createOrResumeBranch, shortstat, finishBranchAction, type Runner } from "../core/gitwork.js";
 import { captureArtDir } from "../core/forensics.js";
 import { haveCmd } from "../core/deps.js";
-import { performState, composeRound1Prompt, composeFixPrompt } from "../core/performTurn.js";
+import { performState, composeRound1Prompt, composeFixPrompt, composeDagUnitPrompt } from "../core/performTurn.js";
+import { pickInstruments } from "../core/instruments.js";
 import { extractQuestionPayload } from "../core/performQuestions.js";
 import { outboxOffset, outboxPath, outboxWaitSince, statusPath, type OutboxEvent } from "../core/ipc.js";
 import { instrumentTimeoutMultiplier } from "../core/contracts.js";
@@ -38,7 +39,7 @@ function detectRouting(docText: string): "single" | "multi" {
   return /^\*\*Target Sub-Project\(s\):\*\*/m.test(docText) && /^## Execution DAG[ \t]*$/m.test(docText) ? "multi" : "single";
 }
 function usage(): number {
-  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|summary|finish|forensics|archive|dag-parse|wave-wait> ...");
+  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|summary|finish|forensics|archive|dag-parse|wave-wait|multi-init|send-unit> ...");
   return 2;
 }
 
@@ -57,6 +58,8 @@ export async function run(args: string[]): Promise<number> {
     case "archive":      return archiveRun(rest);
     case "dag-parse":    return dagParseRun(rest);
     case "wave-wait":    return waveWaitRun(rest);
+    case "multi-init": return multiInitRun(rest);
+    case "send-unit":  return sendUnitRun(rest);
     default:          return usage();
   }
 }
@@ -395,5 +398,75 @@ export async function waveWaitWith(topic: string, instrument: string, provider: 
   else { ts = "failed"; extra.push("EVENT=unknown"); log.error(`[wave-wait] ${instrument} TS=failed (unknown event)`); }
   atomicWrite(join(art, `wave-${instrument}.txt`), `TS=${ts}\nINSTRUMENT=${instrument}\nPROVIDER=${provider}\nTOPIC=${topic}\n` + extra.map((l) => l + "\n").join(""));
   writeFileSync(join(art, `wave-${instrument}.done`), "");
+  return 0;
+}
+
+// ---- multi-init (deploy-multi-init.sh) — assign one part per sub-repo in DAG order ----
+export interface MultiInitDeps { detectProvider(cwd: string): "codex" | "claude"; pickInstruments(topic: string, n: number): string[]; runnerFor(cwd: string): Runner; }
+const liveMultiInitDeps: MultiInitDeps = { detectProvider: (c) => detectProvider(c), pickInstruments, runnerFor: runnerAt };
+async function multiInitRun(rest: string[]): Promise<number> {
+  if (rest.length !== 2) { log.error("usage: perform multi-init <topic> <hub-cwd>"); return 2; }
+  return multiInitWith(rest[0], rest[1], liveMultiInitDeps);
+}
+export async function multiInitWith(topic: string, hubCwd: string, d: MultiInitDeps): Promise<number> {
+  const art = performArtDir(topic);
+  const wavesFile = join(art, "dag-waves.txt");
+  if (!existsSync(wavesFile)) { log.error(`perform multi-init: dag-waves.txt not found at ${wavesFile} (run perform dag-parse first)`); return 1; }
+  const reposOrdered: string[] = []; const seen = new Set<string>(); const repoToPath = new Map<string, string>();
+  for (const line of readFileSync(wavesFile, "utf8").split("\n")) {
+    const cols = line.split("\t"); const repo = cols[2];
+    if (!repo) continue;
+    if (!seen.has(repo)) { seen.add(repo); reposOrdered.push(repo); repoToPath.set(repo, cols[3] || "none"); }
+  }
+  if (reposOrdered.length === 0) { log.error("perform multi-init: no repos in dag-waves.txt"); return 1; }
+  const instruments = d.pickInstruments(topic, reposOrdered.length);
+  if (instruments.length < reposOrdered.length) { log.error(`perform multi-init: instrument pool exhausted (need ${reposOrdered.length}, got ${instruments.length})`); return 1; }
+  const rows: string[] = [];
+  for (let i = 0; i < reposOrdered.length; i++) {
+    const repo = reposOrdered[i];
+    const p = repoToPath.get(repo)!;
+    const cwd = p !== "none" && p !== "" ? p : join(hubCwd, repo);
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) { log.error(`perform multi-init: sub-repo '${repo}' not found at ${cwd}`); return 1; }
+    if (!existsSync(join(cwd, "CLAUDE.md")) && !existsSync(join(cwd, "AGENTS.md"))) { log.error(`perform multi-init: sub-repo '${repo}' has no CLAUDE.md or AGENTS.md at ${cwd}`); return 1; }
+    const provider = d.detectProvider(cwd);
+    const instrument = instruments[i];
+    rows.push(`${instrument}\t${cwd}\t${provider}`);
+    const sha = d.runnerFor(cwd).run("git", ["rev-parse", "HEAD"]).stdout.trim();
+    atomicWrite(join(art, `${instrument}-branch-base.sha`), sha + "\n");
+  }
+  atomicWrite(join(art, "parts.txt"), rows.join("\n") + "\n");
+  log.ok(`perform multi-init: ${reposOrdered.length} part(s) assigned for ${topic}`);
+  return 0;
+}
+
+// ---- send-unit (deploy.md Step 3b per-repo dispatch) — compose + deliver the dag-unit prompt ----
+export interface SendUnitDeps { send(args: string[]): Promise<number>; }
+const liveSendUnitDeps: SendUnitDeps = { send: sendRun };
+async function sendUnitRun(rest: string[]): Promise<number> {
+  if (rest.length !== 2) { log.error("usage: perform send-unit <topic> <repo>"); return 2; }
+  return sendUnitWith(rest[0], rest[1], liveSendUnitDeps);
+}
+export async function sendUnitWith(topic: string, repo: string, d: SendUnitDeps): Promise<number> {
+  const art = performArtDir(topic);
+  let instrument = "";
+  const partsFile = join(art, "parts.txt");
+  for (const line of (existsSync(partsFile) ? readFileSync(partsFile, "utf8").split("\n") : [])) {
+    const c = line.split("\t"); if (c[1] && basename(c[1]) === repo) { instrument = c[0]; break; }
+  }
+  if (!instrument) { log.error(`perform send-unit: no part for repo '${repo}' in parts.txt`); return 1; }
+  const waves = readFileSync(join(art, "dag-waves.txt"), "utf8").split("\n").filter(Boolean).map((l) => l.split("\t"));
+  const total = new Set(waves.map((w) => w[2])).size;
+  const myStep = waves.find((w) => w[2] === repo)?.[1] ?? "";
+  const stepToRepo = new Map(waves.map((w) => [w[1], w[2]]));
+  const edgesFile = join(art, "dag-edges.txt");
+  const edges = (existsSync(edgesFile) ? readFileSync(edgesFile, "utf8") : "").split("\n").filter(Boolean).map((l) => l.split("\t"));
+  const upstreamRepos = edges.filter(([, to]) => to === myStep).map(([from]) => stepToRepo.get(from)).filter((x): x is string => Boolean(x));
+  const upstreamCsv = upstreamRepos.join(",");
+  const prompt = composeDagUnitPrompt({ slug: repo, designPath: join(art, "design.md"), step: myStep, total, upstreamCsv });
+  const promptFile = join(art, `${instrument}_dag_unit_prompt.md`);
+  atomicWrite(promptFile, prompt);
+  const rc = await d.send(["--from", "maestro", instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) { log.error(`perform send-unit: send failed (rc=${rc}) for ${repo}`); return 1; }
+  log.info(`[send-unit] ${instrument} -> ${repo} (step ${myStep}/${total}, upstream: ${upstreamCsv || "none"})`);
   return 0;
 }

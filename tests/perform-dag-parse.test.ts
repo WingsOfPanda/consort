@@ -1,6 +1,6 @@
 // tests/perform-dag-parse.test.ts — C2: perform dag-parse executor verb (deploy-dag-parse.sh).
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
 import { performArtDir } from "../src/core/perform.js";
