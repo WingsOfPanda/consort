@@ -4,8 +4,9 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
-import { refineWith, handoffExtractWith, forensicsRun, teardownWith, type RehearsalRefineDeps, type RehearsalTeardownDeps } from "../src/commands/rehearsal.js";
-import { experimentDir, rehearsalArtDir } from "../src/core/rehearsal.js";
+import { refineWith, handoffExtractWith, forensicsRun, teardownWith, freshPartWith, type RehearsalRefineDeps, type RehearsalTeardownDeps, type RehearsalFreshPartDeps } from "../src/commands/rehearsal.js";
+import { experimentDir, partStateDir, rehearsalArtDir } from "../src/core/rehearsal.js";
+import { parseState } from "../src/core/rehearsalState.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
@@ -409,5 +410,132 @@ describe("teardown", () => {
     expect(rc).toBe(0);
     // Each non-blank line is passed to killPane (whole line; best-effort).
     expect(killed.length).toBe(2);
+  });
+});
+
+describe("fresh-part", () => {
+  const TOPIC = "tune-model";
+  const INST = "violin";
+
+  // Scaffold <art>/parts/<inst>/state.txt by hand with the given KV body.
+  function scaffoldState(homeDir: string, topic: string, instrument: string, body: string): string {
+    const art = rehearsalArtDir(topic, { home: homeDir, cwd: homeDir });
+    const dir = partStateDir(art, instrument);
+    mkdirSync(dir, { recursive: true });
+    const stateTxt = join(dir, "state.txt");
+    writeFileSync(stateTxt, body);
+    return stateTxt;
+  }
+
+  function fpDeps(homeDir: string, over: Partial<RehearsalFreshPartDeps> = {}): RehearsalFreshPartDeps {
+    return {
+      teardown: async () => {},
+      spawn: async () => 0,
+      now: () => "T",
+      opts: { home: homeDir, cwd: homeDir },
+      ...over,
+    };
+  }
+
+  it("rc 2 on wrong arg count", async () => {
+    const h = home();
+    expect(await freshPartWith([TOPIC], fpDeps(h.home))).toBe(2);
+    expect(await freshPartWith([TOPIC, INST, "extra"], fpDeps(h.home))).toBe(2);
+    expect(await freshPartWith([], fpDeps(h.home))).toBe(2);
+  });
+
+  it("rc 2 on bad instrument", async () => {
+    const h = home();
+    expect(await freshPartWith([TOPIC, "Violin"], fpDeps(h.home))).toBe(2);
+  });
+
+  it("rc 1 when state.txt is missing", async () => {
+    const h = home();
+    expect(await freshPartWith([TOPIC, INST], fpDeps(h.home))).toBe(1);
+  });
+
+  it("rc 1 REFUSAL when phase=working; no teardown, no spawn", async () => {
+    const h = home();
+    scaffoldState(h.home, TOPIC, INST, "phase=working\nexp_counter=3\ncurrent_exp_id=exp-003\n");
+    const tearDowns: Array<[string, string]> = [];
+    const spawns: string[][] = [];
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    try {
+      const rc = await freshPartWith([TOPIC, INST], fpDeps(h.home, {
+        teardown: async (t, i) => { tearDowns.push([t, i]); },
+        spawn: async (a) => { spawns.push(a); return 0; },
+      }));
+      expect(rc).toBe(1);
+    } finally { spy.mockRestore(); }
+    expect(errs.join("\n")).toContain(`part ${INST} is mid-experiment (phase=working); abort or wait for done before fresh-part.`);
+    expect(tearDowns.length).toBe(0);
+    expect(spawns.length).toBe(0);
+  });
+
+  it("happy path: tears down + respawns + resets runtime state, PRESERVES exp_counter", async () => {
+    const h = home();
+    const stateTxt = scaffoldState(h.home, TOPIC, INST,
+      "phase=idle\nexp_counter=7\ncurrent_exp_id=exp-007\nprobe_sent_ts=xyz\nlast_event=done\n");
+    const tearDowns: Array<[string, string]> = [];
+    const spawns: string[][] = [];
+    const rc = await freshPartWith([TOPIC, INST], fpDeps(h.home, {
+      teardown: async (t, i) => { tearDowns.push([t, i]); },
+      spawn: async (a) => { spawns.push(a); return 0; },
+    }));
+    expect(rc).toBe(0);
+    expect(tearDowns).toEqual([[TOPIC, INST]]);
+    expect(spawns).toEqual([[INST, "codex", TOPIC]]);
+    const st = parseState(readFileSync(stateTxt, "utf8"));
+    expect(st.phase).toBe("idle");
+    expect(st.current_exp_id).toBe("");      // cleared to empty (mergeState preserves empty-value keys)
+    expect(st.probe_sent_ts).toBe("");       // cleared to empty
+    expect(st.exp_counter).toBe("7");        // PRESERVED
+    expect(st.last_event).toBe("fresh-part-respawn");
+    expect(st.last_event_ts).toBe("T");
+  });
+
+  it("non-numeric exp_counter resets to 0", async () => {
+    const h = home();
+    const stateTxt = scaffoldState(h.home, TOPIC, INST, "phase=idle\nexp_counter=NaN\n");
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((c: unknown): boolean => { lines.push(String(c)); return true; });
+    try {
+      expect(await freshPartWith([TOPIC, INST], fpDeps(h.home))).toBe(0);
+    } finally { spy.mockRestore(); }
+    expect(parseState(readFileSync(stateTxt, "utf8")).exp_counter).toBe("0");
+  });
+
+  it("spawn-fail -> rc 1 + 'spawn failed'; state NOT reset", async () => {
+    const h = home();
+    const body = "phase=idle\nexp_counter=7\ncurrent_exp_id=exp-007\nprobe_sent_ts=xyz\nlast_event=done\n";
+    const stateTxt = scaffoldState(h.home, TOPIC, INST, body);
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    let rc: number;
+    try {
+      rc = await freshPartWith([TOPIC, INST], fpDeps(h.home, { spawn: async () => 1 }));
+    } finally { spy.mockRestore(); }
+    expect(rc).toBe(1);
+    expect(errs.join("\n")).toContain(`spawn failed for ${INST} on ${TOPIC}`);
+    // Reset happens only after a successful spawn — state.txt byte-unchanged.
+    expect(readFileSync(stateTxt, "utf8")).toBe(body);
+  });
+
+  it("teardown best-effort: a throwing teardown does not block respawn+reset (rc 0)", async () => {
+    const h = home();
+    const stateTxt = scaffoldState(h.home, TOPIC, INST, "phase=idle\nexp_counter=2\ncurrent_exp_id=exp-002\n");
+    const spawns: string[][] = [];
+    const rc = await freshPartWith([TOPIC, INST], fpDeps(h.home, {
+      teardown: async () => { throw new Error("dead pane"); },
+      spawn: async (a) => { spawns.push(a); return 0; },
+    }));
+    expect(rc).toBe(0);
+    expect(spawns).toEqual([[INST, "codex", TOPIC]]);
+    const st = parseState(readFileSync(stateTxt, "utf8"));
+    expect(st.phase).toBe("idle");
+    expect(st.last_event).toBe("fresh-part-respawn");
+    expect(st.exp_counter).toBe("2");
+    expect(st.current_exp_id).toBe("");
   });
 });

@@ -35,6 +35,7 @@ import { repoRoot } from "../core/paths.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 import { run as sendRun } from "./send.js";
+import { run as codaRun } from "./coda.js";
 
 type PathOpts = { home?: string; cwd?: string };
 
@@ -1232,6 +1233,68 @@ export async function forensicsRun(rest: string[]): Promise<number> {
   return 0;
 }
 
+// ---- Phase D: fresh-part — graceful codex-session reset by pane respawn. ----
+// Ports the deep-research fresh-part reset: teardown the part's pane + respawn the SAME
+// instrument on the SAME topic, reset runtime state (phase=idle, current_exp_id=,
+// probe_sent_ts=) but PRESERVE exp_counter. Refuse mid-experiment (phase=working).
+// state event last_event=fresh-part-respawn.
+
+export interface RehearsalFreshPartDeps {
+  teardown(topic: string, instrument: string): Promise<void>;
+  spawn(args: string[]): Promise<number>;
+  now(): string;
+  stdout?: (line: string) => void;
+  opts?: PathOpts;
+}
+
+export async function freshPartWith(args: string[], deps: RehearsalFreshPartDeps): Promise<number> {
+  if (args.length !== 2) { log.error("rehearsal fresh-part: usage: <topic> <instrument>"); return 2; }
+  const [topic, instrument] = args;
+  if (!INSTRUMENT_RE.test(instrument)) { log.error(`instrument must match [a-z][a-z0-9-]*; got '${instrument}'`); return 2; }
+
+  const art = rehearsalArtDir(topic, deps.opts);
+  const stateTxt = join(partStateDir(art, instrument), "state.txt");
+  if (!existsSync(stateTxt)) { log.error(`part state.txt missing: ${stateTxt}`); return 1; }
+
+  const prev = parseState(readFileSync(stateTxt, "utf8"));
+  // Refuse mid-experiment (rc 1, faithful to the bash — NOT rc 2).
+  if (prev.phase === "working") {
+    log.error(`part ${instrument} is mid-experiment (phase=working); abort or wait for done before fresh-part.`);
+    return 1;
+  }
+
+  // Preserve the experiment counter (next dispatch numbers correctly); default 0 if non-numeric.
+  const prevCounter = /^[0-9]+$/.test(prev.exp_counter ?? "") ? (prev.exp_counter as string) : "0";
+
+  // Teardown the live pane gracefully — best-effort; a missing/dead pane must not block respawn.
+  log.info(`[fresh-part] tearing down ${instrument}'s pane on ${topic} ...`);
+  try { await deps.teardown(topic, instrument); } catch { /* best-effort — a missing/dead pane must not block respawn */ }
+
+  // Respawn in a new pane — same instrument, same topic.
+  log.info(`[fresh-part] respawning ${instrument} ...`);
+  const rc = await deps.spawn([instrument, "codex", topic]);
+  if (rc !== 0) { log.error(`spawn failed for ${instrument} on ${topic}`); return 1; }
+
+  // Reset runtime state AFTER a successful spawn, preserving exp_counter (+ all other keys).
+  atomicWrite(stateTxt, mergeState(readFileSync(stateTxt, "utf8"), {
+    last_event: "fresh-part-respawn",
+    last_event_ts: deps.now(),
+    phase: "idle",
+    current_exp_id: "",
+    exp_counter: prevCounter,
+    probe_sent_ts: "",
+  }));
+
+  log.ok(`[fresh-part] ${instrument} respawned on ${topic}; state preserved (exp_counter=${prevCounter})`);
+  return 0;
+}
+
+const liveFreshPartDeps: RehearsalFreshPartDeps = {
+  teardown: (t, i) => codaRun(["--pairs", t, i]).then(() => undefined),
+  spawn: (a) => spawnRun(a),
+  now: () => isoUtc(),
+};
+
 export async function run(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -1247,6 +1310,7 @@ export async function run(args: string[]): Promise<number> {
     case "refine": return refineWith(applyArgsFile(rest), liveRefineDeps);
     case "handoff-extract": return handoffExtractWith(rest, liveHandoffDeps);
     case "teardown": return teardownWith(rest, liveTeardownDeps);
+    case "fresh-part": return freshPartWith(rest, liveFreshPartDeps);
     case "forensics": return forensicsRun(rest);
     default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
   }
