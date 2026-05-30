@@ -5,8 +5,12 @@ import { freshHome } from "./helpers/tmpHome.js";
 import { initWith, type RehearsalInitDeps } from "../src/commands/rehearsal.js";
 import { metricWith, sotaWith } from "../src/commands/rehearsal.js";
 import { spawnAllWith, type SpawnAllDeps } from "../src/commands/rehearsal.js";
+import { experimentSendWith, type ExperimentSendDeps } from "../src/commands/rehearsal.js";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { rehearsalArtDir } from "../src/core/rehearsal.js";
+import { join } from "node:path";
+import { rehearsalArtDir, partStateDir } from "../src/core/rehearsal.js";
+import { partDir } from "../src/core/paths.js";
+import { inboxPath } from "../src/core/ipc.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
@@ -190,5 +194,182 @@ describe("rehearsal spawn-all", () => {
       },
     });
     expect(await spawnAllWith(["s4", "2"], d, { home: h.home, cwd: h.home })).toBe(2);
+  });
+});
+
+// ---- Phase C: experiment-send — dispatch ONE experiment to a persistent codex part ----
+
+describe("rehearsal experiment-send", () => {
+  const TOPIC = "es-topic";
+  const INST = "violin";
+  const MODEL = "codex";
+  // resolveModel (in ipc.ts) looks up the part via topicDir(topic) with NO cwd opt,
+  // so it hashes process.cwd(). Scaffold under the same cwd so the part dir + art dir
+  // (which thread opts) and resolveModel's lookup all land on one repoHash. home is set
+  // via CONSORT_HOME (freshHome) so the state root agrees regardless.
+  const opts = (h: { home: string }) => ({ home: h.home, cwd: process.cwd() });
+
+  /** Scaffold an in-flight topic: art dir + metric.md + topic.txt + part state.txt (idle) +
+   *  a live part dir (pane.json + outbox.jsonl) so resolveModel/outbox/paneMetaRead resolve. */
+  function scaffold(h: { home: string }, over: { phase?: string; metric?: boolean; state?: boolean; outbox?: boolean; sota?: string } = {}) {
+    const o = opts(h);
+    const art = rehearsalArtDir(TOPIC, o);
+    mkdirSync(art, { recursive: true });
+    if (over.metric !== false) writeFileSync(join(art, "metric.md"), "# Research goal\n\n**Primary metric:** accuracy\n**Direction:** maximize\n");
+    writeFileSync(join(art, "topic.txt"), "improve accuracy");
+    if (over.sota) writeFileSync(join(art, "sota.md"), over.sota);
+    const sd = partStateDir(art, INST);
+    if (over.state !== false) { mkdirSync(sd, { recursive: true }); writeFileSync(join(sd, "state.txt"), `phase=${over.phase ?? "idle"}\nexp_counter=0\n`); }
+    else mkdirSync(sd, { recursive: true });
+    const pd = partDir(INST, MODEL, TOPIC, o);
+    mkdirSync(pd, { recursive: true });
+    writeFileSync(join(pd, "pane.json"), JSON.stringify({ pane_id: "%7", instrument: INST, model: MODEL, spawned_at: "t" }));
+    if (over.outbox !== false) writeFileSync(join(pd, "outbox.jsonl"), "");
+    return { art, sd, pd, o };
+  }
+
+  function deps(h: { home: string }, over: Partial<ExperimentSendDeps> = {}): ExperimentSendDeps {
+    return {
+      now: () => "T",
+      probeHardware: () => "no-gpu",
+      paneSend: async () => {},
+      consultTimeout: () => 1800,
+      dryRun: true,
+      opts: opts(h),
+      ...over,
+    };
+  }
+
+  it("idle part -> rc 0: renders prompt.md, writes inbox + transitions state", async () => {
+    const h = home();
+    const { art, sd, o } = scaffold(h);
+    const rc = await experimentSendWith([TOPIC, INST, "exp-001", "baseline", "a plain baseline"], deps(h));
+    expect(rc).toBe(0);
+    const promptPath = join(art, "parts", INST, "experiments", "exp-001", "prompt.md");
+    expect(existsSync(promptPath)).toBe(true);
+    const prompt = readFileSync(promptPath, "utf8");
+    expect(prompt).not.toContain("{{");
+    expect(prompt).toContain("baseline");
+    expect(prompt).toContain("a plain baseline");
+    // inbox carries the prompt + the canonical fence
+    const inbox = readFileSync(inboxPath(INST, MODEL, TOPIC), "utf8");
+    expect(inbox).toContain("a plain baseline");
+    expect(inbox).toContain("END_OF_INSTRUCTION");
+    // state transition
+    const st = readFileSync(join(sd, "state.txt"), "utf8");
+    expect(st).toContain("phase=working");
+    expect(st).toContain("current_exp_id=exp-001");
+    expect(st).toContain("exp_counter=1");
+    expect(st).toContain("last_event=dispatched");
+    void art; void o;
+  });
+
+  it("phase=working -> rc 1 (state untouched)", async () => {
+    const h = home();
+    const { sd } = scaffold(h, { phase: "working" });
+    expect(await experimentSendWith([TOPIC, INST, "exp-002", "x", "y"], deps(h))).toBe(1);
+    expect(readFileSync(join(sd, "state.txt"), "utf8")).toContain("phase=working");
+  });
+
+  it("phase=abandoned -> rc 2 (distinct)", async () => {
+    const h = home();
+    scaffold(h, { phase: "abandoned" });
+    expect(await experimentSendWith([TOPIC, INST, "exp-002", "x", "y"], deps(h))).toBe(2);
+  });
+
+  it("bad exp-id -> rc 2", async () => {
+    const h = home();
+    scaffold(h);
+    expect(await experimentSendWith([TOPIC, INST, "exp1", "x", "y"], deps(h))).toBe(2);
+  });
+
+  it("bad instrument -> rc 2", async () => {
+    const h = home();
+    scaffold(h);
+    expect(await experimentSendWith([TOPIC, "Viola", "exp-001", "x", "y"], deps(h))).toBe(2);
+  });
+
+  it("bad --timeout -> rc 2", async () => {
+    const h = home();
+    scaffold(h);
+    expect(await experimentSendWith(["--timeout", "x", TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(2);
+  });
+
+  it("wrong positional count -> rc 2", async () => {
+    const h = home();
+    scaffold(h);
+    expect(await experimentSendWith([TOPIC, INST, "exp-001"], deps(h))).toBe(2);
+  });
+
+  it("missing metric.md -> rc 1", async () => {
+    const h = home();
+    scaffold(h, { metric: false });
+    expect(await experimentSendWith([TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(1);
+  });
+
+  it("missing state.txt -> rc 1", async () => {
+    const h = home();
+    scaffold(h, { state: false });
+    expect(await experimentSendWith([TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(1);
+  });
+
+  it("missing outbox -> rc 1", async () => {
+    const h = home();
+    scaffold(h, { outbox: false });
+    expect(await experimentSendWith([TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(1);
+  });
+
+  it("missing art dir -> rc 1", async () => {
+    const h = home();
+    // no scaffold at all
+    expect(await experimentSendWith([TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(1);
+  });
+
+  it("--context-file unreadable -> rc 2", async () => {
+    const h = home();
+    scaffold(h);
+    expect(await experimentSendWith(["--context-file", "/no/such/file", TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(2);
+  });
+
+  it("--context-file readable -> its content appears in prompt.md", async () => {
+    const h = home();
+    const { art } = scaffold(h);
+    const ctx = join(h.home, "ctx.txt");
+    writeFileSync(ctx, "SPECIAL_CONTEXT_MARKER");
+    const rc = await experimentSendWith(["--context-file", ctx, TOPIC, INST, "exp-003", "x", "y"], deps(h));
+    expect(rc).toBe(0);
+    const prompt = readFileSync(join(art, "parts", INST, "experiments", "exp-003", "prompt.md"), "utf8");
+    expect(prompt).toContain("SPECIAL_CONTEXT_MARKER");
+  });
+
+  it("--smoke-test failing -> rc 2, smoke-test.err written, state still idle", async () => {
+    const h = home();
+    const { art, sd } = scaffold(h);
+    const script = join(h.home, "smoke.sh");
+    writeFileSync(script, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const rc = await experimentSendWith(["--smoke-test", script, TOPIC, INST, "exp-004", "x", "y"],
+      deps(h, { runSmokeTest: () => ({ ok: false, stderr: "boom" }) }));
+    expect(rc).toBe(2);
+    expect(readFileSync(join(art, "parts", INST, "experiments", "exp-004", "smoke-test.err"), "utf8")).toContain("boom");
+    expect(readFileSync(join(sd, "state.txt"), "utf8")).toContain("phase=idle");
+  });
+
+  it("sota.md present -> prompt.md contains the SOTA reference heading", async () => {
+    const h = home();
+    const { art } = scaffold(h, { sota: "# SOTA reference — mnist\n\n| a | b |\n" });
+    const rc = await experimentSendWith([TOPIC, INST, "exp-005", "x", "y"], deps(h));
+    expect(rc).toBe(0);
+    const prompt = readFileSync(join(art, "parts", INST, "experiments", "exp-005", "prompt.md"), "utf8");
+    expect(prompt).toContain("## Reference: SOTA");
+  });
+
+  it("best-effort nudge: a throwing paneSend still yields rc 0 with inbox + state written", async () => {
+    const h = home();
+    const { sd } = scaffold(h);
+    const rc = await experimentSendWith([TOPIC, INST, "exp-006", "x", "y"],
+      deps(h, { dryRun: false, paneSend: async () => { throw new Error("tmux down"); } }));
+    expect(rc).toBe(0);
+    expect(readFileSync(inboxPath(INST, MODEL, TOPIC), "utf8")).toContain("END_OF_INSTRUCTION");
+    expect(readFileSync(join(sd, "state.txt"), "utf8")).toContain("phase=working");
   });
 });

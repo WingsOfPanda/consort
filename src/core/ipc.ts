@@ -1,6 +1,6 @@
-import { statSync, readFileSync, existsSync, openSync, readSync, closeSync } from "node:fs";
+import { statSync, readFileSync, existsSync, openSync, readSync, closeSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { partDir } from "./paths.js";
+import { partDir, topicDir } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
 
 export function inboxPath(i: string, m: string, t: string) { return join(partDir(i, m, t), "inbox.md"); }
@@ -133,4 +133,14 @@ export function paneMetaModel(i: string, modelHint: string, t: string): string {
   const p = paneMetaPath(i, modelHint, t);
   if (existsSync(p)) { try { return JSON.parse(readFileSync(p, "utf8")).model ?? modelHint; } catch { /* */ } }
   return modelHint;
+}
+
+/** Resolve the model segment for an instrument's part on a topic (the on-disk
+ *  <instrument>-<model> dir name), then the canonical model from pane.json. null if absent. */
+export function resolveModel(instrument: string, topic: string): string | null {
+  const td = topicDir(topic);
+  if (!existsSync(td)) return null;
+  const d = readdirSync(td, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.startsWith(`${instrument}-`));
+  if (!d) return null;
+  return paneMetaModel(instrument, d.name.slice(instrument.length + 1), topic);
 }

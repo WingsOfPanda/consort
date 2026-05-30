@@ -597,6 +597,13 @@ function paneMetaModel(i2, modelHint, t) {
   }
   return modelHint;
 }
+function resolveModel(instrument, topic) {
+  const td = topicDir(topic);
+  if (!(0, import_node_fs5.existsSync)(td)) return null;
+  const d = (0, import_node_fs5.readdirSync)(td, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.startsWith(`${instrument}-`));
+  if (!d) return null;
+  return paneMetaModel(instrument, d.name.slice(instrument.length + 1), topic);
+}
 var import_node_fs5, import_node_path3, SENDER_RE, sleep;
 var init_ipc = __esm({
   "src/core/ipc.ts"() {
@@ -16933,7 +16940,7 @@ var collect_exports = {};
 __export(collect_exports, {
   run: () => run3
 });
-function resolveModel(instrument, topic) {
+function resolveModel2(instrument, topic) {
   const td = topicDir(topic);
   if (!(0, import_node_fs17.existsSync)(td)) return null;
   const dir = (0, import_node_fs17.readdirSync)(td, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.startsWith(`${instrument}-`));
@@ -16959,7 +16966,7 @@ async function run3(args) {
       return 2;
     }
   }
-  const model = resolveModel(instrument, topic);
+  const model = resolveModel2(instrument, topic);
   if (!model) {
     log.error(`no part '${instrument}' on topic '${topic}'`);
     return 1;
@@ -21549,6 +21556,33 @@ function formatMetricBlock(fields) {
 `;
   return out;
 }
+function parseMetricMd(text) {
+  let primaryMetric = "";
+  let minOp, minVal;
+  let tgtOp, tgtVal;
+  let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
+  const opVal = (s) => {
+    const parts = s.trim().split(/\s+/);
+    return [parts[0] ?? "", parts.slice(1).join(" ")];
+  };
+  for (const line of text.split("\n")) {
+    let m;
+    if (m = line.match(/^\*\*Primary metric:\*\*\s+(.*)$/)) {
+      primaryMetric = m[1].trim();
+    } else if (m = line.match(/^\*\*min_acceptable:\*\*\s+(.*)$/)) {
+      [minOp, minVal] = opVal(m[1]);
+    } else if (m = line.match(/^\*\*target:\*\*\s+(.*)$/)) {
+      [tgtOp, tgtVal] = opVal(m[1]);
+    } else if (m = line.match(/^\*\*K_corroboration:\*\*\s+(.*)$/)) {
+      kRequired = parseInt(m[1].trim(), 10) || 1;
+    } else if (m = line.match(/^\*\*plateau_window:\*\*\s+(.*)$/)) {
+      plateauWindow = parseInt(m[1].trim(), 10) || 5;
+    } else if (m = line.match(/^\*\*plateau_threshold:\*\*\s+(.*)$/)) {
+      plateauThreshold = parseFloat(m[1].trim()) || 0.01;
+    }
+  }
+  return { primaryMetric, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
+}
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
   if (!input.metric) throw new Error("missing required key: metric");
@@ -21599,6 +21633,18 @@ var init_rehearsalMetric = __esm({
 function rehearsalArtDir(topic, opts) {
   return (0, import_node_path29.join)(topicDir(topic, opts), "_rehearsal");
 }
+function partsDir(artDir) {
+  return (0, import_node_path29.join)(artDir, "parts");
+}
+function partStateDir(artDir, instrument) {
+  return (0, import_node_path29.join)(partsDir(artDir), instrument);
+}
+function experimentsDir(artDir, instrument) {
+  return (0, import_node_path29.join)(partStateDir(artDir, instrument), "experiments");
+}
+function experimentDir(artDir, instrument, expId) {
+  return (0, import_node_path29.join)(experimentsDir(artDir, instrument), expId);
+}
 var import_node_path29;
 var init_rehearsal = __esm({
   "src/core/rehearsal.ts"() {
@@ -21608,9 +21654,139 @@ var init_rehearsal = __esm({
   }
 });
 
+// src/core/rehearsalState.ts
+function parseState(text) {
+  const kv = {};
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    kv[line.slice(0, eq)] = line.slice(eq + 1).replace(/\\n/g, "\n");
+  }
+  return kv;
+}
+function renderState(kv) {
+  const lines = [];
+  for (const [k, v] of Object.entries(kv)) {
+    if (!k) continue;
+    lines.push(`${k}=${v.replace(/\n/g, "\\n")}`);
+  }
+  return lines.join("\n") + "\n";
+}
+function mergeState(existing, updates) {
+  const kv = existing ? parseState(existing) : {};
+  for (const [k, v] of Object.entries(updates)) if (k) kv[k] = v;
+  return renderState(kv);
+}
+var init_rehearsalState = __esm({
+  "src/core/rehearsalState.ts"() {
+    "use strict";
+  }
+});
+
+// src/core/rehearsalExperiment.ts
+function renderExperimentPrompt(template, f) {
+  let out = template;
+  for (const [token, key] of TOKENS) out = out.split(token).join(f[key]);
+  const leftover = out.match(/\{\{[A-Z_]+\}\}/);
+  if (leftover) throw new Error(`renderExperimentPrompt: unrendered placeholder ${leftover[0]}`);
+  return out;
+}
+function buildSotaBlock(sotaMd) {
+  if (!sotaMd || sotaMd.trim() === "") return "";
+  return `## Reference: SOTA
+
+${sotaMd}
+
+${SOTA_AFFORDANCE}`;
+}
+function assembleHardwareBlock(probeText, alertText) {
+  return alertText ? `${probeText}
+${alertText}` : probeText;
+}
+function parseGpus(probe) {
+  const m = /* @__PURE__ */ new Map();
+  if (!probe) return m;
+  for (const line of probe.split("\n")) {
+    const c3 = line.split("	");
+    if (c3[0] === "gpu" && c3.length >= 4) m.set(c3[1], { name: c3[1], free: Number(c3[3]) });
+  }
+  return m;
+}
+function hardwareDiffAlert(baseline, current) {
+  const base = parseGpus(baseline);
+  const cur = parseGpus(current);
+  const out = [];
+  for (const [name, b] of base) {
+    const c3 = cur.get(name);
+    if (!c3 || !(b.free > 0) || !(c3.free < b.free * 0.5)) continue;
+    const dropPct = Math.trunc((1 - c3.free / b.free) * 100);
+    out.push(`ALERT: gpu '${name}' memory.free ${b.free} -> ${c3.free} MiB (-${dropPct}%)`);
+  }
+  return out.join("\n");
+}
+function formatPeersBlock(peers) {
+  if (peers.length === 0) return "";
+  const lines = [
+    "## Peers",
+    "",
+    "Other parts are exploring this objective in parallel. Diverge from their approaches \u2014",
+    "do not duplicate a pipeline a peer is already running. Use their results to decide where",
+    "the unexplored, promising region of the design space is.",
+    "",
+    "| Part | Phase | Current/last | Approach | Best metric | Notes |",
+    "|---|---|---|---|---|---|"
+  ];
+  for (const p of peers) {
+    const metric = p.metric === "" ? "" : p.status ? `${p.metric} (${p.status})` : p.metric;
+    const flat = p.notes.replace(/\s+/g, " ").trim();
+    const notes = flat.length > 80 ? flat.slice(0, 77) + "..." : flat;
+    lines.push(`| ${p.instrument} | ${p.phase} | ${p.currentExp} | ${p.approach} | ${metric} | ${notes} |`);
+  }
+  return lines.join("\n");
+}
+function buildDispatchState(existing, expId, nowIso) {
+  const prevCounter = existing?.split("\n").find((l) => l.startsWith("exp_counter="))?.slice("exp_counter=".length) ?? "";
+  const n2 = /^[0-9]+$/.test(prevCounter.trim()) ? parseInt(prevCounter, 10) : 0;
+  return mergeState(existing, {
+    phase: "working",
+    current_exp_id: expId,
+    exp_counter: String(n2 + 1),
+    last_event: "dispatched",
+    last_event_ts: nowIso
+  });
+}
+var EXP_ID_RE, INSTRUMENT_RE, TOKENS, SOTA_AFFORDANCE;
+var init_rehearsalExperiment = __esm({
+  "src/core/rehearsalExperiment.ts"() {
+    "use strict";
+    init_rehearsalState();
+    EXP_ID_RE = /^exp-[0-9]+$/;
+    INSTRUMENT_RE = /^[a-z][a-z0-9-]*$/;
+    TOKENS = [
+      ["{{METRIC_BLOCK}}", "metricBlock"],
+      ["{{HARDWARE_BLOCK}}", "hardwareBlock"],
+      ["{{OUTBOX_PATH}}", "outboxPath"],
+      ["{{TOPIC}}", "topicText"],
+      ["{{EXP_ID}}", "expId"],
+      ["{{APPROACH_LABEL}}", "approachLabel"],
+      ["{{APPROACH_BRIEF}}", "approachBrief"],
+      ["{{BRANCH_DIR}}", "branchDir"],
+      ["{{METRIC_NAME}}", "metricName"],
+      ["{{TIME_BUDGET_S}}", "timeBudgetS"],
+      ["{{TASK_CONTEXT}}", "taskContext"],
+      ["{{SOTA_BLOCK}}", "sotaBlock"],
+      ["{{PEERS_BLOCK}}", "peersBlock"],
+      ["{{ART_DIR}}", "artDir"]
+    ];
+    SOTA_AFFORDANCE = "### Web search affordance\n\nConsult this reference before starting. Web search (curl / pip install / arXiv / HuggingFace / etc.) is allowed when you hit a plateau or before scaling up. Record any consulted source in notes.md under a `## Sources consulted` heading.";
+  }
+});
+
 // src/commands/rehearsal.ts
 var rehearsal_exports = {};
 __export(rehearsal_exports, {
+  experimentSendWith: () => experimentSendWith,
   initWith: () => initWith4,
   metricWith: () => metricWith,
   run: () => run13,
@@ -21818,6 +21994,254 @@ async function spawnAllWith2(args, deps, opts) {
   else log.warn(`rehearsal spawn-all: ${nOk}/${rows.length} codex parts ready (rc=${rc})`);
   return rc;
 }
+function parseExperimentSendArgs(args) {
+  let inputs, contextFile, smokeTest, timeout;
+  let i2 = 0;
+  for (; i2 < args.length; i2++) {
+    const a2 = args[i2];
+    if (!a2.startsWith("--")) break;
+    if (a2 === "--inputs" || a2.startsWith("--inputs=")) {
+      const r = kvParse(a2, args[i2 + 1]);
+      inputs = r.value;
+      i2 += r.shift - 1;
+    } else if (a2 === "--context-file" || a2.startsWith("--context-file=")) {
+      const r = kvParse(a2, args[i2 + 1]);
+      contextFile = r.value;
+      i2 += r.shift - 1;
+    } else if (a2 === "--smoke-test" || a2.startsWith("--smoke-test=")) {
+      const r = kvParse(a2, args[i2 + 1]);
+      smokeTest = r.value;
+      i2 += r.shift - 1;
+    } else if (a2 === "--timeout" || a2.startsWith("--timeout=")) {
+      const r = kvParse(a2, args[i2 + 1]);
+      timeout = r.value;
+      i2 += r.shift - 1;
+    } else {
+      return { topic: "", instrument: "", expId: "", approachLabel: "", approachBrief: "", badArgs: true };
+    }
+  }
+  const pos = args.slice(i2);
+  if (pos.length !== 5) return { topic: "", instrument: "", expId: "", approachLabel: "", approachBrief: "", badArgs: true };
+  const [topic, instrument, expId, approachLabel, approachBrief] = pos;
+  return { topic, instrument, expId, approachLabel, approachBrief, inputs, contextFile, smokeTest, timeout };
+}
+function gatherPeers(art, self) {
+  const partsFile = (0, import_node_path30.join)(art, "parts.txt");
+  if (!(0, import_node_fs33.existsSync)(partsFile)) return [];
+  const peers = (0, import_node_fs33.readFileSync)(partsFile, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && l !== self);
+  const rows = [];
+  for (const peer of peers) {
+    const peerDir = partStateDir(art, peer);
+    if (!(0, import_node_fs33.existsSync)(peerDir)) continue;
+    let phase = "", currentExp = "";
+    const statePath = (0, import_node_path30.join)(peerDir, "state.txt");
+    if ((0, import_node_fs33.existsSync)(statePath)) {
+      const kv = parseState((0, import_node_fs33.readFileSync)(statePath, "utf8"));
+      phase = kv.phase ?? "";
+      currentExp = kv.current_exp_id ?? "";
+    }
+    let latest = currentExp;
+    const expsDir = (0, import_node_path30.join)(peerDir, "experiments");
+    if (!latest && (0, import_node_fs33.existsSync)(expsDir)) {
+      for (const name of (0, import_node_fs33.readdirSync)(expsDir)) {
+        if (EXP_ID_RE.test(name) && name > latest) latest = name;
+      }
+    }
+    let approach = "", metric = "", status = "", notes = "";
+    if (latest) {
+      const resultPath = (0, import_node_path30.join)(expsDir, latest, "result.json");
+      if ((0, import_node_fs33.existsSync)(resultPath)) {
+        try {
+          const r = JSON.parse((0, import_node_fs33.readFileSync)(resultPath, "utf8"));
+          approach = r.approach_label != null ? String(r.approach_label) : "";
+          metric = r.metric_value != null ? String(r.metric_value) : "";
+          status = r.status != null ? String(r.status) : "";
+          notes = r.notes != null ? String(r.notes) : "";
+        } catch {
+        }
+      }
+    }
+    rows.push({ instrument: peer, phase, currentExp: latest, approach, metric, status, notes });
+  }
+  return rows;
+}
+async function experimentSendWith(args, deps) {
+  const out = deps.stdout ?? ((l) => {
+    process.stdout.write(l + "\n");
+  });
+  const opts = deps.opts;
+  const p = parseExperimentSendArgs(args);
+  if (p.badArgs) {
+    log.error("rehearsal experiment-send: usage: [--inputs csv] [--context-file path] [--smoke-test script] [--timeout N] <topic> <instrument> <exp-id> <approach-label> <approach-brief>");
+    return 2;
+  }
+  const { topic, instrument, expId, approachLabel, approachBrief } = p;
+  if (!EXP_ID_RE.test(expId)) {
+    log.error(`rehearsal experiment-send: exp-id must match exp-[0-9]+; got '${expId}'`);
+    return 2;
+  }
+  if (!INSTRUMENT_RE.test(instrument)) {
+    log.error(`rehearsal experiment-send: instrument must match [a-z][a-z0-9-]*; got '${instrument}'`);
+    return 2;
+  }
+  if (p.inputs) {
+    for (const path6 of p.inputs.split(",")) {
+      if (!path6) continue;
+      try {
+        (0, import_node_fs33.accessSync)(path6, import_node_fs33.constants.R_OK);
+      } catch {
+        log.error(`rehearsal experiment-send: cannot read input path '${path6}'`);
+        return 2;
+      }
+    }
+  }
+  if (p.timeout !== void 0 && !/^[1-9][0-9]*$/.test(p.timeout)) {
+    log.error(`rehearsal experiment-send: --timeout must be a positive integer (seconds); got '${p.timeout}'`);
+    return 2;
+  }
+  if (p.smokeTest) {
+    try {
+      (0, import_node_fs33.accessSync)(p.smokeTest, import_node_fs33.constants.X_OK);
+    } catch {
+      log.error(`rehearsal experiment-send: smoke-test script not executable: ${p.smokeTest}`);
+      return 2;
+    }
+  }
+  let taskContext = "";
+  if (p.contextFile) {
+    try {
+      taskContext = (0, import_node_fs33.readFileSync)(p.contextFile, "utf8");
+    } catch {
+      log.error(`rehearsal experiment-send: cannot read --context-file: ${p.contextFile}`);
+      return 2;
+    }
+  }
+  const art = rehearsalArtDir(topic, opts);
+  if (!(0, import_node_fs33.existsSync)(art)) {
+    log.error(`rehearsal experiment-send: topic state dir missing: ${art} (was rehearsal init run?)`);
+    return 1;
+  }
+  const metricMd = (0, import_node_path30.join)(art, "metric.md");
+  if (!(0, import_node_fs33.existsSync)(metricMd)) {
+    log.error(`rehearsal experiment-send: metric.md missing at ${metricMd}`);
+    return 1;
+  }
+  const stateDir = partStateDir(art, instrument);
+  const stateTxt = (0, import_node_path30.join)(stateDir, "state.txt");
+  if (!(0, import_node_fs33.existsSync)(stateTxt)) {
+    log.error(`rehearsal experiment-send: part state.txt missing: ${stateTxt}`);
+    return 1;
+  }
+  const phase = parseState((0, import_node_fs33.readFileSync)(stateTxt, "utf8")).phase ?? "";
+  if (phase === "abandoned") {
+    log.error(`rehearsal experiment-send: part ${instrument} lane is abandoned; not dispatching`);
+    return 2;
+  }
+  if (phase !== "idle") {
+    log.error(`rehearsal experiment-send: part ${instrument} not idle (phase=${phase}); wait or finalize first`);
+    return 1;
+  }
+  const branchDir = experimentDir(art, instrument, expId);
+  (0, import_node_fs33.mkdirSync)((0, import_node_path30.join)(branchDir, "code"), { recursive: true });
+  if (p.smokeTest) {
+    const r = deps.runSmokeTest(p.smokeTest, (0, import_node_path30.join)(branchDir, "code"), deps.smokeTimeoutSec ?? 60);
+    if (!r.ok) {
+      atomicWrite((0, import_node_path30.join)(branchDir, "smoke-test.err"), r.stderr);
+      log.error(`rehearsal experiment-send: smoke-test failed for ${instrument}/${expId}; stderr -> ${(0, import_node_path30.join)(branchDir, "smoke-test.err")}`);
+      return 2;
+    }
+  }
+  const model = resolveModel(instrument, topic);
+  if (!model) {
+    log.error(`rehearsal experiment-send: no part '${instrument}' on topic '${topic}' (resolveModel null)`);
+    return 1;
+  }
+  const outbox = outboxPath(instrument, model, topic);
+  if (!(0, import_node_fs33.existsSync)(outbox)) {
+    log.error(`rehearsal experiment-send: part outbox missing: ${outbox} (was spawn run for ${instrument}?)`);
+    return 1;
+  }
+  const metricBlock = (0, import_node_fs33.readFileSync)(metricMd, "utf8");
+  const metricName = parseMetricMd(metricBlock).primaryMetric;
+  if (!metricName) {
+    log.error(`rehearsal experiment-send: could not parse Primary metric from ${metricMd}`);
+    return 1;
+  }
+  const probe = deps.probeHardware();
+  const baselinePath = (0, import_node_path30.join)(art, "hardware.txt");
+  const baseline = (0, import_node_fs33.existsSync)(baselinePath) ? (0, import_node_fs33.readFileSync)(baselinePath, "utf8") : null;
+  const hardwareBlock = assembleHardwareBlock(probe, hardwareDiffAlert(baseline, probe));
+  const topicTextPath = (0, import_node_path30.join)(art, "topic.txt");
+  const topicText = (0, import_node_fs33.existsSync)(topicTextPath) ? (0, import_node_fs33.readFileSync)(topicTextPath, "utf8") : "";
+  const sotaPath = (0, import_node_path30.join)(art, "sota.md");
+  const sotaBlock = buildSotaBlock((0, import_node_fs33.existsSync)(sotaPath) ? (0, import_node_fs33.readFileSync)(sotaPath, "utf8") : null);
+  const peersBlock = formatPeersBlock(gatherPeers(art, instrument));
+  const timeBudgetS = String(p.timeout ?? deps.consultTimeout());
+  const pluginRoot6 = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+  const templatePath = (0, import_node_path30.join)(pluginRoot6, "config", "prompt-templates", "rehearsal", "experiment.md");
+  if (!(0, import_node_fs33.existsSync)(templatePath)) {
+    log.error(`rehearsal experiment-send: template missing: ${templatePath}`);
+    return 1;
+  }
+  const template = (0, import_node_fs33.readFileSync)(templatePath, "utf8");
+  let prompt;
+  try {
+    prompt = renderExperimentPrompt(template, {
+      metricBlock,
+      hardwareBlock,
+      outboxPath: outbox,
+      topicText,
+      expId,
+      approachLabel,
+      approachBrief,
+      branchDir,
+      metricName,
+      timeBudgetS,
+      taskContext,
+      sotaBlock,
+      peersBlock,
+      artDir: art
+    });
+  } catch (e) {
+    log.error(`rehearsal experiment-send: ${e.message}`);
+    return 1;
+  }
+  if (prompt.trim() === "") {
+    log.error(`rehearsal experiment-send: prompt rendered empty (template substitution failed)`);
+    return 1;
+  }
+  atomicWrite((0, import_node_path30.join)(branchDir, "prompt.md"), prompt);
+  inboxWrite(instrument, model, topic, prompt, { from: "maestro" });
+  atomicWrite(stateTxt, buildDispatchState((0, import_node_fs33.readFileSync)(stateTxt, "utf8"), expId, deps.now()));
+  if (!deps.dryRun) {
+    const pane = paneMetaRead(instrument, model, topic);
+    if (pane) {
+      try {
+        await deps.paneSend(pane, `Read ${inboxPath(instrument, model, topic)} and execute the task. Reply when done.`);
+      } catch (e) {
+        log.warn(`rehearsal experiment-send: pane nudge failed (${e.message}); part may not have noticed inbox`);
+      }
+    }
+  }
+  out(`dispatched ${expId} -> ${instrument}`);
+  return 0;
+}
+function liveProbeHardware() {
+  try {
+    const csv = (0, import_node_child_process9.execFileSync)("nvidia-smi", [
+      "--query-gpu=name,memory.total,memory.free,driver_version",
+      "--format=csv,noheader,nounits"
+    ], { encoding: "utf8" }).trim();
+    if (!csv) return "no-gpu";
+    const lines = csv.split("\n").map((l) => {
+      const [name = "", total = "", free = "", driver = ""] = l.split(",").map((c3) => c3.trim());
+      return `gpu	${name}	${total}	${free}	${driver}`;
+    });
+    return [`detected_at	${isoUtc()}`, ...lines].join("\n");
+  } catch {
+    return "no-gpu";
+  }
+}
 async function run13(args) {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -21829,16 +22253,19 @@ async function run13(args) {
       return sotaWith(rest);
     case "spawn-all":
       return spawnAllWith2(rest, liveSpawnAllDeps2);
+    case "experiment-send":
+      return experimentSendWith(applyArgsFile(rest), liveExperimentSendDeps);
     default:
       log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`);
       return 2;
   }
 }
-var import_node_fs33, import_node_path30, liveInitDeps4, liveSpawnAllDeps2;
+var import_node_fs33, import_node_child_process9, import_node_path30, liveInitDeps4, liveSpawnAllDeps2, liveExperimentSendDeps;
 var init_rehearsal2 = __esm({
   "src/commands/rehearsal.ts"() {
     "use strict";
     import_node_fs33 = require("node:fs");
+    import_node_child_process9 = require("node:child_process");
     import_node_path30 = require("node:path");
     init_log();
     init_args();
@@ -21847,7 +22274,11 @@ var init_rehearsal2 = __esm({
     init_solo();
     init_rehearsalMetric();
     init_rehearsal();
+    init_rehearsalState();
+    init_rehearsalExperiment();
     init_contracts();
+    init_ipc();
+    init_tmux();
     init_deps();
     init_score();
     init_instruments();
@@ -21860,6 +22291,22 @@ var init_rehearsal2 = __esm({
       now: () => isoUtc()
     };
     liveSpawnAllDeps2 = { preflight: run7, spawn: run, repoRoot, pickInstruments };
+    liveExperimentSendDeps = {
+      now: () => isoUtc(),
+      probeHardware: liveProbeHardware,
+      paneSend,
+      consultTimeout: () => consultTimeout("experiment"),
+      runSmokeTest: (script, cwd, timeoutSec) => {
+        try {
+          (0, import_node_child_process9.execFileSync)(script, [], { cwd, timeout: timeoutSec * 1e3, encoding: "utf8" });
+          return { ok: true, stderr: "" };
+        } catch (e) {
+          const err = e;
+          return { ok: false, stderr: err.stderr ?? err.message ?? "" };
+        }
+      },
+      dryRun: process.env.CONSORT_DRY_RUN === "1"
+    };
   }
 });
 
