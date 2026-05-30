@@ -72,3 +72,45 @@ export function findingSignature(f: Finding): string {
       return sig(normalizeVolatile(f.key));
   }
 }
+
+export interface TrendEntry { count: number; firstSeen: string; lastSeen: string; }
+export interface TrendLedger { counts: Record<string, TrendEntry>; }
+export interface TrendRow { signature: string; count: number; firstSeen: string; lastSeen: string; }
+
+/** Parse `.trends.json`. A null/corrupt/shape-invalid ledger -> empty (never throws). */
+export function parseTrendLedger(text: string | null): TrendLedger {
+  if (!text) return { counts: {} };
+  try {
+    const o = JSON.parse(text);
+    if (o && typeof o === "object" && o.counts && typeof o.counts === "object") return { counts: o.counts as Record<string, TrendEntry> };
+  } catch { /* fall through */ }
+  return { counts: {} };
+}
+
+/** Accrue findings into the ledger (mutates + returns). `date` is the YYYY-MM-DD stamp. */
+export function accrue(ledger: TrendLedger, findings: Finding[], date: string): TrendLedger {
+  for (const f of findings) {
+    const sig = findingSignature(f);
+    const e = ledger.counts[sig];
+    if (e) { e.count += 1; e.lastSeen = date; }
+    else ledger.counts[sig] = { count: 1, firstSeen: date, lastSeen: date };
+  }
+  return ledger;
+}
+
+/** Ledger -> rows sorted by count desc, then signature asc. topN=0 -> all. */
+export function renderTrendDigest(ledger: TrendLedger, topN = 0): TrendRow[] {
+  const rows: TrendRow[] = Object.entries(ledger.counts).map(([signature, e]) => ({ signature, ...e }));
+  rows.sort((a, b) => b.count - a.count || a.signature.localeCompare(b.signature));
+  return topN > 0 ? rows.slice(0, topN) : rows;
+}
+
+/** The `.reviewed/<date>/<file>` destination for a live forensics path under `forensicsRoot`.
+ *  A path already under `.reviewed/` is returned unchanged (idempotent). null if not under the root. */
+export function reviewedTarget(forensicsRoot: string, path: string): string | null {
+  const root = forensicsRoot.replace(/\/$/, "");
+  if (!path.startsWith(root + "/")) return null;
+  const rel = path.slice(root.length + 1);            // <date>/<file>  OR  .reviewed/<date>/<file>
+  if (rel.startsWith(".reviewed/")) return path;
+  return `${root}/.reviewed/${rel}`;
+}

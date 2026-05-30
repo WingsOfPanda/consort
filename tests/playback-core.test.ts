@@ -100,3 +100,42 @@ describe("findingSignature (per-source)", () => {
       .toBe("weird||x <ts>");
   });
 });
+
+import { parseTrendLedger, accrue, renderTrendDigest, reviewedTarget } from "../src/core/playback.js";
+
+describe("trend ledger", () => {
+  it("parse: null / corrupt -> empty; valid -> counts", () => {
+    expect(parseTrendLedger(null)).toEqual({ counts: {} });
+    expect(parseTrendLedger("not json")).toEqual({ counts: {} });
+    expect(parseTrendLedger("[]")).toEqual({ counts: {} });
+    expect(parseTrendLedger('{"x":1}')).toEqual({ counts: {} });
+    const l = parseTrendLedger('{"counts":{"a||x":{"count":2,"firstSeen":"2026-05-01","lastSeen":"2026-05-02"}}}');
+    expect(l.counts["a||x"].count).toBe(2);
+  });
+  it("accrue: first-seen sets both dates; repeat bumps count + lastSeen", () => {
+    const l = { counts: {} as Record<string, { count: number; firstSeen: string; lastSeen: string }> };
+    accrue(l, [{ source: "status", key: "state=error", context: "part=a" }], "2026-05-01");
+    expect(l.counts["status||state=error"]).toEqual({ count: 1, firstSeen: "2026-05-01", lastSeen: "2026-05-01" });
+    accrue(l, [{ source: "status", key: "state=error", context: "part=b" }], "2026-05-03");
+    expect(l.counts["status||state=error"]).toEqual({ count: 2, firstSeen: "2026-05-01", lastSeen: "2026-05-03" });
+  });
+  it("renderTrendDigest: count desc then signature asc; topN", () => {
+    const l = { counts: { "a||x": { count: 1, firstSeen: "d", lastSeen: "d" }, "b||y": { count: 5, firstSeen: "d", lastSeen: "d" } } };
+    expect(renderTrendDigest(l).map((r) => r.signature)).toEqual(["b||y", "a||x"]);
+    expect(renderTrendDigest(l, 1).map((r) => r.signature)).toEqual(["b||y"]);
+  });
+});
+
+describe("reviewedTarget", () => {
+  const root = "/home/u/.consort/forensics";
+  it("live file -> .reviewed/<date>/<file>", () => {
+    expect(reviewedTarget(root, `${root}/2026-05-30/11-00-00-perform-x.md`))
+      .toBe(`${root}/.reviewed/2026-05-30/11-00-00-perform-x.md`);
+  });
+  it("already reviewed -> unchanged (idempotent)", () => {
+    expect(reviewedTarget(root, `${root}/.reviewed/2026-05-30/f.md`)).toBe(`${root}/.reviewed/2026-05-30/f.md`);
+  });
+  it("not under root -> null", () => {
+    expect(reviewedTarget(root, "/tmp/x.md")).toBeNull();
+  });
+});
