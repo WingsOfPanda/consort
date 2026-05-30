@@ -1,17 +1,22 @@
 // src/commands/perform.ts — single-repo command path for /consort:perform.
 // Byte-faithful port of the prior bash plugin's deploy verb set; WIRES the Phase-A core modules.
 // Rebrand: _deploy/->_perform/, feat/deploy-->feat/perform-, conductor sender->From: maestro.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
-import { applyArgsFile } from "../args.js";
+import { applyArgsFile, kvParse } from "../args.js";
 import { atomicWrite } from "../core/atomic.js";
 import { repoRoot } from "../core/paths.js";
 import { auditDoc } from "../core/audit.js";
 import {
   parsePerformArgs, deriveTopicFromPath, resolveTarget, detectProvider,
-  performArtDir, PerformArgError, PerformResolveError, ProviderError,
+  performArtDir, iterTargets, PerformArgError, PerformResolveError, ProviderError,
 } from "../core/perform.js";
+import { isoUtc, archiveTopic } from "../core/archive.js";
+import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/performScope.js";
+import { runnerAt, preSnapshot, createOrResumeBranch, shortstat, finishBranchAction, type Runner } from "../core/gitwork.js";
+import { captureArtDir } from "../core/forensics.js";
+import { haveCmd } from "../core/deps.js";
 import { performState, composeRound1Prompt, composeFixPrompt } from "../core/performTurn.js";
 import { extractQuestionPayload } from "../core/performQuestions.js";
 import { outboxOffset, outboxPath, outboxWaitSince, statusPath, type OutboxEvent } from "../core/ipc.js";
@@ -42,6 +47,13 @@ export async function run(args: string[]): Promise<number> {
     case "init":      return initRun(applyArgsFile(rest));
     case "turn-send": return turnSendRun(rest);
     case "turn-wait": return turnWaitRun(rest);
+    case "pre-snapshot": return preSnapshotRun(rest);
+    case "branch":       return branchRun(applyArgsFile(rest));
+    case "scope-check":  return scopeCheckRun(rest);
+    case "summary":      return summaryRun(rest);
+    case "finish":       return finishRun(rest);
+    case "forensics":    return forensicsRun(rest);
+    case "archive":      return archiveRun(rest);
     default:          return usage();
   }
 }
@@ -150,4 +162,172 @@ export async function turnWaitWith(topic: string, round: number, d: PerformWaitD
   } else appendFileSync(stateFile, `TS=${ts}\n`);
   writeFileSync(join(art, `turn-cody-${round}.done`), "");
   log.ok(`[turn-wait] cody round=${round} TS=${ts}`); return 0;
+}
+
+// ---- key=value baseline reader (port of deploy_kv_file_field) + small helpers ----
+export function kvFileField(file: string, key: string): string {
+  if (!existsSync(file)) return "";
+  for (const line of readFileSync(file, "utf8").split("\n")) { const eq = line.indexOf("="); if (eq > 0 && line.slice(0, eq) === key) return line.slice(eq + 1); }
+  return "";
+}
+function branchMapField(map: string, slug: string): string {
+  if (!existsSync(map)) return "";
+  for (const line of readFileSync(map, "utf8").split("\n")) { const [s, b] = line.split("\t"); if (s === slug) return b ?? ""; }
+  return "";
+}
+function isDir(p: string): boolean { try { return statSync(p).isDirectory(); } catch { return false; } }
+
+// ---- pre-snapshot (deploy-pre-snapshot.sh) ----
+async function preSnapshotRun(rest: string[]): Promise<number> {
+  if (rest.length !== 1) { log.error("usage: perform pre-snapshot <topic>"); return 2; }
+  return preSnapshotWith(rest[0], {}, runnerAt);
+}
+export async function preSnapshotWith(topic: string, opts: { home?: string; cwd?: string }, runnerFor: (cwd: string) => Runner): Promise<number> {
+  const art = performArtDir(topic, opts);
+  if (!existsSync(art)) { log.error(`perform pre-snapshot: art-dir missing: ${art} (run perform init first)`); return 1; }
+  mkdirSync(join(art, "baselines"), { recursive: true });
+  let clean = 0, committed = 0, blocked = 0;
+  for (const { slug, cwd } of iterTargets(topic, opts)) {
+    if (!slug || !cwd) continue;
+    const snap = preSnapshot(runnerFor(cwd), topic);
+    if (snap.state === "not-git") { log.error(`perform pre-snapshot: not a git repository: ${cwd}`); return 2; }
+    atomicWrite(join(art, "baselines", `${slug}.tsv`),
+      `slug=${slug}\ncwd=${cwd}\nbranch=${snap.branch}\nbaseline_sha=${snap.baseSha}\nstate=${snap.state}\nsnapshot_ts=${isoUtc()}\n`);
+    if (snap.state === "clean") clean++; else if (snap.state === "wip-committed") committed++; else if (snap.state === "hook-blocked") blocked++;
+  }
+  log.ok(`perform pre-snapshot: ${clean} clean, ${committed} committed, ${blocked} hook-blocked`); return 0;
+}
+
+// ---- branch (deploy-branch.sh) ----
+async function branchRun(rest: string[]): Promise<number> {
+  let noBranch = false, branchName: string | undefined; const pos: string[] = [];
+  for (let i = 0; i < rest.length; i++) { const t = rest[i];
+    if (t === "--no-branch") { noBranch = true; continue; }
+    if (t === "--branch" || t.startsWith("--branch=")) { const { value, shift } = kvParse(t, rest[i + 1]); branchName = value; if (shift === 2) i++; continue; }
+    pos.push(t); }
+  if (pos.length !== 1) { log.error("usage: perform branch [--no-branch] [--branch <name>] <topic>"); return 2; }
+  return branchWith({ topic: pos[0], noBranch, branchName }, {}, runnerAt);
+}
+export async function branchWith(a: { topic: string; noBranch: boolean; branchName?: string }, opts: { home?: string; cwd?: string }, runnerFor: (cwd: string) => Runner): Promise<number> {
+  const art = performArtDir(a.topic, opts);
+  if (!existsSync(art)) { log.error(`perform branch: art-dir missing: ${art} (run perform init first)`); return 1; }
+  const defaultBranch = a.branchName ?? `feat/perform-${a.topic}`;
+  const rows: string[] = [];
+  for (const { slug, cwd } of iterTargets(a.topic, opts)) {
+    if (!slug || !cwd) continue;
+    const r = runnerFor(cwd); let recorded: string;
+    if (a.noBranch) { recorded = r.run("git", ["symbolic-ref", "--short", "HEAD"]).stdout.trim() || "(detached)"; log.info(`branch: (--no-branch) staying on ${recorded} in ${cwd}`); }
+    else if (r.run("git", ["show-ref", "--verify", "--quiet", `refs/heads/${defaultBranch}`]).code === 0) { createOrResumeBranch(r, defaultBranch); log.info(`branch: resumed ${defaultBranch} in ${cwd}`); recorded = defaultBranch; }
+    else if (createOrResumeBranch(r, defaultBranch)) { log.info(`branch: created ${defaultBranch} in ${cwd}`); recorded = defaultBranch; }
+    else { recorded = r.run("git", ["symbolic-ref", "--short", "HEAD"]).stdout.trim() || "(detached)"; log.warn(`branch: checkout -b failed in ${cwd}; staying on current branch`); }
+    rows.push(`${slug}\t${recorded}`);
+    const baseline = join(art, "baselines", `${slug}.tsv`);
+    if (existsSync(baseline)) { const m = readFileSync(baseline, "utf8").match(/^baseline_sha=(.*)$/m); if (m) atomicWrite(join(art, "branch-base.sha"), m[1] + "\n"); }
+  }
+  atomicWrite(join(art, "perform-branches.tsv"), rows.length ? rows.join("\n") + "\n" : "");
+  log.ok(`perform branch: ${rows.length} target(s) recorded`); return 0;
+}
+
+// ---- scope-check (deploy-scope) ----
+export interface ScopeDeps { runnerFor(cwd: string): Runner; }
+const liveScopeDeps: ScopeDeps = { runnerFor: runnerAt };
+async function scopeCheckRun(rest: string[]): Promise<number> { const topic = rest[0]; if (!topic) { log.error("usage: perform scope-check <topic>"); return 2; } return scopeCheckWith(topic, liveScopeDeps); }
+export async function scopeCheckWith(topic: string, d: ScopeDeps): Promise<number> {
+  const art = performArtDir(topic);
+  const targetFile = join(art, "target_cwd.txt"), baseFile = join(art, "branch-base.sha"), designFile = join(art, "design.md");
+  if (!existsSync(targetFile) || !existsSync(baseFile)) { log.error(`perform scope-check: target_cwd.txt/branch-base.sha missing under ${art}`); return 1; }
+  if (!existsSync(designFile)) { log.error(`perform scope-check: design.md missing under ${art}`); return 1; }
+  const targetCwd = readFileSync(targetFile, "utf8").split("\n")[0].trim();
+  const base = readFileSync(baseFile, "utf8").split("\n")[0].trim();
+  const diffPaths = d.runnerFor(targetCwd).run("git", ["diff", "--name-only", `${base}..HEAD`]).stdout.split("\n").filter((x) => x.length > 0);
+  atomicWrite(join(art, "diff-paths.txt"), diffPaths.length ? diffPaths.join("\n") + "\n" : "");
+  const compPaths = extractComponentsPaths(readFileSync(designFile, "utf8"));
+  atomicWrite(join(art, "components-paths.txt"), compPaths.length ? compPaths.join("\n") + "\n" : "");
+  const oos = matchDiffAgainstComponents(diffPaths, compPaths);
+  const oosPath = join(art, "scope-out-of-scope.txt");
+  atomicWrite(oosPath, oos.length ? oos.join("\n") + "\n" : "");
+  if (oos.length > 0) log.warn(`scope conformance: ${oos.length} out-of-scope path(s) detected`);
+  process.stdout.write(`OOS_COUNT=${oos.length}\nOOS_PATH=${oosPath}\n`); return 0;
+}
+
+// ---- summary (deploy-summary.sh) ----
+export interface SummaryDeps { runnerFor(cwd: string): Runner; now(): string; }
+const liveSummaryDeps: SummaryDeps = { runnerFor: runnerAt, now: () => isoUtc() };
+async function summaryRun(rest: string[]): Promise<number> { const topic = rest[0]; if (!topic) { log.error("usage: perform summary <topic>"); return 2; } return summaryWith(topic, liveSummaryDeps); }
+export async function summaryWith(topic: string, d: SummaryDeps): Promise<number> {
+  const art = performArtDir(topic);
+  if (!existsSync(art)) { log.error(`perform summary: art-dir missing: ${art}`); return 1; }
+  mkdirSync(join(art, "posts"), { recursive: true });
+  for (const t of iterTargets(topic)) {
+    if (!t.slug || !t.cwd) continue;
+    const baseline = join(art, "baselines", `${t.slug}.tsv`), post = join(art, "posts", `${t.slug}.tsv`);
+    if (!existsSync(baseline)) { log.error(`perform summary: baseline missing for slug=${t.slug} (${baseline})`); continue; }
+    if (!isDir(t.cwd)) { log.warn(`perform summary: target gone for slug=${t.slug} (cwd=${t.cwd}); omitting block`); continue; }
+    const r = d.runnerFor(t.cwd); postSweep(r, topic, baseline, post, d.now());
+    process.stdout.write(formatSummaryBlock(r, baseline, post) + "\n\n");
+  }
+  return 0;
+}
+function postSweep(r: Runner, topic: string, baseline: string, post: string, ts: string): void {
+  const slug = kvFileField(baseline, "slug"), cwd = kvFileField(baseline, "cwd"), base = kvFileField(baseline, "branch");
+  const postBranch = r.run("git", ["symbolic-ref", "--short", "HEAD"]).stdout.trim() || "(detached)";
+  const dirty = r.run("git", ["status", "--porcelain"]).stdout.trim();
+  let state: string;
+  if (!dirty) state = "no-leftovers";
+  else { r.run("git", ["add", "-A"]); state = r.run("git", ["commit", "-q", "-m", `chore: post-perform leftovers for ${topic}`]).code === 0 ? "swept" : (log.warn(`perform post-sweep: commit hook blocked sweep in ${cwd}`), "sweep-failed"); }
+  const postSha = r.run("git", ["rev-parse", "HEAD"]).stdout.trim();
+  atomicWrite(post, `slug=${slug}\ncwd=${cwd}\nbranch=${postBranch}\npost_sha=${postSha}\nstate=${state}\nbranch_changed=${base === postBranch ? "false" : "true"}\nsweep_ts=${ts}\n`);
+}
+function formatSummaryBlock(r: Runner, baseline: string, post: string): string {
+  const slug = kvFileField(baseline, "slug"), cwd = kvFileField(baseline, "cwd"), baseBranch = kvFileField(baseline, "branch"), baselineSha = kvFileField(baseline, "baseline_sha"), baseState = kvFileField(baseline, "state");
+  const postBranch = kvFileField(post, "branch"), postSha = kvFileField(post, "post_sha"), postState = kvFileField(post, "state"), changed = kvFileField(post, "branch_changed");
+  const L: string[] = [`=== ${slug} [${cwd}] ===`];
+  if (changed === "true") L.push(`  [WARNING: branch changed from ${baseBranch} to ${postBranch}]`);
+  if (baseState === "hook-blocked") L.push("  [WARNING: pre-perform snapshot hook-blocked; baseline = pre-attempt HEAD]");
+  if (postState === "sweep-failed") L.push("  [WARNING: post-perform sweep hook-blocked; leftovers remain in working tree]");
+  if (baseBranch === "(detached)") L.push("  [WARNING: baseline branch detached]");
+  L.push(`  branch:     ${postBranch}`); L.push(`  baseline:   ${baselineSha}   ${baseBranch}   (${baseState})`); L.push(`  HEAD:       ${postSha}   ${postBranch}`);
+  const stat = shortstat(r, baselineSha);
+  L.push(stat ? `  diff stat:  ${stat}` : "  diff stat:  (no changes since baseline)");
+  L.push("  commits (oldest -> newest):");
+  const commits = r.run("git", ["log", "--reverse", "--oneline", `${baselineSha}..HEAD`]).stdout.replace(/\n+$/, "");
+  L.push(commits ? commits.split("\n").map((c) => "    " + c).join("\n") : "    (no commits since baseline)");
+  return L.join("\n");
+}
+
+// ---- finish (deploy-finish.sh) ----
+export interface FinishDeps { runnerFor(cwd: string): Runner; hasGh: boolean; }
+const liveFinishDeps: FinishDeps = { runnerFor: runnerAt, hasGh: haveCmd("gh") };
+async function finishRun(rest: string[]): Promise<number> {
+  const topic = rest[0], action = rest[1];
+  if (!topic || !action) { log.error("usage: perform finish <topic> <merge|pr|keep|discard>"); return 2; }
+  if (!["merge", "pr", "keep", "discard"].includes(action)) { log.error(`perform finish: unknown action '${action}'`); return 2; }
+  return finishWith(topic, action as "merge" | "pr" | "keep" | "discard", liveFinishDeps);
+}
+export async function finishWith(topic: string, action: "merge" | "pr" | "keep" | "discard", d: FinishDeps): Promise<number> {
+  const art = performArtDir(topic);
+  if (!existsSync(art)) { log.error(`perform finish: art-dir missing: ${art}`); return 1; }
+  const results = join(art, "finish-results.tsv"); writeFileSync(results, "");
+  let n = 0;
+  for (const t of iterTargets(topic)) {
+    if (!t.slug || !t.cwd) continue;
+    const branch = branchMapField(join(art, "perform-branches.tsv"), t.slug);
+    const startBranch = kvFileField(join(art, "baselines", `${t.slug}.tsv`), "branch");
+    const outcome = finishBranchAction(d.runnerFor(t.cwd), { branch, startBranch, action, hasGh: d.hasGh });
+    appendFileSync(results, `${t.slug}\t${action}\t${outcome}\n`);
+    log.info(`finish: ${t.slug} -> ${action} -> ${outcome}`); n++;
+  }
+  log.ok(`perform finish: ${n} target(s) completed`); return 0;
+}
+
+// ---- forensics (best-effort) + archive (deploy-archive.sh) ----
+async function forensicsRun(rest: string[]): Promise<number> {
+  const topic = rest[0]; if (!topic) { log.error("usage: perform forensics <topic>"); return 2; }
+  const path = captureArtDir({ artDir: performArtDir(topic), command: "perform" });
+  if (path) { log.ok(`perform forensics: captured ${path}`); process.stdout.write(path + "\n"); } else log.info("perform forensics: no mechanical findings (no file written)");
+  return 0;
+}
+export async function archiveRun(rest: string[]): Promise<number> {
+  const topic = rest[0]; if (!topic) { log.error("usage: perform archive <topic>"); return 2; }
+  archiveTopic(topic, "perform"); log.ok(`perform archive: archived _perform for ${topic}`); return 0;
 }
