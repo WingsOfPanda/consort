@@ -1,6 +1,6 @@
 // tests/perform-turn.test.ts
 import { describe, it, expect } from "vitest";
-import { performState, composeRound1Prompt, composeFixPrompt } from "../src/core/performTurn.js";
+import { performState, composeRound1Prompt, composeFixPrompt, composeDagUnitPrompt } from "../src/core/performTurn.js";
 
 describe("performState", () => {
   it("null event (no terminal before timeout) -> timeout", () => {
@@ -63,6 +63,46 @@ describe("composeRound1Prompt", () => {
     const r3 = composeRound1Prompt({ designPath: "/d", planPath: "/p", verifyPath: "/v/verify-report-3.md", round: 3 });
     expect(r3).toContain("ROUND 3 of /consort:perform");
     expect(r3).toContain("/v/test-output-3.log");
+  });
+});
+
+describe("composeDagUnitPrompt", () => {
+  const p = composeDagUnitPrompt({ slug: "web", designPath: "/d/design.md", step: "2", total: 3, upstreamCsv: "api,lib" });
+  it("focuses the sub-repo slug, the `### <slug>` subsections, and the design path", () => {
+    expect(p).toContain('Your sub-repo is "web"');
+    expect(p).toContain("### web");
+    expect(p).toContain("Read /d/design.md.");
+  });
+  it("names the DAG step context and renders upstream deps comma-space joined", () => {
+    expect(p).toContain("Step 2 of 3");
+    expect(p).toContain("you depend on: api, lib");
+  });
+  it("runs the full superpowers ceremony (the three skills)", () => {
+    expect(p).toMatch(/writing-plans/);
+    expect(p).toMatch(/subagent-driven-development/);
+    expect(p).toMatch(/verification-before-completion/);
+  });
+  it("carries the branch-discipline block", () => {
+    expect(p).toContain("BRANCH DISCIPLINE (hard rule):");
+    expect(p).toMatch(/Do NOT run 'git checkout', 'git switch'/);
+    expect(p).toContain('{"event":"error","reason":"branch-discipline: needed new branch"}');
+  });
+  it("renders a root sub-repo when upstreamCsv is \"none\"", () => {
+    const root = composeDagUnitPrompt({ slug: "api", designPath: "/d/design.md", step: "1", total: 3, upstreamCsv: "none" });
+    expect(root).toContain("you depend on: none (this is a wave-1 / root sub-repo)");
+  });
+  it("renders a root sub-repo when upstreamCsv is empty", () => {
+    const root = composeDagUnitPrompt({ slug: "api", designPath: "/d/design.md", step: "1", total: 3, upstreamCsv: "" });
+    expect(root).toContain("you depend on: none (this is a wave-1 / root sub-repo)");
+  });
+  it("carries NO canonical fence (inboxWrite appends it)", () => {
+    expect(p).not.toContain("END_OF_INSTRUCTION");
+  });
+  it("carries no stale rebrand tokens", () => {
+    expect(p).not.toMatch(/clone-wars/);
+    expect(p).not.toMatch(/cw_/);
+    expect(p).not.toMatch(/master[ -]?yoda/i);
+    expect(p).not.toMatch(/trooper|commander/i);
   });
 });
 

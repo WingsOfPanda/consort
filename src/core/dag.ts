@@ -15,17 +15,24 @@ export function parseDagLine(line: string): DagNode | null {
   return { step, repo, path, desc: rest, deps: "none" };
 }
 
-/** Port of deploy_dag_check_section (lib/deploy-dag.sh:22-72). Absent/no-numbered-lines → ok; any malformed numbered line → fail. */
-export function checkDagSection(docText: string): boolean {
-  const lines = docText.split("\n");
-  let inDag = false;
+/** The body lines of the `## Execution DAG` section: everything after a line matching
+ *  /^## Execution DAG[ \t]*$/ up to the next `^## ` heading (or EOF). [] when absent. Byte-faithful
+ *  to the prior bash plugin's awk range (deploy-dag-parse.sh:32-36). A suffixed heading
+ *  ("## Execution DAG (multi)") is intentionally NOT recognized as the opener. */
+export function dagSectionBody(docText: string): string[] {
   const body: string[] = [];
-  for (const l of lines) {
+  let inDag = false;
+  for (const l of docText.split("\n")) {
     if (/^## Execution DAG[ \t]*$/.test(l)) { inDag = true; continue; }
     if (/^## /.test(l)) { inDag = false; continue; }
     if (inDag) body.push(l);
   }
-  for (const l of body) {
+  return body;
+}
+
+/** Port of deploy_dag_check_section (lib/deploy-dag.sh:22-72). Absent/no-numbered-lines → ok; any malformed numbered line → fail. */
+export function checkDagSection(docText: string): boolean {
+  for (const l of dagSectionBody(docText)) {
     if (!/^[ \t]*\d+\./.test(l)) continue;
     if (parseDagLine(l) === null) return false;
   }
@@ -35,14 +42,7 @@ export function checkDagSection(docText: string): boolean {
 /** The numbered `## Execution DAG` lines that fail parseDagLine (for the pre-Approve gate's stderr).
  *  Mirrors checkDagSection's body extraction + numbered-line detection; absent/narrative-only → []. */
 export function dagMalformedLines(docText: string): string[] {
-  const body: string[] = [];
-  let inDag = false;
-  for (const l of docText.split("\n")) {
-    if (/^## Execution DAG[ \t]*$/.test(l)) { inDag = true; continue; }
-    if (/^## /.test(l)) { inDag = false; continue; }
-    if (inDag) body.push(l);
-  }
-  return body.filter((l) => /^[ \t]*\d+\./.test(l) && parseDagLine(l) === null);
+  return dagSectionBody(docText).filter((l) => /^[ \t]*\d+\./.test(l) && parseDagLine(l) === null);
 }
 
 /** Port of consult_emit_soft_dag (lib/consult-walk.sh:41-57). "1,2" deps render as "1, 2"; "none"/"" → no suffix. */

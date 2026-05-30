@@ -1,6 +1,6 @@
 // tests/dag-executor.test.ts
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { dagTopological, dagUniqueRepos, dagFanInRepos } from "../src/core/dag.js";
+import { dagTopological, dagUniqueRepos, dagFanInRepos, dagSectionBody } from "../src/core/dag.js";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -46,6 +46,28 @@ describe("dagTopological", () => {
     const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(dagTopological([], [])).toEqual([]);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("dagSectionBody", () => {
+  it("returns the body lines between `## Execution DAG` and the next `## ` heading", () => {
+    const doc = "# Title\n\n## Execution DAG\n1. web — build\n2. api — ship\n\n## Components\nstuff\n";
+    expect(dagSectionBody(doc)).toEqual(["1. web — build", "2. api — ship", ""]);
+  });
+  it("absent `## Execution DAG` heading → []", () => {
+    expect(dagSectionBody("# Title\n\n## Components\nstuff\n")).toEqual([]);
+  });
+  it("a `## Execution DAG (multi)` suffixed heading is NOT recognized as the opener → []", () => {
+    const doc = "## Execution DAG (multi)\n1. web — build\n\n## Components\n";
+    expect(dagSectionBody(doc)).toEqual([]);
+  });
+  it("stops at the next `## ` heading (later content excluded)", () => {
+    const doc = "## Execution DAG\nbody1\nbody2\n## Next\nafter1\nafter2\n";
+    expect(dagSectionBody(doc)).toEqual(["body1", "body2"]);
+  });
+  it("EOF with no following heading → all trailing lines are body", () => {
+    const doc = "intro\n## Execution DAG\nlast1\nlast2";
+    expect(dagSectionBody(doc)).toEqual(["last1", "last2"]);
   });
 });
 

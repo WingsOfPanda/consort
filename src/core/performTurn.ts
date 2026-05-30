@@ -94,6 +94,47 @@ export function composeRound1Prompt(args: { designPath: string; planPath: string
   ].join("\n");
 }
 
+/** Per-repo build prompt for the multi-repo DAG path (port of deploy_build_dag_unit_prompt
+ *  @ deploy.sh:300). `slug` is the SUB-REPO slug (the part focuses on its `### <slug>` subsections).
+ *  OMITS END_OF_INSTRUCTION + the done-line — inboxWrite appends the fence. */
+export function composeDagUnitPrompt(args: { slug: string; designPath: string; step: string; total: number; upstreamCsv: string }): string {
+  const { slug, designPath, step, total } = args;
+  const upstream = !args.upstreamCsv || args.upstreamCsv === "none"
+    ? "none (this is a wave-1 / root sub-repo)"
+    : args.upstreamCsv.split(",").join(", ");
+  return [
+    `Read ${designPath}. Your sub-repo is "${slug}".`,
+    "",
+    `Multi-repo design docs use \`### ${slug}\` subsection headings inside the`,
+    "Architecture and Components sections — focus on the subsections matching",
+    `your slug. The DAG context (Step ${step} of ${total}) is in the`,
+    `"## Execution DAG" section; you depend on: ${upstream}.`,
+    "",
+    "Run the full superpowers ceremony for your sub-repo:",
+    "1. superpowers:writing-plans — produce an implementation plan from the",
+    `   design-doc's slice for "${slug}", saved to`,
+    `   docs/superpowers/plans/YYYY-MM-DD-${slug}-plan.md`,
+    "2. superpowers:subagent-driven-development — execute the plan task-by-",
+    "   task, two-stage review per task",
+    "3. superpowers:verification-before-completion — confirm tests pass,",
+    "   diff matches the plan, no half-finished work, before reporting done",
+    "",
+    'Report status via outbox: emit {"event":"done"} when all tasks are',
+    'complete and verified. Emit {"event":"error", "reason":"..."} on any',
+    "unrecoverable failure.",
+    "",
+    "BRANCH DISCIPLINE (hard rule):",
+    `- You are operating on the current branch in sub-repo "${slug}".`,
+    "  Do NOT run 'git checkout', 'git switch', 'git branch -m', or",
+    "  create new branches.",
+    "- Commit per task with Conventional Commits prefixes on the current",
+    "  branch.",
+    "- If your work genuinely needs a fresh branch, abort with",
+    '  {"event":"error","reason":"branch-discipline: needed new branch"}',
+    "  and let the conductor decide.",
+  ].join("\n");
+}
+
 /** Fix-round prompt body (round >= 2; port of deploy_build_turn_prompt_fix). `bundleText` is the
  *  on-disk fix bundle, embedded VERBATIM (the bash `cat`s it raw). Same fence-omission note. */
 export function composeFixPrompt(round: number, bundleText: string, verifyPath: string): string {
