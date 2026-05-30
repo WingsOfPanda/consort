@@ -1,5 +1,7 @@
 // tests/rehearsal-core.test.ts — pure logic for /consort:rehearsal (Phase A).
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   rehearsalArtDir, partsDir, partStateDir, experimentsDir, experimentDir,
 } from "../src/core/rehearsal.js";
@@ -517,3 +519,37 @@ function zeroFields() {
     approachLabel: "", approachBrief: "", branchDir: "", metricName: "", timeBudgetS: "",
     taskContext: "", sotaBlock: "", peersBlock: "", artDir: "" };
 }
+
+describe("rehearsal experiment template", () => {
+  const tpl = readFileSync(join(__dirname, "..", "config", "prompt-templates", "rehearsal", "experiment.md"), "utf8");
+
+  it("contains all 14 placeholders and no stale clone-wars terms", () => {
+    for (const t of ["METRIC_BLOCK","HARDWARE_BLOCK","OUTBOX_PATH","TOPIC","EXP_ID","APPROACH_LABEL",
+      "APPROACH_BRIEF","BRANCH_DIR","METRIC_NAME","TIME_BUDGET_S","TASK_CONTEXT","SOTA_BLOCK","PEERS_BLOCK","ART_DIR"]) {
+      expect(tpl).toContain(`{{${t}}}`);
+    }
+    expect(tpl).not.toMatch(/trooper|commander|master[- ]?yoda|\byoda\b|clone-wars/i);
+  });
+
+  it("preserves the frozen result.json schema keys in order", () => {
+    const keys = ["branch_id","approach_label","metric_name","metric_value","status","runtime_s",
+      "log_paths","checkpoint_path","notes","self_reported_count","self_reported_ratio","self_reported_notes"];
+    let last = -1;
+    for (const k of keys) { const i = tpl.indexOf(`"${k}"`); expect(i).toBeGreaterThan(last); last = i; }
+  });
+
+  it("keeps the frozen done + heartbeat event shapes and does NOT end with END_OF_INSTRUCTION", () => {
+    expect(tpl).toContain('"event":"done"');
+    expect(tpl).toContain('"event":"heartbeat"');
+    expect(tpl.trimEnd().endsWith("END_OF_INSTRUCTION")).toBe(false);
+  });
+
+  it("renders with zero leftover placeholders", () => {
+    const out = renderExperimentPrompt(tpl, {
+      metricBlock: "MB", hardwareBlock: "HB", outboxPath: "/o.jsonl", topicText: "the topic",
+      expId: "exp-001", approachLabel: "baseline", approachBrief: "do the thing", branchDir: "/bd",
+      metricName: "accuracy", timeBudgetS: "1800", taskContext: "", sotaBlock: "", peersBlock: "", artDir: "/a",
+    });
+    expect(out).not.toMatch(/\{\{[A-Z_]+\}\}/);
+  });
+});
