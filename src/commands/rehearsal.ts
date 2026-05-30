@@ -32,6 +32,7 @@ import { pickInstruments } from "../core/instruments.js";
 import { repoRoot } from "../core/paths.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
+import { run as sendRun } from "./send.js";
 
 type PathOpts = { home?: string; cwd?: string };
 
@@ -995,6 +996,68 @@ const liveFinalizeDeps: RehearsalFinalizeDeps = {
   sizeWarnGb: Number(process.env.CONSORT_REHEARSAL_SIZE_WARN_GB) || 2,
 };
 
+// ---- Phase D: refine — STATELESS mid-experiment scope-narrowing. ----
+// Ports deep-research-refine.sh: write a numbered refine-N.md into the LIVE
+// branch (experiment) dir + a best-effort pane nudge. By contract this NEVER
+// mutates the state machine (no state.txt / phase / scoreboard touch) — it only
+// drops a refinement note the part reads before continuing its current experiment.
+
+export interface RehearsalRefineDeps {
+  send(args: string[]): Promise<number>;
+  dryRun?: boolean;
+  stdout?: (l: string) => void;
+  opts?: PathOpts;
+}
+
+interface RefineArgs { topic: string; instrument: string; expId: string; text: string; ok: boolean }
+
+/** EXACTLY 4 positionals: <topic> <instrument> <exp-id> <refinement-text>. The
+ *  quoted multi-word refinement-text already arrives as one token (applyArgsFile). */
+function parseRefineArgs(args: string[]): RefineArgs {
+  if (args.length !== 4) return { topic: "", instrument: "", expId: "", text: "", ok: false };
+  const [topic, instrument, expId, text] = args;
+  return { topic, instrument, expId, text, ok: true };
+}
+
+export async function refineWith(args: string[], deps: RehearsalRefineDeps): Promise<number> {
+  const p = parseRefineArgs(args);
+  if (!p.ok) { log.error("rehearsal refine: usage: <topic> <instrument> <exp-id> <refinement-text>"); return 2; }
+  const { topic, instrument, expId, text } = p;
+
+  if (!INSTRUMENT_RE.test(instrument)) { log.error(`instrument must match [a-z][a-z0-9-]*; got '${instrument}'`); return 2; }
+  if (!EXP_ID_RE.test(expId)) { log.error(`exp-id must match 'exp-[0-9]+'; got '${expId}'`); return 2; }
+
+  const art = rehearsalArtDir(topic, deps.opts);
+  const branchDir = experimentDir(art, instrument, expId);
+  if (!existsSync(branchDir) || !statSync(branchDir).isDirectory()) { log.error(`branch dir missing: ${branchDir}`); return 1; }
+
+  // First FREE slot (not max+1) — faithful to the bash `while [ -f refine-$n.md ]`.
+  let n = 1;
+  while (existsSync(join(branchDir, `refine-${n}.md`))) n++;
+  const refinePath = join(branchDir, `refine-${n}.md`);
+
+  // The single trailing newline IS part of the content (bash `printf '%s\n'`).
+  atomicWrite(refinePath, text + "\n");
+  log.info(`[refine] wrote ${refinePath}`);
+
+  // Best-effort pane nudge (NON-FATAL; refine-N.md is already on disk).
+  if (!deps.dryRun) {
+    const msg = `REFINE: read ${refinePath} before continuing your current experiment (${expId}).`;
+    try {
+      const rc = await deps.send(["--from", "maestro", instrument, topic, msg]);
+      if (rc !== 0) log.warn(`[refine] send nudge failed; part may not have noticed refine-${n}.md`);
+    } catch { log.warn(`[refine] send nudge failed; part may not have noticed refine-${n}.md`); }
+  }
+
+  log.ok(`[refine] ${instrument}/${expId} refine-${n}.md sent`);
+  return 0;
+}
+
+const liveRefineDeps: RehearsalRefineDeps = {
+  send: (a) => sendRun(a),
+  dryRun: process.env.CONSORT_DRY_RUN === "1",
+};
+
 export async function run(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -1007,6 +1070,7 @@ export async function run(args: string[]): Promise<number> {
     case "monitor": return monitorRun(rest);
     case "status-brief": return statusBriefWith(rest);
     case "finalize": return finalizeWith(rest, liveFinalizeDeps);
+    case "refine": return refineWith(applyArgsFile(rest), liveRefineDeps);
     default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
   }
 }
