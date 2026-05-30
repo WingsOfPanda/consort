@@ -1,7 +1,7 @@
 // /consort:rehearsal CLI verbs (Phase B front half). Ports deep-research-init.sh
 // (slug/codex-gate/flags/scaffolding) + the deep-research.md Phase 0-3 surface.
 // Phase C: experiment-send (dispatch ONE experiment to a persistent codex part).
-import { accessSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { log } from "../core/log.js";
@@ -10,7 +10,8 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import { deriveSlug } from "../core/solo.js";
 import { extractMetric, formatMetricBlock, formatSotaBlock, parseMetricMd } from "../core/rehearsalMetric.js";
-import { rehearsalArtDir, partStateDir, experimentDir } from "../core/rehearsal.js";
+import { rehearsalArtDir, partsDir, partStateDir, experimentDir } from "../core/rehearsal.js";
+import { computeScore, type ScoreFs, type ScoreComputation } from "../core/rehearsalScore.js";
 import { parseState } from "../core/rehearsalState.js";
 import {
   renderExperimentPrompt, buildSotaBlock, assembleHardwareBlock, hardwareDiffAlert,
@@ -440,6 +441,57 @@ function liveProbeHardware(): string {
   } catch { return "no-gpu"; }
 }
 
+// ---- Phase C: score — thin FS shell over computeScore ----
+// Ports deep-research-score.sh: validate the topic arg, guard the parts dir,
+// run computeScore (pure), then apply the returned plan in the FROZEN order
+// (scoreboard -> log -> results.tsv -> sidecars -> stale removals -> phase
+// clears -> warnings) so a concurrent reader observes a consistent sequence.
+
+export interface RehearsalScoreDeps {
+  computeScore(art: string, fs: ScoreFs, now: () => string): ScoreComputation;
+  fs: ScoreFs;
+  writeAtomic(path: string, content: string): void;
+  removeFile(path: string): void;
+  now(): string;
+  stdout?: (line: string) => void;
+  opts?: PathOpts;
+}
+
+export async function scoreWith(args: string[], deps: RehearsalScoreDeps): Promise<number> {
+  const positionals = args.filter((a) => !a.startsWith("--"));
+  if (positionals.length !== 1) { log.error("usage: rehearsal score <topic>"); return 2; }
+  const topic = positionals[0];
+
+  const art = rehearsalArtDir(topic, deps.opts);
+  const partsRoot = partsDir(art);
+  if (!existsSync(partsRoot)) { log.error(`rehearsal score: parts dir missing: ${partsRoot}`); return 1; }
+
+  const c = deps.computeScore(art, deps.fs, deps.now);
+
+  // FROZEN write order — a reader can observe scoreboard before results.tsv,
+  // or state still non-idle mid-run; preserve the sequence.
+  deps.writeAtomic(join(art, "scoreboard.md"), c.scoreboardMd);
+  log.ok(`[score] scoreboard at ${join(art, "scoreboard.md")}`);
+  deps.writeAtomic(join(art, "results.tsv"), c.resultsTsv);
+  for (const s of c.sidecars) deps.writeAtomic(s.path, s.body);
+  for (const p of c.staleSidecars) deps.removeFile(p);
+  for (const pc of c.phaseClears) deps.writeAtomic(pc.statePath, pc.merged);
+  for (const w of c.warnings) log.warn(w);
+  return 0;
+}
+
+export const liveScoreDeps: RehearsalScoreDeps = {
+  computeScore,
+  fs: {
+    exists: existsSync,
+    read: (p) => (existsSync(p) ? readFileSync(p, "utf8") : null),
+    listDir: (p) => { try { return readdirSync(p).sort(); } catch { return []; } },  // ENOENT-safe, per ScoreFs contract
+  },
+  writeAtomic: atomicWrite,
+  removeFile: (p) => { try { rmSync(p, { force: true }); } catch { /* best-effort */ } },
+  now: () => isoUtc(),
+};
+
 export async function run(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -448,6 +500,7 @@ export async function run(args: string[]): Promise<number> {
     case "sota": return sotaWith(rest);
     case "spawn-all": return spawnAllWith(rest, liveSpawnAllDeps);
     case "experiment-send": return experimentSendWith(applyArgsFile(rest), liveExperimentSendDeps);
+    case "score": return scoreWith(rest, liveScoreDeps);
     default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
   }
 }

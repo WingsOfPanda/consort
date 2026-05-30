@@ -6,6 +6,7 @@ import { initWith, type RehearsalInitDeps } from "../src/commands/rehearsal.js";
 import { metricWith, sotaWith } from "../src/commands/rehearsal.js";
 import { spawnAllWith, type SpawnAllDeps } from "../src/commands/rehearsal.js";
 import { experimentSendWith, type ExperimentSendDeps } from "../src/commands/rehearsal.js";
+import { scoreWith, liveScoreDeps } from "../src/commands/rehearsal.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rehearsalArtDir, partStateDir } from "../src/core/rehearsal.js";
@@ -371,5 +372,122 @@ describe("rehearsal experiment-send", () => {
     expect(rc).toBe(0);
     expect(readFileSync(inboxPath(INST, MODEL, TOPIC), "utf8")).toContain("END_OF_INSTRUCTION");
     expect(readFileSync(join(sd, "state.txt"), "utf8")).toContain("phase=working");
+  });
+});
+
+// ---- Phase C: score — thin FS shell over computeScore ----
+
+describe("rehearsal score", () => {
+  const SCORE_OPTS = (h: { home: string }) => ({ ...liveScoreDeps, opts: { home: h.home } });
+
+  /** Write a valid result.json for one experiment. metric_name defaults to accuracy. */
+  function result(over: { metric?: number; metricName?: string; approach?: string } = {}): string {
+    return JSON.stringify({
+      branch_id: "b", approach_label: over.approach ?? "approach",
+      metric_name: over.metricName ?? "accuracy",
+      metric_value: over.metric ?? 0.9, status: "ok", runtime_s: 10,
+      log_paths: [], checkpoint_path: null, notes: "",
+    });
+  }
+
+  /** Scaffold an in-flight rehearsal art dir with metric.md + two working parts each with one
+   *  experiment result.json. `over.experiments` patches the per-instrument result body/expId. */
+  function scaffold(h: { home: string }, parts: Record<string, { expId: string; body: string; experiments?: boolean }>) {
+    const art = rehearsalArtDir("topic", { home: h.home });
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "metric.md"), "# Research goal\n\n**Primary metric:** accuracy\n**Direction:** maximize\n");
+    for (const [inst, p] of Object.entries(parts)) {
+      const sd = partStateDir(art, inst);
+      mkdirSync(sd, { recursive: true });
+      writeFileSync(join(sd, "state.txt"), `phase=working\ncurrent_exp_id=${p.expId}\n`);
+      if (p.experiments !== false) {
+        const expDir = join(sd, "experiments", p.expId);
+        mkdirSync(expDir, { recursive: true });
+        writeFileSync(join(expDir, "result.json"), p.body);
+      }
+    }
+    return art;
+  }
+
+  it("rc 0; writes scoreboard.md (ranked) + results.tsv + clears phases to idle", async () => {
+    const h = home();
+    const art = scaffold(h, {
+      alto: { expId: "exp-001", body: result({ metric: 0.95 }) },
+      bass: { expId: "exp-001", body: result({ metric: 0.90 }) },
+    });
+    const rc = await scoreWith(["topic"], SCORE_OPTS(h));
+    expect(rc).toBe(0);
+
+    const sb = readFileSync(join(art, "scoreboard.md"), "utf8");
+    expect(existsSync(join(art, "scoreboard.md"))).toBe(true);
+    // 0.95 part ranked #1, 0.90 ranked #2.
+    const rank1 = sb.split("\n").find((l) => l.startsWith("| 1 |"))!;
+    const rank2 = sb.split("\n").find((l) => l.startsWith("| 2 |"))!;
+    expect(rank1).toContain("exp-001");
+    expect(rank1).toContain("0.9500");
+    expect(rank2).toContain("0.9000");
+
+    const tsv = readFileSync(join(art, "results.tsv"), "utf8");
+    expect(existsSync(join(art, "results.tsv"))).toBe(true);
+    const tsvLines = tsv.trimEnd().split("\n");
+    expect(tsvLines[0]).toBe("exp_id\tinstrument\tapproach\tmetric\tstatus\truntime_s\tmetric_name");
+    expect(tsvLines).toHaveLength(3); // header + 2 rows
+    // ascending walk order (alto before bass)
+    expect(tsvLines[1]).toContain("alto");
+    expect(tsvLines[2]).toContain("bass");
+
+    // phase cleared on both parts
+    for (const inst of ["alto", "bass"]) {
+      const st = readFileSync(join(partStateDir(art, inst), "state.txt"), "utf8");
+      expect(st).toContain("phase=idle");
+      expect(st).toContain("current_exp_id=");
+      expect(st).not.toMatch(/current_exp_id=exp-001/);
+    }
+  });
+
+  it("a bad result (metric_name mismatch) writes result-validation.txt and is absent from scoreboard; rc 0", async () => {
+    const h = home();
+    const art = scaffold(h, {
+      good: { expId: "exp-001", body: result({ metric: 0.95 }) },
+      bad: { expId: "exp-001", body: result({ metric: 0.80, metricName: "auc" }) },
+    });
+    const rc = await scoreWith(["topic"], SCORE_OPTS(h));
+    expect(rc).toBe(0);
+    const sidecar = join(partStateDir(art, "bad"), "experiments", "exp-001", "result-validation.txt");
+    expect(existsSync(sidecar)).toBe(true);
+    expect(readFileSync(sidecar, "utf8")).toContain("FAILED");
+    const sb = readFileSync(join(art, "scoreboard.md"), "utf8");
+    expect(sb).toContain("0.9500"); // good row present
+    expect(sb).not.toContain("0.8000"); // bad row absent
+  });
+
+  it("no topic -> rc 2", async () => {
+    const h = home();
+    expect(await scoreWith([], SCORE_OPTS(h))).toBe(2);
+  });
+
+  it(">1 positional -> rc 2", async () => {
+    const h = home();
+    expect(await scoreWith(["a", "b"], SCORE_OPTS(h))).toBe(2);
+  });
+
+  it("missing parts dir -> rc 1", async () => {
+    const h = home();
+    const art = rehearsalArtDir("topic", { home: h.home });
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "metric.md"), "# Research goal\n\n**Primary metric:** accuracy\n**Direction:** maximize\n");
+    expect(await scoreWith(["topic"], SCORE_OPTS(h))).toBe(1);
+  });
+
+  it("ENOENT-safe: a part with state.txt but no experiments/ dir does not crash -> rc 0", async () => {
+    const h = home();
+    const art = rehearsalArtDir("topic", { home: h.home });
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "metric.md"), "# Research goal\n\n**Primary metric:** accuracy\n**Direction:** maximize\n");
+    const sd = partStateDir(art, "solo");
+    mkdirSync(sd, { recursive: true });
+    writeFileSync(join(sd, "state.txt"), "phase=working\ncurrent_exp_id=exp-001\n");
+    // NO experiments/ dir under solo -> live listDir must return [] not throw.
+    expect(await scoreWith(["topic"], SCORE_OPTS(h))).toBe(0);
   });
 });
