@@ -25,6 +25,7 @@ import {
 } from "../core/rehearsalExperiment.js";
 import { captureArtDir } from "../core/forensics.js";
 import { parseScoreboard, buildHandoffKv, type HandoffInput } from "../core/rehearsalHandoff.js";
+import { buildConsensus } from "../core/rehearsalConsensus.js";
 import { instrumentBinary, consultTimeout } from "../core/contracts.js";
 import { inboxWrite, inboxPath, outboxPath, paneMetaRead, resolveModel } from "../core/ipc.js";
 import { paneSend, killNow } from "../core/tmux.js";
@@ -1295,6 +1296,131 @@ const liveFreshPartDeps: RehearsalFreshPartDeps = {
   now: () => isoUtc(),
 };
 
+// ---- Phase D: abort — graceful one-shot teardown. ----
+// Ports deep-research-abort.sh: capture Monitor task ids BEFORE teardown (teardown
+// archives monitor-tasks.txt away), write halt.flag, finalize, teardown, then print a
+// TaskStop deferral hint (LOG ONLY — TaskStop itself is the directive's harness tool).
+
+export interface RehearsalAbortDeps {
+  finalize(topic: string): Promise<number>;
+  teardown(topic: string): Promise<number>;
+  now(): string;
+  stdout?: (line: string) => void;
+  opts?: PathOpts;
+}
+
+export async function abortWith(args: string[], deps: RehearsalAbortDeps): Promise<number> {
+  if (args.length < 1 || args.length > 2) { log.error("rehearsal abort: usage: <topic> [reason]"); return 2; }
+  const topic = args[0];
+  const reason = args[1] ?? "unspecified";
+
+  const art = rehearsalArtDir(topic, deps.opts);
+  if (!existsSync(art) || !statSync(art).isDirectory()) {
+    log.error(`no active rehearsal session for topic: ${topic} (art-dir ${art} missing)`); return 1;
+  }
+
+  // Capture Monitor task ids BEFORE teardown moves monitor-tasks.txt into the archive.
+  const mt = join(art, "monitor-tasks.txt");
+  const ids = existsSync(mt)
+    ? readFileSync(mt, "utf8").split("\n").map((l) => l.trim()).filter(Boolean)
+    : [];
+
+  // halt.flag — the ONE state file written NON-atomically (plain writeFileSync),
+  // faithful to the bash brace-group redirect + the loop's plain write.
+  writeFileSync(join(art, "halt.flag"), `halted_by=user\nhalted_at=${deps.now()}\nreason=${reason}\n`);
+  log.info(`halt.flag written (${reason})`);
+
+  const frc = await deps.finalize(topic);
+  if (frc !== 0) { log.error("finalize failed"); return 1; }
+  const trc = await deps.teardown(topic);
+  if (trc !== 0) { log.error("teardown failed"); return 1; }
+
+  // TaskStop deferral hint (LOG ONLY — TaskStop is the harness tool the directive fires).
+  if (ids.length > 0) {
+    log.info(`note: ${ids.length} Monitor task(s) still active; will TaskStop on next Maestro turn (halt.flag detected):`);
+    for (const id of ids) log.info(`  - ${id}`);
+  } else {
+    log.info("no Monitor tasks to stop");
+  }
+
+  log.ok(`rehearsal session ${topic} aborted`);
+  return 0;
+}
+
+const liveAbortDeps: RehearsalAbortDeps = {
+  finalize: (t) => finalizeWith([t], liveFinalizeDeps),
+  teardown: (t) => teardownWith([t], liveTeardownDeps),
+  now: () => isoUtc(),
+};
+
+// ---- Phase D: consensus — advisory latest-ok agreement matrix. ----
+// Ports deep-research-consensus.sh (standalone, advisory). Walks each part's
+// experiments in ascending order, keeps the lexically-greatest exp whose
+// result.json parses with status === "ok" as that part's representative, then
+// hands the per-part field maps to the pure buildConsensus renderer.
+
+export interface RehearsalConsensusDeps {
+  now(): string;
+  epsilon?: number;
+  stdout?: (line: string) => void;
+  opts?: PathOpts;
+}
+
+interface ConsensusArgs { topic: string; epsilon: number; badArgs: boolean }
+
+/** Parse --epsilon=<f> / --epsilon <f> (default 0.01) + a single positional <topic>. */
+function parseConsensusArgs(args: string[]): ConsensusArgs {
+  let epsilon = 0.01, topic = "", badArgs = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--epsilon" || a.startsWith("--epsilon=")) { const r = kvParse(a, args[i + 1]); epsilon = parseFloat(r.value); i += r.shift - 1; }
+    else if (a.startsWith("-")) { badArgs = true; }
+    else { topic = a; }
+  }
+  return { topic, epsilon, badArgs };
+}
+
+export async function consensusWith(args: string[], deps: RehearsalConsensusDeps): Promise<number> {
+  const p = parseConsensusArgs(args);
+  if (p.badArgs) { log.error("rehearsal consensus: unknown flag"); return 2; }
+  if (!p.topic) { log.error("rehearsal consensus: topic required"); return 2; }
+  const epsilon = deps.epsilon ?? p.epsilon;
+
+  const art = rehearsalArtDir(p.topic, deps.opts);
+  const partsRoot = partsDir(art);
+  if (!existsSync(partsRoot)) { log.error(`rehearsal consensus: no parts dir under ${art}`); return 1; }
+
+  // Per part: the lexically-greatest exp-NNN whose result.json parses with status === "ok".
+  const latestOk: Record<string, Record<string, unknown>> = {};
+  let instruments: string[];
+  try {
+    instruments = readdirSync(partsRoot, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch { instruments = []; }
+  for (const instrument of instruments) {
+    const expsRoot = experimentsDir(art, instrument);
+    let names: string[];
+    try { names = readdirSync(expsRoot).filter((n) => EXP_ID_RE.test(n)).sort(); } catch { continue; }
+    let newest = "";
+    for (const exp of names) {
+      const resultPath = join(experimentDir(art, instrument, exp), "result.json");
+      if (!existsSync(resultPath)) continue;
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown>; } catch { continue; }
+      if (parsed.status !== "ok") continue;
+      if (exp > newest) { newest = exp; latestOk[instrument] = parsed; }
+    }
+  }
+
+  if (Object.keys(latestOk).length === 0) { log.error("rehearsal consensus: no ok result.json files found"); return 1; }
+
+  const md = buildConsensus(latestOk, { topic: p.topic, nowIso: deps.now(), epsilon });
+  atomicWrite(join(art, "consensus.md"), md);
+  log.ok(`[consensus] wrote ${join(art, "consensus.md")} (${Object.keys(latestOk).length} parts)`);
+  return 0;
+}
+
+const liveConsensusDeps: RehearsalConsensusDeps = { now: () => isoUtc() };
+
 export async function run(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -1312,6 +1438,8 @@ export async function run(args: string[]): Promise<number> {
     case "teardown": return teardownWith(rest, liveTeardownDeps);
     case "fresh-part": return freshPartWith(rest, liveFreshPartDeps);
     case "forensics": return forensicsRun(rest);
+    case "abort": return abortWith(applyArgsFile(rest), liveAbortDeps);
+    case "consensus": return consensusWith(rest, liveConsensusDeps);
     default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
   }
 }

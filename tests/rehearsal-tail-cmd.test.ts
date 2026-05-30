@@ -4,8 +4,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
-import { refineWith, handoffExtractWith, forensicsRun, teardownWith, freshPartWith, type RehearsalRefineDeps, type RehearsalTeardownDeps, type RehearsalFreshPartDeps } from "../src/commands/rehearsal.js";
-import { experimentDir, partStateDir, rehearsalArtDir } from "../src/core/rehearsal.js";
+import { refineWith, handoffExtractWith, forensicsRun, teardownWith, freshPartWith, abortWith, consensusWith, type RehearsalRefineDeps, type RehearsalTeardownDeps, type RehearsalFreshPartDeps, type RehearsalAbortDeps, type RehearsalConsensusDeps } from "../src/commands/rehearsal.js";
+import { experimentDir, partStateDir, partsDir, rehearsalArtDir } from "../src/core/rehearsal.js";
 import { parseState } from "../src/core/rehearsalState.js";
 
 const cleanups: Array<() => void> = [];
@@ -537,5 +537,250 @@ describe("fresh-part", () => {
     expect(st.last_event).toBe("fresh-part-respawn");
     expect(st.exp_counter).toBe("2");
     expect(st.current_exp_id).toBe("");
+  });
+});
+
+describe("abort", () => {
+  const TOPIC = "tune-model";
+
+  function abDeps(homeDir: string, over: Partial<RehearsalAbortDeps> = {}): RehearsalAbortDeps {
+    return {
+      finalize: async () => 0,
+      teardown: async () => 0,
+      now: () => "T",
+      opts: { home: homeDir, cwd: homeDir },
+      ...over,
+    };
+  }
+
+  // Scaffold the art dir; optionally write monitor-tasks.txt with the given ids.
+  function scaffoldArt(homeDir: string, topic: string, ids?: string[]): string {
+    const art = rehearsalArtDir(topic, { home: homeDir, cwd: homeDir });
+    mkdirSync(art, { recursive: true });
+    if (ids) writeFileSync(join(art, "monitor-tasks.txt"), ids.join("\n") + "\n");
+    return art;
+  }
+
+  it("rc 2 on wrong arg count (0 and 3 positionals)", async () => {
+    const h = home();
+    expect(await abortWith([], abDeps(h.home))).toBe(2);
+    expect(await abortWith([TOPIC, "reason", "extra"], abDeps(h.home))).toBe(2);
+  });
+
+  it("rc 1 when the art dir is missing", async () => {
+    const h = home();
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    try {
+      expect(await abortWith([TOPIC], abDeps(h.home))).toBe(1);
+    } finally { spy.mockRestore(); }
+    expect(errs.join("\n")).toContain("no active rehearsal session for topic");
+  });
+
+  it("happy path (default reason): writes halt.flag, finalize THEN teardown, TaskStop hint, rc 0", async () => {
+    const h = home();
+    const art = scaffoldArt(h.home, TOPIC, ["task-aaa", "task-bbb"]);
+    const order: string[] = [];
+    const infos: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { infos.push(String(c)); return true; });
+    let rc: number;
+    try {
+      rc = await abortWith([TOPIC], abDeps(h.home, {
+        finalize: async () => { order.push("finalize"); return 0; },
+        teardown: async () => { order.push("teardown"); return 0; },
+        now: () => "NOW-ISO",
+      }));
+    } finally { spy.mockRestore(); }
+    expect(rc).toBe(0);
+    // halt.flag written (plain, NOT atomic) with structured key=value body.
+    const flag = readFileSync(join(art, "halt.flag"), "utf8");
+    expect(flag).toBe("halted_by=user\nhalted_at=NOW-ISO\nreason=unspecified\n");
+    // finalize runs before teardown.
+    expect(order).toEqual(["finalize", "teardown"]);
+    // TaskStop deferral hint names both Monitor task ids.
+    const log = infos.join("\n");
+    expect(log).toContain("2 Monitor task(s) still active");
+    expect(log).toContain("task-aaa");
+    expect(log).toContain("task-bbb");
+    expect(log).toContain(`rehearsal session ${TOPIC} aborted`);
+  });
+
+  it("explicit reason is recorded in halt.flag", async () => {
+    const h = home();
+    const art = scaffoldArt(h.home, TOPIC);
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await abortWith([TOPIC, "budget exhausted"], abDeps(h.home, { now: () => "NOW-ISO" }))).toBe(0);
+    } finally { spy.mockRestore(); }
+    expect(readFileSync(join(art, "halt.flag"), "utf8")).toBe("halted_by=user\nhalted_at=NOW-ISO\nreason=budget exhausted\n");
+  });
+
+  it("no Monitor tasks -> 'no Monitor tasks to stop' hint", async () => {
+    const h = home();
+    scaffoldArt(h.home, TOPIC);
+    const infos: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { infos.push(String(c)); return true; });
+    try {
+      expect(await abortWith([TOPIC], abDeps(h.home))).toBe(0);
+    } finally { spy.mockRestore(); }
+    expect(infos.join("\n")).toContain("no Monitor tasks to stop");
+  });
+
+  it("finalize failure -> rc 1, 'finalize failed', teardown NOT called", async () => {
+    const h = home();
+    scaffoldArt(h.home, TOPIC);
+    const order: string[] = [];
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    let rc: number;
+    try {
+      rc = await abortWith([TOPIC], abDeps(h.home, {
+        finalize: async () => { order.push("finalize"); return 1; },
+        teardown: async () => { order.push("teardown"); return 0; },
+      }));
+    } finally { spy.mockRestore(); }
+    expect(rc).toBe(1);
+    expect(errs.join("\n")).toContain("finalize failed");
+    expect(order).toEqual(["finalize"]);
+  });
+
+  it("teardown failure -> rc 1, 'teardown failed' (after finalize ok)", async () => {
+    const h = home();
+    scaffoldArt(h.home, TOPIC);
+    const order: string[] = [];
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    let rc: number;
+    try {
+      rc = await abortWith([TOPIC], abDeps(h.home, {
+        finalize: async () => { order.push("finalize"); return 0; },
+        teardown: async () => { order.push("teardown"); return 1; },
+      }));
+    } finally { spy.mockRestore(); }
+    expect(rc).toBe(1);
+    expect(errs.join("\n")).toContain("teardown failed");
+    expect(order).toEqual(["finalize", "teardown"]);
+  });
+
+  it("monitor-tasks.txt is read BEFORE teardown and halt.flag persists", async () => {
+    const h = home();
+    const art = scaffoldArt(h.home, TOPIC, ["task-1", "", "task-2"]);
+    const infos: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { infos.push(String(c)); return true; });
+    try {
+      // Fakes don't move monitor-tasks.txt; assert ids captured from the pre-teardown read.
+      expect(await abortWith([TOPIC], abDeps(h.home))).toBe(0);
+    } finally { spy.mockRestore(); }
+    const log = infos.join("\n");
+    // Blank line filtered out -> exactly 2 ids reported.
+    expect(log).toContain("2 Monitor task(s) still active");
+    expect(log).toContain("task-1");
+    expect(log).toContain("task-2");
+    // halt.flag captured before teardown (fakes don't archive it) -> still present with default reason.
+    expect(existsSync(join(art, "halt.flag"))).toBe(true);
+    expect(readFileSync(join(art, "halt.flag"), "utf8")).toContain("halted_by=user");
+  });
+});
+
+describe("consensus", () => {
+  const TOPIC = "tune-model";
+
+  function csDeps(homeDir: string, over: Partial<RehearsalConsensusDeps> = {}): RehearsalConsensusDeps {
+    return {
+      now: () => "T",
+      opts: { home: homeDir, cwd: homeDir },
+      ...over,
+    };
+  }
+
+  // Write a result.json into <art>/parts/<inst>/experiments/<exp>/.
+  function writeResult(homeDir: string, topic: string, inst: string, exp: string, obj: unknown): void {
+    const art = rehearsalArtDir(topic, { home: homeDir, cwd: homeDir });
+    const dir = experimentDir(art, inst, exp);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "result.json"), JSON.stringify(obj));
+  }
+
+  it("rc 2 when no topic", async () => {
+    const h = home();
+    expect(await consensusWith([], csDeps(h.home))).toBe(2);
+  });
+
+  it("rc 2 on an unknown flag", async () => {
+    const h = home();
+    expect(await consensusWith(["--bogus", TOPIC], csDeps(h.home))).toBe(2);
+  });
+
+  it("rc 1 when the parts/ dir is missing", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, { home: h.home, cwd: h.home });
+    mkdirSync(art, { recursive: true });
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    try {
+      expect(await consensusWith([TOPIC], csDeps(h.home))).toBe(1);
+    } finally { spy.mockRestore(); }
+    expect(errs.join("\n")).toContain("no parts dir");
+  });
+
+  it("rc 1 when parts exist but no ok result.json", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, { home: h.home, cwd: h.home });
+    mkdirSync(partsDir(art), { recursive: true });
+    writeResult(h.home, TOPIC, "violin", "exp-001", { status: "fail", metric_value: 0.1 });
+    const errs: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown): boolean => { errs.push(String(c)); return true; });
+    try {
+      expect(await consensusWith([TOPIC], csDeps(h.home))).toBe(1);
+    } finally { spy.mockRestore(); }
+    expect(errs.join("\n")).toContain("no ok result.json files found");
+  });
+
+  it("happy path: writes consensus.md with Agreed/Contested/All-missing; latest-ok per part drives the matrix", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, { home: h.home, cwd: h.home });
+    mkdirSync(partsDir(art), { recursive: true });
+    // violin: an EARLIER ok exp + a LATER ok exp — the later one must win.
+    writeResult(h.home, TOPIC, "violin", "exp-001", { status: "ok", metric_name: "acc", metric_value: 0.10, approach_label: "early" });
+    writeResult(h.home, TOPIC, "violin", "exp-009", { status: "ok", metric_name: "acc", metric_value: 0.90, approach_label: "late" });
+    // viola: a single ok exp. metric_name matches violin (Agreed); approach_label differs (Contested).
+    writeResult(h.home, TOPIC, "viola", "exp-002", { status: "ok", metric_name: "acc", metric_value: 0.50, approach_label: "wide" });
+
+    const lines: string[] = [];
+    const sso = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const out = vi.spyOn(process.stdout, "write").mockImplementation((c: unknown): boolean => { lines.push(String(c)); return true; });
+    try {
+      expect(await consensusWith([TOPIC], csDeps(h.home))).toBe(0);
+    } finally { out.mockRestore(); sso.mockRestore(); }
+
+    const md = readFileSync(join(art, "consensus.md"), "utf8");
+    expect(md).toContain("## Agreed");
+    expect(md).toContain("## Contested");
+    expect(md).toContain("## All-missing");
+    // metric_name agrees across both parts.
+    expect(md).toContain("| metric_name | acc |");
+    // latest-ok selection: violin's LATER exp (late / 0.90) drives the matrix, not the earlier (early / 0.10).
+    expect(md).toContain("late");
+    expect(md).not.toContain("early");
+    // approach_label contested -> both differing values appear.
+    expect(md).toContain("wide");
+  });
+
+  it("--epsilon=0.05 is parsed (metric_value within 0.05 counts as Agreed)", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, { home: h.home, cwd: h.home });
+    mkdirSync(partsDir(art), { recursive: true });
+    writeResult(h.home, TOPIC, "violin", "exp-001", { status: "ok", metric_value: 0.50 });
+    writeResult(h.home, TOPIC, "viola", "exp-001", { status: "ok", metric_value: 0.53 });
+
+    const sso = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      expect(await consensusWith([`--epsilon=0.05`, TOPIC], csDeps(h.home))).toBe(0);
+    } finally { out.mockRestore(); sso.mockRestore(); }
+    const md = readFileSync(join(art, "consensus.md"), "utf8");
+    expect(md).toContain("Epsilon for metric_value: 0.05");
+    // 0.50 vs 0.53 within epsilon 0.05 -> metric_value is Agreed (single value column).
+    expect(md).toMatch(/\| metric_value \| 0\.5[03] \|/);
   });
 });
