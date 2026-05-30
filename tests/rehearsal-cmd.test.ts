@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { freshHome } from "./helpers/tmpHome.js";
 import { initWith, type RehearsalInitDeps } from "../src/commands/rehearsal.js";
+import { metricWith, sotaWith } from "../src/commands/rehearsal.js";
 import { rehearsalArtDir } from "../src/core/rehearsal.js";
 
 const cleanups: Array<() => void> = [];
@@ -104,5 +105,34 @@ describe("rehearsal init", () => {
     const h = home();
     expect(await initWith(["--time-budget", "0h", "t"], okDeps({ opts: { home: h.home, cwd: h.home } }))).toBe(2);
     expect(await initWith(["--time-budget", "abc", "t"], okDeps({ opts: { home: h.home, cwd: h.home } }))).toBe(2);
+  });
+});
+
+describe("rehearsal metric / sota verbs", () => {
+  it("metric writes metric.md from --kv", async () => {
+    const h = home();
+    await initWith(["--slug", "r1", "topic one"], okDeps({ opts: { home: h.home, cwd: h.home } }));
+    const rc = await metricWith(["r1", "--kv", "primary_metric=auc,direction=maximize,min_acceptable=>= 0.8"],
+      { opts: { home: h.home, cwd: h.home } });
+    expect(rc).toBe(0);
+    const art = rehearsalArtDir("r1", { home: h.home, cwd: h.home });
+    expect(readFileSync(`${art}/metric.md`, "utf8")).toContain("**Primary metric:** auc");
+  });
+  it("metric returns 2 on a bad block (missing direction)", async () => {
+    const h = home();
+    await initWith(["--slug", "r2", "topic two"], okDeps({ opts: { home: h.home, cwd: h.home } }));
+    expect(await metricWith(["r2", "--kv", "primary_metric=auc"], { opts: { home: h.home, cwd: h.home } })).toBe(2);
+  });
+  it("sota writes sota.md from --kv with ref rows", async () => {
+    const h = home();
+    await initWith(["--slug", "r3", "topic three"], okDeps({ opts: { home: h.home, cwd: h.home } }));
+    const rc = await sotaWith(["r3", "--kv",
+      "topic=mnist,metric=accuracy,sweep_date=2026-05-30,ref_1=cnn|0.99|fits|url|note"],
+      { opts: { home: h.home, cwd: h.home } });
+    expect(rc).toBe(0);
+    const art = rehearsalArtDir("r3", { home: h.home, cwd: h.home });
+    const md = readFileSync(`${art}/sota.md`, "utf8");
+    expect(md).toContain("# SOTA reference — mnist");
+    expect(md).toContain("| cnn | 0.99 | fits | url | note |");
   });
 });

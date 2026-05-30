@@ -6,7 +6,7 @@ import { log } from "../core/log.js";
 import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import { deriveSlug } from "../core/solo.js";
-import { extractMetric, formatMetricBlock } from "../core/rehearsalMetric.js";
+import { extractMetric, formatMetricBlock, formatSotaBlock } from "../core/rehearsalMetric.js";
 import { rehearsalArtDir } from "../core/rehearsal.js";
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
@@ -94,9 +94,7 @@ export async function initWith(args: string[], deps: RehearsalInitDeps): Promise
   (deps.probeHardware ?? ((): void => {}))(join(art, "hardware.txt"));
 
   if (p.metric !== undefined) {
-    const fields: Record<string, string> = {};
-    for (const pair of p.metric.split(",")) { const i = pair.indexOf("="); if (i > 0) fields[pair.slice(0, i)] = pair.slice(i + 1); }
-    try { atomicWrite(join(art, "metric.md"), formatMetricBlock(fields)); }
+    try { atomicWrite(join(art, "metric.md"), formatMetricBlock(parseKv(p.metric))); }
     catch (e) { log.error(`rehearsal init: --metric: ${(e as Error).message}`); return 2; }
   }
   if (resolvedBudget !== undefined) {
@@ -114,10 +112,52 @@ const liveInitDeps: RehearsalInitDeps = {
   now: () => isoUtc(),
 };
 
+interface VerbOpts { opts?: PathOpts }
+
+/** Parse "k=v,k2=v2,..." into a record (first '=' splits; values may contain '='). */
+function parseKv(s: string): Record<string, string> {
+  const o: Record<string, string> = {};
+  for (const pair of s.split(",")) { const i = pair.indexOf("="); if (i > 0) o[pair.slice(0, i)] = pair.slice(i + 1); }
+  return o;
+}
+
+/** Extract a trailing-positional <topic> + a --kv "<...>" value from args. */
+function takeKvFlag(args: string[]): { topic: string; kv: string } {
+  let topic = "", kv = "";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--kv") { kv = args[++i] ?? ""; }
+    else if (!args[i].startsWith("--") && !topic) { topic = args[i]; }
+  }
+  return { topic, kv };
+}
+
+export async function metricWith(args: string[], v: VerbOpts = {}): Promise<number> {
+  const { topic, kv } = takeKvFlag(args);
+  if (!topic) { log.error("rehearsal metric: topic required"); return 2; }
+  try { atomicWrite(join(rehearsalArtDir(topic, v.opts), "metric.md"), formatMetricBlock(parseKv(kv))); }
+  catch (e) { log.error(`rehearsal metric: ${(e as Error).message}`); return 2; }
+  return 0;
+}
+
+export async function sotaWith(args: string[], v: VerbOpts = {}): Promise<number> {
+  const { topic, kv } = takeKvFlag(args);
+  if (!topic) { log.error("rehearsal sota: topic required"); return 2; }
+  const f = parseKv(kv);
+  const refs: string[] = [];
+  for (let i = 1; i <= 7; i++) { if (f[`ref_${i}`]) refs.push(f[`ref_${i}`]); }
+  try {
+    atomicWrite(join(rehearsalArtDir(topic, v.opts), "sota.md"),
+      formatSotaBlock({ topic: f.topic ?? "", metric: f.metric ?? "", sweep_date: f.sweep_date ?? "", queries: f.queries, refs }));
+  } catch (e) { log.error(`rehearsal sota: ${(e as Error).message}`); return 2; }
+  return 0;
+}
+
 export async function run(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
   switch (verb) {
     case "init": return initWith(rest, liveInitDeps);
+    case "metric": return metricWith(rest);
+    case "sota": return sotaWith(rest);
     default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
   }
 }
