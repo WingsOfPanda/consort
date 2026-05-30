@@ -616,3 +616,61 @@ deleted; only `.trends.json` is written and files move into `.reviewed/`.
   dist + phase-guard refresh + this dogfood were conductor-run.
 - **`playback` is COMPLETE.** Only `prelude` (meditate) and `rehearsal` (deep-research) remain
   unshipped (the refreshed `CLAUDE.md` phase guard reflects this).
+
+---
+
+# Consort `rehearsal` — Phase B (front half) Dogfood Result
+
+**Date:** 2026-05-30 · **Branch:** `feat/rehearsal` · **Verdict:** PASS — **30/30 assertions green,
+0 fail** (the `init`/`metric`/`sota` verbs ran fully live; `spawn-all`'s tmux/codex path is
+unit-covered and deferred to the Phase D full dogfood — see below).
+
+The front-half verbs of `rehearsal` (port of `deep-research-init.sh` + the `deep-research.md`
+Phase 0-3 surface): the `init` scaffold (slug + codex-gate + flags), the `metric`/`sota` block
+writers, the in-flight guard, and the `--mint-args-file` → `--args-file` round-trip. Driven end to
+end against a fresh isolated `CONSORT_HOME` (`mktemp -d`), exercising the real CLI subcommands the
+directive orchestrates. (Live part-spawn — `spawn-all` — needs real tmux panes + a codex-trusted
+target dir, so it is validated in the Phase D full dogfood; here it is unit-covered.)
+
+## Run
+
+| Step | Result |
+|---|---|
+| `init --slug df-mnist "maximize accuracy under 100k params"` | rc 0; stdout `TOPIC=df-mnist` + `ART=…/df-mnist/_rehearsal`; scaffolded `topic.txt` (raw topic, byte-confirmed no trailing `\n` — 35 bytes) + `metric.txt` (= the `extractMetric` seed `accuracy` + `\n`) |
+| `metric df-mnist --kv "primary_metric=accuracy,direction=maximize,min_acceptable=>= 0.9,target=>= 0.99,K_corroboration=2"` | rc 0; `metric.md` carries `**Primary metric:** accuracy`, `**Direction:** maximize`, `**min_acceptable:** >= 0.9`, `**target:** >= 0.99`, `**K_corroboration:** 2` |
+| round-trip / format-fidelity | grep-asserted the three load-bearing lines (`Primary metric` / `min_acceptable` / `K_corroboration`) persist on disk (the `formatMetricBlock`↔`parseMetricMd` round-trip itself is Phase-A unit-tested; `parseMetricMd` is internal, not exported from `dist`) |
+| `sota df-mnist --kv "topic=mnist,metric=accuracy,sweep_date=2026-05-30,queries=SOTA mnist,ref_1=lenet-cnn\|0.9968\|fits\|http://ex\|classic,ref_2=vit\|0.995\|over by 40k params\|http://ex2\|big"` | rc 0; `sota.md` has `# SOTA reference — mnist`, the `\| lenet-cnn \| 0.9968 \| fits \| http://ex \| classic \|` row + the `vit` row |
+| in-flight guard: `init --slug df-mnist …` again | **rc 2** (`already in flight: …/_rehearsal`) — the existing-art-dir guard |
+| args-file round-trip: `rehearsal --mint-args-file` → write `--slug df-af --time-budget 4h tune the model` → `init --args-file <path>` | rc 0; `TOPIC=df-af`; `time-budget.txt` = `14400` (4h → seconds); `topic.txt` = `tune the model`; **the args file was DELETED** after consume |
+
+## Scope of the live run
+
+`init` / `metric` / `sota` and the in-flight guard + args-file round-trip ran **fully live** against
+a real temp `CONSORT_HOME` — the scaffold byte-fidelity (`topic.txt` no trailing newline, the
+`extractMetric` seed), the `metric.md` / `sota.md` block formatting, the rc-2 in-flight guard, the
+`4h → 14400s` budget resolution, and the mint→consume→delete args-file lifecycle are all byte-verified.
+
+`spawn-all`'s live path is **not** run here: it needs real tmux panes + a codex-trusted target dir,
+and codex 0.135.0's directory-trust prompt blocks autonomous live spawns (the standing Phase B/C/D
+`score`/`perform` finding). Its logic — `pickInstruments` → `parts.txt` → `preflight` → the orphan
+guard (any part missing a preflight pane → rc 2) → the `Promise.all` batch `spawn` reusing score's
+machinery → `spawn-results.tsv` → `spawnTally` (all ok 0 / partial 1 / none ok 2) — is **unit-covered**
+and is validated live in the **Phase D full dogfood**.
+
+## Findings / notes
+
+- **No code bugs.** All 30 assertions passed on the first run; the verbs matched the spec exactly.
+  No sandbox/permission issue hit running node against the `/tmp` `CONSORT_HOME`.
+
+## Verification context
+
+- Unit suites for the front-half verbs (`init`/`metric`/`sota` + the `rehearsalMetric` Phase-A
+  `extractMetric`/`formatMetricBlock`/`parseMetricMd` round-trip/`formatSotaBlock` and the `spawn-all`
+  preflight + `Promise.all` spawn + `spawnTally` rc 0/1/2 + orphan guard) green; `tsc --noEmit` +
+  eslint + stale-token gate clean; `dist/consort.cjs` dispatches the `init`/`metric`/`sota`/`spawn-all`
+  verbs (Phase B1-B4).
+- Phase B built subagent-driven: B1 init+router+registration / B2 metric+sota / B3 spawn-all / B4
+  directive + args-file wiring, each through two-stage review (spec → quality), all APPROVED. The back
+  half of `rehearsal` (the persistent advisor loop: directive metric/sota/spawn-all live, the
+  experiment dispatch, consensus, completion) lands in the Phase C+ dogfoods; `prelude` (meditate)
+  remains the only fully unshipped high-level command.
