@@ -22,6 +22,7 @@ import { extractQuestionPayload } from "../core/performQuestions.js";
 import { outboxOffset, outboxPath, outboxWaitSince, statusPath, type OutboxEvent } from "../core/ipc.js";
 import { instrumentTimeoutMultiplier } from "../core/contracts.js";
 import { scaledTimeout, parseLatestOffset } from "../core/scoreTurn.js";
+import { parseDagLine, dagTopological, dagSectionBody } from "../core/dag.js";
 import { run as sendRun } from "./send.js";
 
 const PART = "cody";
@@ -37,7 +38,7 @@ function detectRouting(docText: string): "single" | "multi" {
   return /^\*\*Target Sub-Project\(s\):\*\*/m.test(docText) && /^## Execution DAG[ \t]*$/m.test(docText) ? "multi" : "single";
 }
 function usage(): number {
-  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|summary|finish|forensics|archive> ...");
+  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|summary|finish|forensics|archive|dag-parse|wave-wait> ...");
   return 2;
 }
 
@@ -54,6 +55,8 @@ export async function run(args: string[]): Promise<number> {
     case "finish":       return finishRun(rest);
     case "forensics":    return forensicsRun(rest);
     case "archive":      return archiveRun(rest);
+    case "dag-parse":    return dagParseRun(rest);
+    case "wave-wait":    return waveWaitRun(rest);
     default:          return usage();
   }
 }
@@ -330,4 +333,67 @@ async function forensicsRun(rest: string[]): Promise<number> {
 export async function archiveRun(rest: string[]): Promise<number> {
   const topic = rest[0]; if (!topic) { log.error("usage: perform archive <topic>"); return 2; }
   archiveTopic(topic, "perform"); log.ok(`perform archive: archived _perform for ${topic}`); return 0;
+}
+
+// ---- dag-parse (deploy-dag-parse.sh) — the multi-repo DAG executor wiring ----
+export interface DagParseDeps { artDir(topic: string): string; }
+const liveDagParseDeps: DagParseDeps = { artDir: (t) => performArtDir(t) };
+async function dagParseRun(rest: string[]): Promise<number> {
+  if (rest.length !== 1 || !rest[0]) { log.error("usage: perform dag-parse <topic>"); return 2; }
+  return dagParseWith(rest[0], liveDagParseDeps);
+}
+export async function dagParseWith(topic: string, d: DagParseDeps): Promise<number> {
+  const art = d.artDir(topic);
+  const docPath = join(art, "design.md");
+  if (!existsSync(docPath)) { log.error(`perform dag-parse: design.md not found under ${art} (run perform init first)`); return 1; }
+  const body = dagSectionBody(readFileSync(docPath, "utf8"));
+  if (body.length === 0) { log.error("perform dag-parse: design doc missing '## Execution DAG' section"); return 1; }
+  const nodes: string[] = [];
+  const rows = new Map<string, { repo: string; path: string; desc: string }>();
+  const edges: Array<[string, string]> = [];
+  for (const line of body) {
+    if (line.trim() === "") continue;
+    if (!/^[ \t]*\d+\./.test(line)) continue;
+    const node = parseDagLine(line);
+    if (node === null) { log.error(`perform dag-parse: malformed DAG line: ${line}`); return 1; }
+    nodes.push(node.step);
+    rows.set(node.step, { repo: node.repo, path: node.path, desc: node.desc });
+    if (node.deps !== "none" && node.deps !== "") for (const dep of node.deps.split(",")) edges.push([dep, node.step]);
+  }
+  if (nodes.length === 0) { log.error("perform dag-parse: no DAG lines parsed from '## Execution DAG' section"); return 1; }
+  const topo = dagTopological(edges, nodes);
+  if (topo === null) return 1;                                   // dagTopological wrote the stderr diagnostic
+  const wavesText = topo.map((r) => { const [w, s] = r.split("\t"); const x = rows.get(s)!; return `${w}\t${s}\t${x.repo}\t${x.path}\t${x.desc}`; }).join("\n") + "\n";
+  const edgesText = edges.length ? edges.map(([f, t]) => `${f}\t${t}`).join("\n") + "\n" : "";
+  atomicWrite(join(art, "dag-waves.txt"), wavesText);
+  atomicWrite(join(art, "dag-edges.txt"), edgesText);
+  const waveCount = Number(topo[topo.length - 1].split("\t")[0]);
+  log.ok(`perform dag-parse: ${nodes.length} steps in ${waveCount} wave(s)`);
+  process.stdout.write(`WAVES=${waveCount}\nSTEPS=${nodes.length}\n`);
+  return 0;
+}
+
+// ---- wave-wait (deploy-wave-wait.sh) — per-part barrier; rc 0 ALWAYS ----
+const PERFORM_WAVE_TIMEOUT = (): number =>
+  Number(process.env.CONSORT_PERFORM_WAVE_TIMEOUT_OVERRIDE) || Number(process.env.CONSORT_PERFORM_TURN_TIMEOUT_S) || 14400;
+async function waveWaitRun(rest: string[]): Promise<number> {
+  const [topic, instrument, provider] = rest;
+  if (!topic || !instrument || !provider) { log.error("usage: perform wave-wait <topic> <instrument> <provider>"); return 2; }
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(topic) || !/^[a-z0-9_-]+$/.test(instrument) || !/^[a-z0-9_-]+$/.test(provider)) { log.error("perform wave-wait: bad topic/instrument/provider"); return 2; }
+  return waveWaitWith(topic, instrument, provider, liveWaitDeps);
+}
+export async function waveWaitWith(topic: string, instrument: string, provider: string, d: PerformWaitDeps): Promise<number> {
+  const art = performArtDir(topic);
+  if (!existsSync(art)) { log.error(`perform wave-wait: _perform art-dir missing for ${topic}`); return 1; }
+  const timeout = scaledTimeout(PERFORM_WAVE_TIMEOUT(), d.multiplier(provider));
+  log.info(`[wave-wait] ${instrument} timeout=${timeout}s`);
+  const ev = await d.wait(instrument, provider, topic, 0, ["done", "error"], timeout);
+  let ts: string; const extra: string[] = [];
+  if (ev === null) { ts = "timeout"; extra.push(`TIMEOUT_S=${timeout}`); log.warn(`[wave-wait] ${instrument} TS=timeout`); }
+  else if (ev.event === "done") { ts = "ok"; extra.push("EVENT=done"); log.ok(`[wave-wait] ${instrument} TS=ok`); }
+  else if (ev.event === "error") { ts = "failed"; extra.push("EVENT=error", `REASON=${typeof ev.reason === "string" ? ev.reason : ""}`); log.error(`[wave-wait] ${instrument} TS=failed`); }
+  else { ts = "failed"; extra.push("EVENT=unknown"); log.error(`[wave-wait] ${instrument} TS=failed (unknown event)`); }
+  atomicWrite(join(art, `wave-${instrument}.txt`), `TS=${ts}\nINSTRUMENT=${instrument}\nPROVIDER=${provider}\nTOPIC=${topic}\n` + extra.map((l) => l + "\n").join(""));
+  writeFileSync(join(art, `wave-${instrument}.done`), "");
+  return 0;
 }
