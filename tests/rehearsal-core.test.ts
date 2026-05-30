@@ -239,3 +239,60 @@ describe("normalizeResult", () => {
     expect(normalizeResult(r)).toEqual(r);
   });
 });
+
+import { checkCompletion } from "../src/core/rehearsalComplete.js";
+
+const metricMd = formatMetricBlock({
+  primary_metric: "accuracy", direction: "maximize",
+  min_acceptable: ">= 0.90", target: ">= 0.95",
+  K_corroboration: "2", plateau_window: "3", plateau_threshold: "0.01",
+});
+
+function row(expId: string, instrument: string, metric: string, status = "ok", runtime = "1"): ScoreRow {
+  return { expId, instrument, metric, status, runtime, approach: "a", metricName: "accuracy" };
+}
+
+describe("checkCompletion", () => {
+  it("reports floor + target met", () => {
+    const sb = buildScoreboard([row("exp-001", "oboe", "0.92"), row("exp-002", "oboe", "0.96")]);
+    const c = checkCompletion(sb, metricMd);
+    expect(c.floorMet).toBe(true);
+    expect(c.targetMet).toBe(true);
+    expect(c.kRequired).toBe(2);
+  });
+  it("does not meet floor when all metrics are below min_acceptable", () => {
+    const sb = buildScoreboard([row("exp-001", "oboe", "0.80"), row("exp-002", "oboe", "0.85")]);
+    expect(checkCompletion(sb, metricMd).floorMet).toBe(false);
+  });
+  it("counts a per-part strictly-improving at-target streak", () => {
+    // oboe: 0.95, 0.96, 0.97 (all >= target, strictly improving) -> chain 3, capped at K=2.
+    const sb = buildScoreboard([
+      row("exp-001", "oboe", "0.95"), row("exp-002", "oboe", "0.96"), row("exp-003", "oboe", "0.97"),
+    ]);
+    expect(checkCompletion(sb, metricMd).kSoFar).toBe(2);
+  });
+  it("a non-improving (plateau) result breaks the streak", () => {
+    const sb = buildScoreboard([
+      row("exp-001", "oboe", "0.95"), row("exp-002", "oboe", "0.95"), row("exp-003", "oboe", "0.96"),
+    ]);
+    // chains: [0.95] (Δ=0 breaks) then [0.96] -> longest = 1.
+    expect(checkCompletion(sb, metricMd).kSoFar).toBe(1);
+  });
+  it("a mid-chain fail breaks the streak", () => {
+    const sb = buildScoreboard([
+      row("exp-001", "oboe", "0.95"), row("exp-002", "oboe", "", "fail"), row("exp-003", "oboe", "0.96"),
+    ]);
+    expect(checkCompletion(sb, metricMd).kSoFar).toBe(1);
+  });
+  it("flags plateau when the last window of ok metrics is tight", () => {
+    const sb = buildScoreboard([
+      row("exp-001", "oboe", "0.951"), row("exp-002", "oboe", "0.952"), row("exp-003", "oboe", "0.953"),
+    ]);
+    // 3 ok rows, spread 0.002 < 0.01 -> plateau.
+    expect(checkCompletion(sb, metricMd).plateau).toBe(true);
+  });
+  it("no plateau when fewer than plateau_window ok rows", () => {
+    const sb = buildScoreboard([row("exp-001", "oboe", "0.951"), row("exp-002", "oboe", "0.952")]);
+    expect(checkCompletion(sb, metricMd).plateau).toBe(false);
+  });
+});
