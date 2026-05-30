@@ -571,3 +571,48 @@ turns were stood in for — identical boundary to Phases B and C.
   conductor-authored.
 - **`perform` is COMPLETE.** The remaining high-level commands (`prelude`, `rehearsal`, `playback`)
   are out of scope until each gets its own spec (the refreshed `CLAUDE.md` phase guard reflects this).
+
+---
+
+# Consort `playback` (forensics review + cross-window trend) Dogfood Result
+
+**Date:** 2026-05-30 · **Branch:** `feat/playback` · **Verdict:** ✅ PASS — **fully live, end to end**
+(playback has no parts/IPC/tmux/git, so there is no codex-trust blocker; every step ran against real
+files).
+
+Isolated `CONSORT_HOME` temp dir, seeded `forensics/2026-05-30/` with two captured-shape forensics
+files spanning four scraper sources (`audit_log`/`status`/`outbox`/`spawn_results`), then driven
+through `survey` → `archive` twice plus a corruption check.
+
+## Run
+
+| Step | Result |
+|---|---|
+| `playback survey` (run 1) | ✅ both live files listed as TSV (`…perform\tadd-oauth\t3`, `…score\tverify-scope\t2`) + the `TRENDS` block |
+| `playback archive <both>` | ✅ both moved to `.reviewed/2026-05-30/`; `.trends.json` written with the **per-source signatures** — `audit_log\|\|ISSUE=todo_marker`=**2** (recurred across both files), `status\|\|state=error`=1, `outbox\|\|event=error reason=timeout`=1, `spawn_results\|\|rc=124 reason=timeout`=1 |
+| `playback survey` (run 2) | ✅ **zero file rows** (only `TRENDS`) — proves "only new since last run" via the archive move |
+| seed a new file → `survey` (run 3) | ✅ only the new `perform/add-logging` file surfaces; `TRENDS` still carries the lifetime counts |
+| `playback archive <new>` | ✅ **cross-window growth**: `audit_log\|\|ISSUE=todo_marker` count **2 → 3**; a fresh `audit_log\|\|ISSUE=new_thing` starts at 1 |
+| corrupt `.trends.json` (`not json`) → `survey` + `archive` | ✅ both rc 0; ledger treated as empty and **rebuilt forward** (never throws, never blocks) |
+
+## Scope of the live run
+
+Every `playback` behavior is byte-verified against real files: the per-source trend signature
+(`audit_log`→ISSUE code, `status`→state, `outbox`→event+reason from the JSON, `spawn_results`→rc+reason
+word), the read-only survey + `TRENDS` digest (sorted count-desc), the auto-archive move to
+`.reviewed/<date>/`, the incremental "only new since last run" (the move is the marker — no seen-set),
+the **cross-window trend** count growth across runs, and corruption tolerance. No forensics file was
+deleted; only `.trends.json` is written and files move into `.reviewed/`.
+
+## Verification context
+
+- **624 vitest unit tests green** (+ the `playback-core` parsing/signature/ledger suites and the
+  `playback-cmd` survey/archive suites); `tsc --noEmit` 0, eslint 0, stale-token gate (incl.
+  `commands/playback.md`) green; `dist/consort.cjs` rebuilt (the `survey`/`archive` verbs ship in the
+  bundle, smoke-tested).
+- Built subagent-driven: 5 implementers (T1 parsing / T2 per-source signature / T3 ledger+reviewedTarget
+  / T4 survey verb / T5 archive verb+registration), each through two-stage review (spec → quality) —
+  all SPEC PASS / QUALITY APPROVED (five Minor test-coverage additions folded back). The directive +
+  dist + phase-guard refresh + this dogfood were conductor-run.
+- **`playback` is COMPLETE.** Only `prelude` (meditate) and `rehearsal` (deep-research) remain
+  unshipped (the refreshed `CLAUDE.md` phase guard reflects this).

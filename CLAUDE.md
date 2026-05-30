@@ -29,13 +29,12 @@ binaries behave exactly as they do under clone-wars.
 
 **Shipped:** the foundation (scaffold + `core/*` + the six primitives
 `spawn`/`send`/`collect`/`roster`/`coda`/`soundcheck` + `preflight`) and the high-level commands
-**`solo`** (was strike), **`score`** (consult), and **`perform`** (deploy) — each grounded by its
-own spec under `docs/superpowers/specs/` and a live dogfood.
+**`solo`** (was strike), **`score`** (consult), **`perform`** (deploy), and **`playback`**
+(review-forensics) — each grounded by its own spec under `docs/superpowers/specs/` and a live dogfood.
 
 **Still OUT OF SCOPE** until each gets its own spec under `docs/superpowers/specs/`: `prelude`
-(meditate), `rehearsal` (deep-research), `playback` (review-forensics). Do **not** implement them,
-and do not import features across that boundary, without a new design doc. (This mirrors the
-clone-wars phase-guard convention.)
+(meditate) and `rehearsal` (deep-research). Do **not** implement them, and do not import features
+across that boundary, without a new design doc. (This mirrors the clone-wars phase-guard convention.)
 
 ## The musical rebrand (locked) — change everything cosmetic, freeze the protocol
 

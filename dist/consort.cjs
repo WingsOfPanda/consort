@@ -325,8 +325,8 @@ function haveCmd(name) {
     return false;
   }
 }
-function tmuxVersionString(run12) {
-  if (run12) return run12();
+function tmuxVersionString(run13) {
+  if (run13) return run13();
   if (!haveCmd("tmux")) return null;
   try {
     return (0, import_node_child_process2.execFileSync)("tmux", ["-V"], { encoding: "utf8" }).trim();
@@ -21256,12 +21256,260 @@ var init_perform2 = __esm({
   }
 });
 
+// src/core/playback.ts
+function parseForensicsFrontmatter(text) {
+  const field = (k) => {
+    const m = text.match(new RegExp(`^${k}:[ \\t]*(.*)$`, "m"));
+    return m ? m[1].trim() : "";
+  };
+  const n2 = Number(field("n_findings_mechanical"));
+  return { command: field("command"), topic: field("topic"), nFindings: Number.isFinite(n2) ? n2 : 0 };
+}
+function parseMechanicalFindings(text) {
+  const out = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(BULLET);
+    if (m) out.push({ source: m[1], key: m[2], context: m[3] });
+  }
+  return out;
+}
+function parseSince(spec, now) {
+  const m = spec.match(/^(\d+)([dh])$/);
+  if (!m) throw new Error(`--since must be <N>d or <N>h (got '${spec}')`);
+  const n2 = Number(m[1]);
+  return now - (m[2] === "d" ? n2 * 864e5 : n2 * 36e5);
+}
+function normalizeVolatile(s) {
+  return s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g, "<ts>").replace(/\b[0-9a-f]{7,40}\b/g, "<sha>").replace(/\/[^\s"']+/g, "<path>").replace(/\b\d+\b/g, "<n>").trim();
+}
+function findingSignature(f) {
+  const sig = (cls) => `${f.source}||${cls}`;
+  switch (f.source) {
+    case "audit_log":
+      return sig(f.key.match(/ISSUE=\S+/)?.[0] ?? normalizeVolatile(f.key));
+    case "status":
+      return sig(f.key);
+    // already `state=error`
+    case "spawn_results": {
+      const rc = f.key.match(/rc=\S+/)?.[0] ?? "rc=?";
+      const reason = f.key.match(/reason=(\S+)/)?.[1];
+      return sig(reason ? `${rc} reason=${reason.toLowerCase()}` : rc);
+    }
+    case "outbox":
+      try {
+        const o2 = JSON.parse(f.key);
+        const reason = typeof o2.reason === "string" ? ` reason=${o2.reason.split(/\s+/)[0].toLowerCase()}` : "";
+        return sig(`event=${o2.event ?? "?"}${reason}`);
+      } catch {
+        return sig(normalizeVolatile(f.key));
+      }
+    case "session_log":
+      return sig(normalizeVolatile(f.key));
+    default:
+      return sig(normalizeVolatile(f.key));
+  }
+}
+function parseTrendLedger(text) {
+  if (!text) return { counts: {} };
+  try {
+    const o2 = JSON.parse(text);
+    if (o2 && typeof o2 === "object" && o2.counts && typeof o2.counts === "object") return { counts: o2.counts };
+  } catch {
+  }
+  return { counts: {} };
+}
+function accrue(ledger, findings, date) {
+  for (const f of findings) {
+    const sig = findingSignature(f);
+    const e = ledger.counts[sig];
+    if (e) {
+      e.count += 1;
+      e.lastSeen = date;
+    } else ledger.counts[sig] = { count: 1, firstSeen: date, lastSeen: date };
+  }
+  return ledger;
+}
+function renderTrendDigest(ledger, topN = 0) {
+  const rows = Object.entries(ledger.counts).map(([signature, e]) => ({ signature, ...e }));
+  rows.sort((a2, b) => b.count - a2.count || a2.signature.localeCompare(b.signature));
+  return topN > 0 ? rows.slice(0, topN) : rows;
+}
+function reviewedTarget(forensicsRoot2, path6) {
+  const root = forensicsRoot2.replace(/\/$/, "");
+  if (!path6.startsWith(root + "/")) return null;
+  const rel = path6.slice(root.length + 1);
+  if (rel.startsWith(".reviewed/")) return path6;
+  return `${root}/.reviewed/${rel}`;
+}
+var BULLET;
+var init_playback = __esm({
+  "src/core/playback.ts"() {
+    "use strict";
+    BULLET = /^- \*\*(.+?)\*\* (.*?) _\(source: (.*)\)_$/;
+  }
+});
+
+// src/commands/playback.ts
+var playback_exports = {};
+__export(playback_exports, {
+  archiveWith: () => archiveWith,
+  run: () => run12,
+  surveyWith: () => surveyWith
+});
+function forensicsRoot() {
+  return (0, import_node_path28.join)(globalRoot(), "forensics");
+}
+function walkForensics(root, includeReviewed) {
+  const out = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = (0, import_node_fs32.readdirSync)(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = (0, import_node_path28.join)(dir, e.name);
+      if (e.isDirectory()) {
+        if (dir === root && e.name === ".reviewed" && !includeReviewed) continue;
+        walk(p);
+      } else if (e.isFile() && e.name.endsWith(".md")) out.push(p);
+    }
+  };
+  if ((0, import_node_fs32.existsSync)(root)) walk(root);
+  return out.sort();
+}
+function readLedgerText(root) {
+  try {
+    return (0, import_node_fs32.readFileSync)((0, import_node_path28.join)(root, ".trends.json"), "utf8");
+  } catch {
+    return null;
+  }
+}
+async function surveyWith(o2) {
+  const root = forensicsRoot();
+  let cutoff = null;
+  if (o2.since) {
+    try {
+      cutoff = parseSince(o2.since, o2.now ?? Date.now());
+    } catch (e) {
+      log.error(`playback survey: ${e?.message ?? e}`);
+      return 2;
+    }
+  }
+  const files = walkForensics(root, Boolean(o2.all));
+  let n2 = 0;
+  for (const f of files) {
+    let text;
+    try {
+      text = (0, import_node_fs32.readFileSync)(f, "utf8");
+    } catch {
+      continue;
+    }
+    const meta = parseForensicsFrontmatter(text);
+    if (o2.command && meta.command !== o2.command) continue;
+    if (cutoff !== null) {
+      let mt = 0;
+      try {
+        mt = (0, import_node_fs32.statSync)(f).mtimeMs;
+      } catch {
+      }
+      if (mt < cutoff) continue;
+    }
+    process.stdout.write(`${f}	${meta.command}	${meta.topic}	${meta.nFindings}
+`);
+    n2++;
+  }
+  process.stdout.write("TRENDS\n");
+  for (const t of renderTrendDigest(parseTrendLedger(readLedgerText(root)), 20)) {
+    process.stdout.write(`${t.signature}	${t.count}	${t.firstSeen}	${t.lastSeen}
+`);
+  }
+  log.info(`playback survey: ${n2} forensics file(s)`);
+  return 0;
+}
+async function archiveWith(paths, o2 = {}) {
+  const root = forensicsRoot();
+  const ledger = parseTrendLedger(readLedgerText(root));
+  const date = (o2.now ?? /* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  let moved = 0;
+  for (const p of paths) {
+    const target = reviewedTarget(root, p);
+    if (target === null) {
+      log.warn(`playback archive: skip (not under forensics root): ${p}`);
+      continue;
+    }
+    if (target === p) {
+      log.info(`playback archive: already reviewed: ${p}`);
+      continue;
+    }
+    let text;
+    try {
+      text = (0, import_node_fs32.readFileSync)(p, "utf8");
+    } catch {
+      log.warn(`playback archive: skip (unreadable): ${p}`);
+      continue;
+    }
+    const findings = parseMechanicalFindings(text);
+    try {
+      (0, import_node_fs32.mkdirSync)((0, import_node_path28.dirname)(target), { recursive: true });
+      (0, import_node_fs32.renameSync)(p, target);
+    } catch (e) {
+      log.warn(`playback archive: move failed for ${p}: ${e?.message ?? e}`);
+      continue;
+    }
+    accrue(ledger, findings, date);
+    moved++;
+  }
+  atomicWrite((0, import_node_path28.join)(root, ".trends.json"), JSON.stringify(ledger, null, 2) + "\n");
+  log.ok(`playback archive: ${moved} file(s) moved to .reviewed/, trend updated`);
+  return 0;
+}
+async function run12(args) {
+  const verb = args[0];
+  const rest = args.slice(1);
+  if (verb === "survey") {
+    const o2 = {};
+    for (let i2 = 0; i2 < rest.length; i2++) {
+      if (rest[i2] === "--all") o2.all = true;
+      else if (rest[i2] === "--command") o2.command = rest[++i2];
+      else if (rest[i2] === "--since") o2.since = rest[++i2];
+      else {
+        log.error(`playback survey: unknown flag '${rest[i2]}'`);
+        return 2;
+      }
+    }
+    return surveyWith(o2);
+  }
+  if (verb === "archive") {
+    if (rest.length === 0) {
+      log.error("usage: playback archive <path...>");
+      return 2;
+    }
+    return archiveWith(rest);
+  }
+  log.error("usage: playback <survey|archive> ...");
+  return 2;
+}
+var import_node_fs32, import_node_path28;
+var init_playback2 = __esm({
+  "src/commands/playback.ts"() {
+    "use strict";
+    import_node_fs32 = require("node:fs");
+    import_node_path28 = require("node:path");
+    init_log();
+    init_paths();
+    init_atomic();
+    init_playback();
+  }
+});
+
 // src/consort.ts
 init_args();
 init_paths();
 init_colors();
 async function loadHandlers() {
-  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform] = await Promise.all([
+  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform, playback] = await Promise.all([
     Promise.resolve().then(() => (init_spawn(), spawn_exports)),
     Promise.resolve().then(() => (init_send2(), send_exports)),
     Promise.resolve().then(() => (init_collect(), collect_exports)),
@@ -21272,7 +21520,8 @@ async function loadHandlers() {
     Promise.resolve().then(() => (init_hook(), hook_exports)),
     Promise.resolve().then(() => (init_solo2(), solo_exports)),
     Promise.resolve().then(() => (init_score2(), score_exports)),
-    Promise.resolve().then(() => (init_perform2(), perform_exports))
+    Promise.resolve().then(() => (init_perform2(), perform_exports)),
+    Promise.resolve().then(() => (init_playback2(), playback_exports))
   ]);
   return {
     spawn: spawn2.run,
@@ -21285,7 +21534,8 @@ async function loadHandlers() {
     hook: hook.run,
     solo: solo.run,
     score: score.run,
-    perform: perform.run
+    perform: perform.run,
+    playback: playback.run
   };
 }
 async function banner(label, color) {
