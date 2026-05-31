@@ -27,6 +27,7 @@ import { composePreludeResearchPrompt, composeAdversaryPrompt, litGuidance } fro
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
+import { readIfExists as readIf } from "../core/fsread.js";
 
 function usage(): number {
   log.error("usage: prelude <init|classify|spawn-all|research-send|research-wait|synth-preliminary|" +
@@ -54,8 +55,6 @@ export async function run(args: string[]): Promise<number> {
     default: return usage();
   }
 }
-
-const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, "utf8") : "");
 
 // ---- init ----
 

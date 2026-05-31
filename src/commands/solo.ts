@@ -16,6 +16,7 @@ import type { Runner } from "../core/gitwork.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { composeRound1Prompt, composeFixPrompt, classifyTurn, parseOffset } from "../core/turn.js";
 import { run as sendRun } from "./send.js";
+import { readIfExists } from "../core/fsread.js";
 
 function usage(): number {
   log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|forensics|summary> ...");
@@ -162,7 +163,7 @@ export async function turnSendWith(topic: string, round: number, d: TurnSendDeps
 
 /** Read the first line of a single-value state file, trimmed; "" if absent. */
 function readField(path: string): string {
-  return existsSync(path) ? readFileSync(path, "utf8").split("\n")[0].trim() : "";
+  return readIfExists(path).split("\n")[0].trim();
 }
 export interface TurnWaitDeps {
   wait(instrument: string, model: string, topic: string, offset: number, events: string[], timeoutSec: number): Promise<OutboxEvent | null>;

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { atomicWrite } from "./atomic.js";
 import { isoUtc } from "./archive.js";
 import { topApproach } from "./preludeConfidence.js"; // reuse the same first-approach scan
+import { readIfExistsOrNull as readIf } from "./fsread.js";
 
 export interface HandoffInput {
   topic: string;
@@ -35,8 +36,6 @@ export function buildHandoffKv(i: HandoffInput): string {
   L.push(`generated_ts=${i.generatedTs}`);
   return L.join("\n") + "\n";
 }
-
-function readIf(p: string): string | null { return existsSync(p) ? readFileSync(p, "utf8") : null; }
 
 /** Walk an art dir → write handoff-data.kv. Returns the path, or null if art-dir/topic.txt missing. */
 export function extractHandoffData(artDir: string, now?: Date): string | null {

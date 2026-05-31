@@ -26,6 +26,7 @@ import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
 import { classifyTopic, skillHintAppend } from "../core/scoreSkill.js";
+import { readIfExists as readIf } from "../core/fsread.js";
 import { walkSectionState, auditIssueToSection } from "../core/scoreWalk.js";
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
@@ -119,8 +120,6 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   );
   return 0;
 }
-
-function readIf(path: string): string { return existsSync(path) ? readFileSync(path, "utf8") : ""; }
 
 async function assembleRun(rest: string[]): Promise<number> {
   const topic = rest[0];
@@ -407,15 +406,14 @@ export async function adjudicateRun(rest: string[]): Promise<number> {
   if (rows.length < 2) { log.error(`score adjudicate: need >=2 parts, got ${rows.length}`); return 1; }
 
   const instruments = rows.map((r) => r.instrument);
-  const readIfExists = (p: string): string => (existsSync(p) ? readFileSync(p, "utf8") : "");
   const verify: Record<string, string> = {};
   const vs: Record<string, string> = {};
   for (const r of rows) {
-    verify[r.instrument] = readIfExists(join(partDir(r.instrument, r.provider, topic), "verify.md"));
-    vs[r.instrument] = lastTag(readIfExists(join(art, `verify-${r.instrument}.txt`)), "VS") ?? "skipped";
+    verify[r.instrument] = readIf(join(partDir(r.instrument, r.provider, topic), "verify.md"));
+    vs[r.instrument] = lastTag(readIf(join(art, `verify-${r.instrument}.txt`)), "VS") ?? "skipped";
   }
   const buckets: Record<string, string> = {};
-  const addBucket = (f: string): void => { buckets[f] = readIfExists(join(art, f)); };
+  const addBucket = (f: string): void => { buckets[f] = readIf(join(art, f)); };
   for (const c of instruments) addBucket(`${c}_only_items.txt`);
   if (instruments.length >= 3) {
     addBucket("consensus.txt");
