@@ -23,8 +23,8 @@ codex:
   # + auth-handshake. Earlier 8s tripped a race where spawn.sh's identity-read
   # nudge arrived before codex was draining its TTY, leading to silent buffer
   # drops + ready-timeout. Warm starts are unaffected (the sleep is a floor
-  # before the nudge fires). See commands/consult.md Step 1 spawn-rollback
-  # for the directive-side auto-retry-once that complements this change.
+  # before the nudge fires). The directive-side auto-retry-once that
+  # complements this lives in commands/score.md (Stage 3 spawn-all retry).
   bootstrap_sleep_s: 20
 
 agy:
