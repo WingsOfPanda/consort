@@ -38,6 +38,7 @@ export interface PerformArgs {
   branchName?: string;
   topic?: string;
   targets: string[];
+  force: boolean;
 }
 
 export class PerformArgError extends Error { code = 2; }
@@ -51,12 +52,14 @@ export function parsePerformArgs(tokens: string[]): PerformArgs {
   let branchName: string | undefined;
   let topic: string | undefined;
   let targets: string[] = [];
+  let force = false;
   const rest: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t === "--max-rounds" || t.startsWith("--max-rounds=")) {
       throw new PerformArgError("--max-rounds must be stripped by the directive before init");
     }
+    if (t === "--force") { force = true; continue; }
     if (t === "--no-branch") { branchMode = "no-branch"; continue; }
     if (t === "--branch" || t.startsWith("--branch=")) {
       const { value, shift } = kvParse(t, tokens[i + 1]); branchName = value; if (shift === 2) i++; continue;
@@ -71,7 +74,7 @@ export function parsePerformArgs(tokens: string[]): PerformArgs {
     }
     rest.push(t);
   }
-  return { rest: rest.join(" "), branchMode, branchName, topic, targets };
+  return { rest: rest.join(" "), branchMode, branchName, topic, targets, force };
 }
 
 /** True iff `<dir>/.git` exists as a directory (normal repo) or a file (gitdir worktree). */

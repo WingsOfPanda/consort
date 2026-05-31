@@ -43,14 +43,29 @@ function detectRouting(docText: string): "single" | "multi" {
   return /^\*\*Target Sub-Project\(s\):\*\*/m.test(docText) && /^## Execution DAG[ \t]*$/m.test(docText) ? "multi" : "single";
 }
 function usage(): number {
-  log.error("usage: perform <init|pre-snapshot|branch|turn-send|turn-wait|scope-check|sibling-baseline|sibling-verify|sibling-rescue|cross-signal|summary|finish|finish-one|forensics|archive|dag-parse|wave-wait|multi-init|send-unit> ...");
+  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|scope-check|sibling-baseline|sibling-verify|sibling-rescue|cross-signal|summary|finish|finish-one|forensics|archive|dag-parse|wave-wait|multi-init|send-unit> ...");
   return 2;
+}
+
+// ---- audit (deploy.md Step 0 "Proceed anyway" precheck, standalone) ----
+// rc 0 = PASS, 1 = FAIL (ISSUE= lines on stderr), 2 = unreadable/bad usage.
+async function auditRun(rest: string[]): Promise<number> {
+  const doc = rest[0];
+  if (!doc || rest.length !== 1) { log.error("usage: perform audit <doc>"); return 2; }
+  if (!existsSync(doc)) { log.error(`perform audit: doc unreadable: ${doc}`); return 2; }
+  let text: string;
+  try { text = readFileSync(doc, "utf8"); } catch { log.error(`perform audit: doc unreadable: ${doc}`); return 2; }
+  const ad = auditDoc(text);
+  if (ad.verdict === "FAIL") { for (const i of ad.issues) process.stderr.write(`ISSUE=${i}\n`); return 1; }
+  log.ok(`perform audit: PASS ${doc}`);
+  return 0;
 }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0]; const rest = args.slice(1);
   switch (verb) {
     case "init":      return initRun(applyArgsFile(rest));
+    case "audit":     return auditRun(rest);
     case "turn-send": return turnSendRun(rest);
     case "turn-wait": return turnWaitRun(rest);
     case "pre-snapshot": return preSnapshotRun(rest);
@@ -89,7 +104,11 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   if (!topic) { log.error("perform init: could not derive topic; pass --topic <slug>"); return 1; }
 
   const ad = auditDoc(text);
-  if (ad.verdict === "FAIL") { for (const i of ad.issues) process.stderr.write(`ISSUE=${i}\n`); log.error(`perform init: audit FAILED on ${designPath}`); return 1; }
+  if (ad.verdict === "FAIL") {
+    for (const i of ad.issues) process.stderr.write(`ISSUE=${i}\n`);
+    if (!parsed.force) { log.error(`perform init: audit FAILED on ${designPath}`); return 1; }
+    log.warn(`perform init: audit FAILED on ${designPath} but --force given; proceeding`);
+  }
 
   const art = performArtDir(topic);
   if (existsSync(art)) { log.error(`perform init: topic already in flight: ${art} (run /consort:coda or pick a different --topic)`); return 2; }
@@ -108,6 +127,7 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   atomicWrite(join(art, "topic.txt"), topic);                       // NO trailing newline
   atomicWrite(join(art, "target_cwd.txt"), targetCwd + "\n");
   atomicWrite(join(art, "provider.txt"), provider + "\n");
+  atomicWrite(join(art, "auto_provider.txt"), provider + "\n");   // deploy claude-confirm marker (the auto-detected provider)
   atomicWrite(join(art, "multi-repo.txt"), (routing === "multi" ? "multi" : "single") + "\n");
 
   log.ok(`perform init: topic=${topic} routing=${routing} provider=${provider}`);

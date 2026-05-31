@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { freshHome } from "./helpers/tmpHome.js";
 import { performArtDir } from "../src/core/perform.js";
-import { initWith, type PerformInitDeps } from "../src/commands/perform.js";
+import { initWith, run as performRun, type PerformInitDeps } from "../src/commands/perform.js";
 
 // A minimal design doc that satisfies auditDoc (title + the four required sections).
 const PASSING_DOC =
@@ -143,5 +143,49 @@ describe("perform init", () => {
     // init only records routing; it no longer warns (the multi-repo flow is the directive's job now).
     expect(existsSync(join(art, "parts.txt"))).toBe(false);
     expect(existsSync(join(art, "dag-waves.txt"))).toBe(false);
+  });
+
+  // ---- audit verb (standalone "Proceed anyway" precheck — deploy parity) ----
+  it("audit verb: passing doc → rc 0", async () => {
+    const p = docFile("good-design.md", PASSING_DOC);
+    expect(await performRun(["audit", p])).toBe(0);
+  });
+
+  it("audit verb: failing doc (missing ## Goal) → rc 1, ISSUE on stderr", async () => {
+    const p = docFile("bad-design.md", NO_GOAL_DOC);
+    expect(await performRun(["audit", p])).toBe(1);
+    expect(errSpy.text()).toContain("ISSUE=no_goal_section");
+  });
+
+  it("audit verb: nonexistent path → rc 2 (unreadable)", async () => {
+    expect(await performRun(["audit", join(h.home, "nope-design.md")])).toBe(2);
+  });
+
+  it("audit verb: missing arg → rc 2", async () => {
+    expect(await performRun(["audit"])).toBe(2);
+  });
+
+  // ---- init --force (bypass an audit FAIL — deploy "Proceed anyway") ----
+  it("init WITHOUT --force on a failing doc → rc 1 (audit FAIL not bypassed)", async () => {
+    const p = docFile("2026-05-30-add-oauth-design.md", NO_GOAL_DOC);
+    expect(await initWith([p], deps)).toBe(1);
+    expect(existsSync(performArtDir("add-oauth"))).toBe(false);
+  });
+
+  it("init WITH --force on a failing doc → rc 0, scaffolds, writes auto_provider.txt", async () => {
+    const p = docFile("2026-05-30-add-oauth-design.md", NO_GOAL_DOC);
+    const rc = await initWith(["--force", p], deps);
+    expect(rc).toBe(0);
+    const art = performArtDir("add-oauth");
+    expect(existsSync(art)).toBe(true);
+    expect(readFileSync(join(art, "auto_provider.txt"), "utf8")).toMatch(/codex|claude/);
+  });
+
+  it("init WITH --force on a PASSING doc → rc 0, still writes auto_provider.txt", async () => {
+    const p = docFile("2026-05-30-add-oauth-design.md", PASSING_DOC);
+    const rc = await initWith(["--force", p], deps);
+    expect(rc).toBe(0);
+    const art = performArtDir("add-oauth");
+    expect(readFileSync(join(art, "auto_provider.txt"), "utf8")).toBe("codex\n");
   });
 });
