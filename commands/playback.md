@@ -7,7 +7,8 @@ allowed-tools: Bash, Read
 
 Survey the forensics that `/consort:solo`, `/consort:score`, `/consort:perform`, `/consort:prelude`, and
 `/consort:rehearsal` record at teardown (each writes a `command:<name>` file under
-`~/.consort/forensics/<date>/`), surface what is **new since you last ran playback**, show how often each pattern has
+`~/.consort/forensics/<date>/`; a failed `spawn` also writes a `command:spawn` file at the point of
+failure), surface what is **new since you last ran playback**, show how often each pattern has
 recurred over the life of the project, suggest one next action per cluster, then file the surveyed
 files away so the next run only shows new problems. **Zero arguments needed.**
 
@@ -24,8 +25,8 @@ Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 3. **Read the findings.** For each surfaced path, `Read` (or one batched `cat` with `---SEP---`
    separators) the file's `## Mechanical findings` + `## Maestro reflection` sections.
 4. **Cluster.** Group findings whose `source` + meaningful `key`/`context` token match (e.g. all
-   `audit_log ISSUE=unresolved_placeholder`; all `outbox` timeout events). Rank clusters by count,
-   descending.
+   `audit_log ISSUE=unresolved_placeholder`; all `outbox` timeout events; all `spawn_failure
+   reason=<reason>` events). Rank clusters by count, descending.
 5. **Annotate with the trend.** Match each cluster to a `TRENDS` signature and attach its lifetime
    recurrence — e.g. `3 this run · 11 since 2026-04-18`.
 6. **Suggest one action per cluster:**

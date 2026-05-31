@@ -22,7 +22,14 @@ export function inboxWrite(i: string, m: string, t: string, task: string, opts?:
 }
 
 export function identityWrite(i: string, m: string, t: string): void {
-  const tplPath = join(pluginRoot(), "config", "prompt-templates", "identity.md");
+  const root = pluginRoot();
+  const tplPath = join(root, "config", "prompt-templates", "identity.md");
+  if (!existsSync(tplPath)) {
+    throw new Error(
+      `identityWrite: identity template not found at ${tplPath} (resolved pluginRoot=${root}). ` +
+      `Set CLAUDE_PLUGIN_ROOT to the consort plugin directory, or run consort from it.`,
+    );
+  }
   const stateDir = partDir(i, m, t);
   const outbox = outboxPath(i, m, t);
   let body = readFileSync(tplPath, "utf8")

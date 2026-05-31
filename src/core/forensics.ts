@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
-import { globalRoot, repoHash } from "./paths.js";
+import { globalRoot, repoHash, partDir } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
 import { log } from "./log.js";
 
@@ -161,4 +161,47 @@ export function runForensics(command: string, artDirFor: (topic: string) => stri
   if (path) { log.ok(`${command} forensics: captured ${path}`); process.stdout.write(path + "\n"); }
   else log.info(`${command} forensics: no mechanical findings (no file written)`);
   return 0;
+}
+
+/** Pure mapping of a bootstrap-wait outcome to captureSpawnFailure's reason/detail. ev=null means the
+ *  ready-timeout elapsed with no error event; a truthy ev is the error event that arrived instead. */
+export function bootstrapFailureArgs(
+  ev: { event: string; [k: string]: unknown } | null,
+  failureReportPath?: string,
+): { reason: string; detail: string; failureReportPath?: string } {
+  return ev
+    ? { reason: "error_event", detail: JSON.stringify(ev), failureReportPath }
+    : { reason: "timeout", detail: NO_EVENT_SENTINEL, failureReportPath };
+}
+
+/** Approach A: write a spawn/bootstrap-failure finding straight to the playback feed
+ *  (globalRoot()/forensics/<date>/<time>-spawn-<topic>.md, command:spawn), reusing renderArtForensics
+ *  so /consort:playback consumes it unchanged. Teardown-independent — works before the part dir exists
+ *  and when teardown never runs. Best-effort: returns the written path, or "" on zero-effect / any
+ *  error. Never throws. */
+export function captureSpawnFailure(opts: {
+  instrument: string; model: string; topic: string;
+  reason: string; detail: string; failureReportPath?: string; now?: Date;
+}): string {
+  try {
+    const ctx = `part=${opts.instrument}-${opts.model}`;
+    const findings: Finding[] = [
+      { source: "spawn_failure", key: `reason=${opts.reason} ${opts.detail}`.replace(/\s+/g, " ").trim(), context: ctx },
+    ];
+    if (opts.failureReportPath) findings.push({ source: "spawn_failure", key: `failure_report=${opts.failureReportPath}`, context: ctx });
+    const now = opts.now ?? new Date();
+    const iso = now.toISOString();
+    const date = iso.slice(0, 10);
+    const time = iso.slice(11, 19).replace(/:/g, "-");
+    let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
+    const dir = join(globalRoot(), "forensics", date);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${time}-spawn-${opts.topic}.md`);
+    const md = renderArtForensics(
+      { command: "spawn", topicSlug: opts.topic, repoHash: hash, artDir: partDir(opts.instrument, opts.model, opts.topic), invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+      findings,
+    );
+    atomicWrite(path, md);
+    return path;
+  } catch { return ""; }
 }
