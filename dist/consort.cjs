@@ -16695,6 +16695,38 @@ function runForensics(command, artDirFor, topic) {
   } else log.info(`${command} forensics: no mechanical findings (no file written)`);
   return 0;
 }
+function bootstrapFailureArgs(ev, failureReportPath) {
+  return ev ? { reason: "error_event", detail: JSON.stringify(ev), failureReportPath } : { reason: "timeout", detail: NO_EVENT_SENTINEL, failureReportPath };
+}
+function captureSpawnFailure(opts) {
+  try {
+    const ctx = `part=${opts.instrument}-${opts.model}`;
+    const findings = [
+      { source: "spawn_failure", key: `reason=${opts.reason} ${opts.detail}`.replace(/\s+/g, " ").trim(), context: ctx }
+    ];
+    if (opts.failureReportPath) findings.push({ source: "spawn_failure", key: `failure_report=${opts.failureReportPath}`, context: ctx });
+    const now = opts.now ?? /* @__PURE__ */ new Date();
+    const iso = now.toISOString();
+    const date = iso.slice(0, 10);
+    const time = iso.slice(11, 19).replace(/:/g, "-");
+    let hash = "unknown";
+    try {
+      hash = repoHash();
+    } catch {
+    }
+    const dir = (0, import_node_path12.join)(globalRoot(), "forensics", date);
+    (0, import_node_fs14.mkdirSync)(dir, { recursive: true });
+    const path6 = (0, import_node_path12.join)(dir, `${time}-spawn-${opts.topic}.md`);
+    const md = renderArtForensics(
+      { command: "spawn", topicSlug: opts.topic, repoHash: hash, artDir: partDir(opts.instrument, opts.model, opts.topic), invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+      findings
+    );
+    atomicWrite(path6, md);
+    return path6;
+  } catch {
+    return "";
+  }
+}
 var import_node_fs14, import_node_path12, SCROLLBACK_LINES, NO_EVENT_SENTINEL, FAILURE_FILENAME;
 var init_forensics = __esm({
   "src/core/forensics.ts"() {
@@ -16790,78 +16822,88 @@ async function run(args) {
   }
   const binary = instrumentBinary(model);
   if (!binary) {
+    captureSpawnFailure({ instrument, model, topic, reason: "config_error", detail: `model '${model}' has no entry in contracts.yaml` });
     log.error(`model '${model}' has no entry in contracts.yaml`);
     return 1;
   }
   if (!haveCmd(binary)) {
+    captureSpawnFailure({ instrument, model, topic, reason: "binary_not_found", detail: `${model}'s binary '${binary}' is not on PATH` });
     log.error(`${model}'s binary '${binary}' is not on PATH`);
     return 1;
   }
   const useMode = resolveMode(mode, instrumentDefaultMode(model));
   const modeArgs = instrumentModeArgs(model, useMode);
   if (!modeArgs) {
+    captureSpawnFailure({ instrument, model, topic, reason: "config_error", detail: `mode '${useMode}' not defined for ${model} in contracts.yaml` });
     log.error(`mode '${useMode}' not defined for ${model} in contracts.yaml`);
     return 1;
   }
   const readyTimeout = instrumentReadyTimeout(model);
   log.info(`preparing state for ${instrument}-${model} on ${topic}`);
-  stateInit(instrument, model, topic);
-  identityWrite(instrument, model, topic);
-  const launch = wrapLaunch([binary, ...modeArgs].join(" "));
-  const startDir = cwd || repoRoot();
-  let pane;
-  if (targetPane) {
-    if (!await paneAlive(targetPane)) {
-      log.error(`--target-pane ${targetPane} is not alive`);
+  try {
+    stateInit(instrument, model, topic);
+    identityWrite(instrument, model, topic);
+    const launch = wrapLaunch([binary, ...modeArgs].join(" "));
+    const startDir = cwd || repoRoot();
+    let pane;
+    if (targetPane) {
+      if (!await paneAlive(targetPane)) {
+        captureSpawnFailure({ instrument, model, topic, reason: "pane_failed", detail: `--target-pane ${targetPane} is not alive` });
+        log.error(`--target-pane ${targetPane} is not alive`);
+        return 1;
+      }
+      pane = await respawn(targetPane, launch, startDir);
+      await paneLabelSet(pane, instrument, model, topic);
+    } else {
+      const lastFile = (0, import_node_path13.join)(topicDir(topic), ".last_pane");
+      const prior = (0, import_node_fs15.existsSync)(lastFile) ? (0, import_node_fs15.readFileSync)(lastFile, "utf8").trim() : "";
+      if (prior && await paneAlive(prior)) pane = await splitDown(launch, prior, startDir);
+      else pane = await splitRight(launch, void 0, startDir);
+      await paneLabelSet(pane, instrument, model, topic);
+      (0, import_node_fs15.mkdirSync)(topicDir(topic), { recursive: true });
+      (0, import_node_fs15.writeFileSync)(lastFile, pane + "\n");
+    }
+    paneMetaWrite(instrument, model, topic, pane);
+    log.ok(`spawned ${labelFor(instrument, model, topic)} in pane ${pane} (mode=${useMode})`);
+    const boot = instrumentBootstrapSleep(model);
+    log.info(`sleeping ${boot}s for ${model} bootstrap`);
+    await sleep2(boot * 1e3);
+    log.info(`asking ${instrument} to read identity`);
+    await paneSend(pane, `Read ${identityPath(instrument, model, topic)} and follow its instructions exactly.`);
+    log.info(`waiting for {ready,error} in outbox (timeout ${readyTimeout}s)`);
+    const ev = await outboxWait(instrument, model, topic, ["ready", "error"], readyTimeout);
+    if (!ev || ev.event === "error") {
+      const reason = ev ? "error_event" : "timeout";
+      const tail = await capturePane(pane, 25);
+      process.stderr.write(tail + "\n");
+      const fr = await captureFailure(
+        { instrument, model, topic, paneId: pane, reason, eventLine: ev ? JSON.stringify(ev) : void 0, readyTimeout },
+        { partDir, capturePane: (p, n2) => capturePane(p, n2), atomicWriteSync: (d, c3) => (0, import_node_fs15.writeFileSync)(d, c3), isWritableDir: (d) => (0, import_node_fs15.existsSync)(d), now: () => (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z") }
+      );
+      captureSpawnFailure({ instrument, model, topic, ...bootstrapFailureArgs(ev ?? null, fr.ok ? fr.path : void 0) });
+      await killNow(pane);
+      const arch = stateArchive(instrument, model, topic, "FAILED");
+      log.error(`${instrument} failed bootstrap (${reason}); state archived to: ${arch}`);
       return 1;
     }
-    pane = await respawn(targetPane, launch, startDir);
-    await paneLabelSet(pane, instrument, model, topic);
-  } else {
-    const lastFile = (0, import_node_path13.join)(topicDir(topic), ".last_pane");
-    const prior = (0, import_node_fs15.existsSync)(lastFile) ? (0, import_node_fs15.readFileSync)(lastFile, "utf8").trim() : "";
-    if (prior && await paneAlive(prior)) pane = await splitDown(launch, prior, startDir);
-    else pane = await splitRight(launch, void 0, startDir);
-    await paneLabelSet(pane, instrument, model, topic);
-    (0, import_node_fs15.mkdirSync)(topicDir(topic), { recursive: true });
-    (0, import_node_fs15.writeFileSync)(lastFile, pane + "\n");
-  }
-  paneMetaWrite(instrument, model, topic, pane);
-  log.ok(`spawned ${labelFor(instrument, model, topic)} in pane ${pane} (mode=${useMode})`);
-  const boot = instrumentBootstrapSleep(model);
-  log.info(`sleeping ${boot}s for ${model} bootstrap`);
-  await sleep2(boot * 1e3);
-  log.info(`asking ${instrument} to read identity`);
-  await paneSend(pane, `Read ${identityPath(instrument, model, topic)} and follow its instructions exactly.`);
-  log.info(`waiting for {ready,error} in outbox (timeout ${readyTimeout}s)`);
-  const ev = await outboxWait(instrument, model, topic, ["ready", "error"], readyTimeout);
-  if (!ev || ev.event === "error") {
-    const reason = ev ? "error_event" : "timeout";
-    const tail = await capturePane(pane, 25);
-    process.stderr.write(tail + "\n");
-    await captureFailure(
-      { instrument, model, topic, paneId: pane, reason, eventLine: ev ? JSON.stringify(ev) : void 0, readyTimeout },
-      { partDir, capturePane: (p, n2) => capturePane(p, n2), atomicWriteSync: (d, c3) => (0, import_node_fs15.writeFileSync)(d, c3), isWritableDir: (d) => (0, import_node_fs15.existsSync)(d), now: () => (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z") }
-    );
-    await killNow(pane);
-    const arch = stateArchive(instrument, model, topic, "FAILED");
-    log.error(`${instrument} failed bootstrap (${reason}); state archived to: ${arch}`);
-    return 1;
-  }
-  log.ok(`${instrument} is ready`);
-  if (initial) {
-    initial = initial.replace(/^"|"$/g, "");
-    inboxWrite(instrument, model, topic, initial);
-    await paneSend(pane, `Read ${inboxPath(instrument, model, topic)} and execute the task. Reply when done.`);
-    log.info(`use: consort collect ${instrument} ${topic}  (to wait for {done})`);
-  }
-  process.stdout.write(`
+    log.ok(`${instrument} is ready`);
+    if (initial) {
+      initial = initial.replace(/^"|"$/g, "");
+      inboxWrite(instrument, model, topic, initial);
+      await paneSend(pane, `Read ${inboxPath(instrument, model, topic)} and execute the task. Reply when done.`);
+      log.info(`use: consort collect ${instrument} ${topic}  (to wait for {done})`);
+    }
+    process.stdout.write(`
   part:    ${labelFor(instrument, model, topic)}
   pane:    ${pane}
   state:   ${partDir(instrument, model, topic)}
   ready:   yes
 `);
-  return 0;
+    return 0;
+  } catch (e) {
+    captureSpawnFailure({ instrument, model, topic, reason: "spawn_error", detail: String(e?.message ?? e) });
+    throw e;
+  }
 }
 var import_node_fs15, import_node_path13, SLUG, sleep2;
 var init_spawn = __esm({
