@@ -1,5 +1,5 @@
 // src/commands/score.ts
-import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile } from "../args.js";
@@ -9,14 +9,14 @@ import {
   deriveSlug, parseScoreArgs, scoreArtDir, scoreDraftDir,
   formatRosterFile, scoreDocPath, parseMultiRepoMode, parseRosterFile,
   spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag, writeTargetsTsv,
-  resolveDrilldownPath,
-  type RosterRow, type SpawnResult,
+  resolveDrilldownPath, cascadeTargets,
+  type RosterRow, type SpawnResult, type ResetPhase,
 } from "../core/score.js";
 import { detectMultiRepo, validateTargets, type RepoHit } from "../core/multirepo.js";
 import { assembleDoc, SECTIONS_SINGLE, SECTIONS_MULTI, synthesizeSeeds, type DocMode } from "../core/scoreDoc.js";
 import { auditDoc } from "../core/audit.js";
 import { readProviderList } from "../core/providers.js";
-import { activeProvidersPath, partDir, repoRoot } from "../core/paths.js";
+import { activeProvidersPath, partDir, repoRoot, topicDir } from "../core/paths.js";
 import { pickInstruments } from "../core/instruments.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier } from "../core/contracts.js";
@@ -31,7 +31,7 @@ import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 
-function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|forensics|archive> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|forensics|archive> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
@@ -52,6 +52,7 @@ export async function run(args: string[]): Promise<number> {
     case "emit-dag": return emitDagRun(rest);
     case "check-dag": return checkDagRun(rest);
     case "drilldown": return drilldownRun(rest);
+    case "offset-reset": return offsetResetRun(rest);
     case "forensics": return forensicsRun(rest);
     case "archive": return archiveRun(rest);
     default: return usage();
@@ -556,6 +557,33 @@ export async function drilldownWith(rest: string[], d: DrilldownDeps, hooks: Dri
   const ok = results.filter((r) => r === "ok").length;
   log.ok(`score drilldown: ${ok}/${jobs.length} parts produced notes`);
   return ok > 0 ? 0 : 1;
+}
+
+// ---- Phase F: offset-reset (clean-retry primitive) ----
+
+export async function offsetResetRun(rest: string[]): Promise<number> {
+  const keepFindings = rest.includes("--keep-findings");
+  const pos = rest.filter((t) => !t.startsWith("--"));
+  const [topic, instrument, phase] = pos;
+  if (!topic || !instrument || !phase) { log.error("usage: score offset-reset <topic> <instrument> <phase> [--keep-findings]"); return 2; }
+  if (phase !== "research" && phase !== "verify") { log.error(`score offset-reset: phase must be research|verify (got ${phase})`); return 2; }
+  const art = scoreArtDir(topic);
+  if (!existsSync(art)) { log.error(`score offset-reset: art dir missing: ${art}`); return 1; }
+
+  for (const f of [`${phase}-${instrument}.txt`, `${phase}-${instrument}.done`, `question-${instrument}.txt`])
+    rmSync(join(art, f), { force: true });
+
+  const c = cascadeTargets(phase as ResetPhase, keepFindings);
+  if (!keepFindings) {
+    const td = topicDir(topic);
+    if (existsSync(td)) for (const name of readdirSync(td))
+      if (name.startsWith(`${instrument}-`)) rmSync(join(td, name, c.partFile), { force: true });
+    for (const f of c.artFiles) rmSync(join(art, f), { force: true });
+    const names = readdirSync(art);
+    for (const g of c.artGlobs) { const re = new RegExp("^" + g.replace(/[.]/g, "\\.").replace(/\*/g, ".*") + "$"); for (const n of names) if (re.test(n)) rmSync(join(art, n), { force: true }); }
+  }
+  log.ok(`score offset-reset: ${phase}/${instrument}${keepFindings ? " (kept findings)" : ""}`);
+  return 0;
 }
 
 // ---- Phase F: forensics + archive (thin wind-down verbs) ----

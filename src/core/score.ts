@@ -129,6 +129,16 @@ export function lastTag(text: string, tag: string): string | null {
   return ms.length ? ms[ms.length - 1][1].trim() : null;
 }
 
+export type ResetPhase = "research" | "verify";
+/** Files a clean-retry must invalidate. Globs/files are art-dir relative; partFile is part-dir relative.
+ *  Behavioral port of the consult offset-reset cascade, generalized to dynamic instruments (glob, not hardcoded names). */
+export function cascadeTargets(phase: ResetPhase, keepFindings: boolean): { partFile: "findings.md" | "verify.md"; artGlobs: string[]; artFiles: string[]; } {
+  const partFile = phase === "research" ? "findings.md" : "verify.md";
+  if (keepFindings) return { partFile, artGlobs: [], artFiles: [] };
+  if (phase === "research") return { partFile, artGlobs: ["*_only_items.txt", "*_only.txt", "consensus.txt"], artFiles: ["adjudicated-draft.md", "diff.md"] };
+  return { partFile, artGlobs: [], artFiles: ["adjudicated-draft.md"] };
+}
+
 /** `_score/drilldowns/_scratch` — per-part drill output, kept out of design-doc/ so the doc dir stays clean. */
 export function scoreDrilldownScratchDir(topic: string, opts?: { home?: string; cwd?: string }): string {
   return join(scoreArtDir(topic, opts), "drilldowns", "_scratch");
