@@ -1,16 +1,26 @@
 import { createHash } from "node:crypto";
 import { realpathSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, rmSync, mkdtempSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 
 export function globalRoot(home?: string): string {
   return home ?? process.env.CONSORT_HOME ?? join(homedir(), ".consort");
 }
 
-/** Plugin install root: CLAUDE_PLUGIN_ROOT when set, else the process CWD. Single source of truth. */
+/** Plugin install root. Precedence: explicit CLAUDE_PLUGIN_ROOT override -> self-locate from the
+ *  running bundle (<root>/dist/consort.cjs) -> process.cwd(). The self-locate tier fixes the case
+ *  where command files interpolate ${CLAUDE_PLUGIN_ROOT} into the bundle path but never export it,
+ *  so the node child would otherwise fall back to cwd (the target repo). The existsSync guard on a
+ *  known shipped asset keeps tests/`node -e` (argv[1] not the bundle) on the cwd fallback. Single
+ *  source of truth. */
 export function pluginRoot(): string {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+  if (process.env.CLAUDE_PLUGIN_ROOT) return process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    const root = dirname(dirname(realpathSync(process.argv[1])));
+    if (existsSync(join(root, "config", "prompt-templates", "identity.md"))) return root;
+  } catch { /* argv[1] missing/unreadable — fall through */ }
+  return process.cwd();
 }
 
 export function stateRoot(opts?: { home?: string; cwd?: string }): string {
