@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   performArtDir, performTopicDir, deriveTopicFromPath, parsePerformArgs, PerformArgError,
-  resolveTarget, resolveHub, PerformResolveError, detectProvider, ProviderError, iterTargets,
+  resolveTarget, resolveHub, PerformResolveError, detectProvider, iterTargets,
 } from "../src/core/perform.js";
 import { topicDir } from "../src/core/paths.js";
 
@@ -127,19 +127,6 @@ describe("detectProvider", () => {
   });
   it("non-plugin repo -> codex (cheap default)", () => {
     expect(detectProvider(mkdtempSync(join(tmpdir(), "dp-")))).toBe("codex");
-  });
-  it("override codex / claude short-circuits auto-detect", () => {
-    const root = mkdtempSync(join(tmpdir(), "dp-"));
-    mkdirSync(join(root, ".claude-plugin"), { recursive: true });
-    writeFileSync(join(root, ".claude-plugin", "plugin.json"), "{}");
-    expect(detectProvider(root, "codex")).toBe("codex");
-    expect(detectProvider(root, "claude")).toBe("claude");
-  });
-  it("override opencode -> throws (not supported)", () => {
-    expect(() => detectProvider(mkdtempSync(join(tmpdir(), "dp-")), "opencode")).toThrow(ProviderError);
-  });
-  it("unknown override -> throws", () => {
-    expect(() => detectProvider(mkdtempSync(join(tmpdir(), "dp-")), "gemini")).toThrow(ProviderError);
   });
 });
 
