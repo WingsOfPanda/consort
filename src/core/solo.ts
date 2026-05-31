@@ -21,11 +21,12 @@ export interface SoloArgs { topicText: string; provider?: string; finish: boolea
 
 export function parseSoloArgs(tokens: string[]): SoloArgs {
   let provider: string | undefined;
-  let finish = false;
+  let finish = true;
   const text: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
-    if (t === "--finish") { finish = true; continue; }
+    if (t === "--finish") { finish = true; continue; }      // legacy: now the default
+    if (t === "--no-finish") { finish = false; continue; }
     if (t === "--provider") {
       const v = tokens[i + 1];
       if (v && !v.startsWith("--")) { provider = v; i++; }

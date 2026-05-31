@@ -26,15 +26,22 @@ describe("deriveSlug", () => {
 });
 
 describe("parseSoloArgs", () => {
-  it("pulls --provider (space + = forms) and --finish out of the topic text", () => {
-    expect(parseSoloArgs(["add", "oauth", "login"]))
-      .toEqual({ topicText: "add oauth login", provider: undefined, finish: false });
-    expect(parseSoloArgs(["fix", "bug", "--provider", "agy"]))
-      .toEqual({ topicText: "fix bug", provider: "agy", finish: false });
-    expect(parseSoloArgs(["--provider=opencode", "tidy", "imports", "--finish"]))
+  it("pulls --provider (space + = forms) out of the topic text", () => {
+    expect(parseSoloArgs(["--provider=opencode", "tidy", "imports"]))
       .toEqual({ topicText: "tidy imports", provider: "opencode", finish: true });
-    expect(parseSoloArgs(["fix", "--provider", "--finish", "bug"]))
-      .toEqual({ topicText: "fix bug", provider: undefined, finish: true });
+    expect(parseSoloArgs(["fix", "--provider", "--no-finish", "bug"]))
+      .toEqual({ topicText: "fix bug", provider: undefined, finish: false });
+  });
+
+  it("finish defaults to true; --no-finish opts out; legacy --finish still parses", () => {
+    expect(parseSoloArgs(["add", "oauth", "login"]))
+      .toEqual({ topicText: "add oauth login", provider: undefined, finish: true });
+    expect(parseSoloArgs(["fix", "bug", "--no-finish"]))
+      .toEqual({ topicText: "fix bug", provider: undefined, finish: false });
+    expect(parseSoloArgs(["tidy", "imports", "--finish"]))
+      .toEqual({ topicText: "tidy imports", provider: undefined, finish: true });
+    expect(parseSoloArgs(["fix", "bug", "--provider", "agy"]))
+      .toEqual({ topicText: "fix bug", provider: "agy", finish: true });
   });
 });
 

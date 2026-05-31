@@ -40,10 +40,17 @@ describe("solo init", () => {
     expect(readFileSync(join(art, "topic.txt"), "utf8").trim()).toBe("add-oauth-login");
     expect(readFileSync(join(art, "selected-provider.txt"), "utf8").trim()).toBe("codex");
     expect(readFileSync(join(art, "instrument.txt"), "utf8").trim()).toBe("violin");
-    expect(readFileSync(join(art, "execute", "finish.txt"), "utf8").trim()).toBe("no");
+    expect(readFileSync(join(art, "execute", "finish.txt"), "utf8").trim()).toBe("yes");
     expect(outSpy.text()).toMatch(/^SLUG=add-oauth-login$/m);
     expect(outSpy.text()).toMatch(/^PROVIDER=codex$/m);
     expect(outSpy.text()).toMatch(/^INSTRUMENT=violin$/m);
+  });
+
+  it("--no-finish opts out → finish.txt is no; rc 0", async () => {
+    const rc = await initWith(["add", "oauth", "login", "--provider", "codex", "--no-finish"], okDeps);
+    expect(rc).toBe(0);
+    const art = soloArtDir("add-oauth-login");
+    expect(readFileSync(join(art, "execute", "finish.txt"), "utf8").trim()).toBe("no");
   });
 
   it("empty topic → rc 1", async () => {

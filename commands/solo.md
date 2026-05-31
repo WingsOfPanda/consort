@@ -1,6 +1,6 @@
 ---
-description: Light pipeline — one part implements a clear single-repo change unattended on its own branch; the conductor briefs, verifies, and (optionally) finishes. No research, no design doc, no gates.
-argument-hint: <topic-text> [--provider codex|claude|agy|opencode] [--finish]
+description: Light pipeline — one part implements a clear single-repo change unattended on its own branch; the conductor briefs, verifies, and finishes by default. No research, no design doc, no gates.
+argument-hint: <topic-text> [--provider codex|claude|agy|opencode] [--no-finish]
 allowed-tools: Bash, Write, Read, Edit
 ---
 
@@ -9,8 +9,11 @@ allowed-tools: Bash, Write, Read, Edit
 The light, autonomous path for a small, clearly-specified single-repo change. One part (a
 non-conductor model, default **codex**) implements the change on its own `feat/solo-<topic>`
 branch in this repository. The conductor writes a short brief, spawns the part, runs one
-implementation turn, does one light verify pass, then tears down. With `--finish`, it also
-pushes the branch and opens a PR. There are **NO interactive gates**.
+implementation turn, does one light verify pass, then finishes and tears down. **Finishing is
+the default** (restoring the predecessor `strike` parity): a local repo keeps the branch and
+restores the start-branch checkout; a repo **with a remote** pushes the branch and opens a PR.
+Pass `--no-finish` to keep the branch local only (no push, no PR). There are **NO interactive
+gates**.
 
 Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
@@ -109,8 +112,12 @@ Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
 ## Notes
 
-- One part, one branch, one implementation turn, one light verify pass, optional autonomous finish.
+- One part, one branch, one implementation turn, one light verify pass, autonomous finish by default.
   No research, no design doc, no multi-repo/DAG, no interactive gates.
+- Autonomous finish is the **default** here (matching the predecessor `strike` command): the
+  branch is always pushed + a PR opened when the repo has a remote, otherwise kept local with the
+  start branch restored. Use `--no-finish` to opt out. (This parity is intentional — do not
+  re-flag it.)
 - On abort, `SUMMARY.md` + `RESUME.md` point at the partial state under `_solo/`; re-run
   `/consort:solo` with revised framing to retry.
 - For research, a reviewable design doc, multi-repo, or multiple parts → future `/consort:score`
