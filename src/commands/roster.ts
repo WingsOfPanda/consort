@@ -22,6 +22,11 @@ export function lastOutboxEvent(outbox: string): string | undefined {
   try { return (JSON.parse(lines[lines.length - 1]) as { event?: string }).event; } catch { return undefined; }
 }
 
+// Stale-window knob; empty-string falls back to 180 to mirror the sibling shell's `:-` default
+// (the `|| '180'` string-coerce, not `?? 180`, so set-but-empty also defaults). `classifyStale`'s
+// own guard rejects any non-finite/negative/fractional value.
+export const staleThresholdS = (): number => Number(process.env.CONSORT_STALE_THRESHOLD_S || "180");
+
 export function classifyStale(state: string, outbox: string, thresholdS = 180): string {
   if (state !== "working" || !existsSync(outbox)) return state;
   const t = Number.isInteger(thresholdS) && thresholdS >= 0 ? thresholdS : 180;
@@ -47,7 +52,7 @@ export async function run(args: string[]): Promise<number> {
       const pane = meta.paneId || "?";
       const ob = outboxPath(meta.instrument, meta.model, t.name);
       let state = "[ORPHAN]";
-      if (pane !== "?" && (await paneAlive(pane))) state = classifyStale(deriveState(lastOutboxEvent(ob)), ob, Number(process.env.CONSORT_STALE_THRESHOLD_S ?? 180));
+      if (pane !== "?" && (await paneAlive(pane))) state = classifyStale(deriveState(lastOutboxEvent(ob)), ob, staleThresholdS());
       process.stdout.write(`${W(meta.instrument, 32)} ${W(meta.model, 8)} ${W(t.name, 12)} ${W(pane, 9)} ${state}\n`);
     }
   }
