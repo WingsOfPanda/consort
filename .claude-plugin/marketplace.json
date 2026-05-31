@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "consort",
-      "source": ".",
+      "source": "./",
       "description": "Multi-model tmux pane orchestration for Claude Code — spawn codex/claude/agy/opencode TUIs as attachable parts",
       "version": "0.1.0",
       "author": { "name": "WingsOfPanda", "email": "WingsOfPanda@users.noreply.github.com" },
