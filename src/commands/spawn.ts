@@ -10,7 +10,7 @@ import { pickRandomInstrument, instrumentInUse, formatCollisionError } from "../
 import { instrumentBinary, instrumentDefaultMode, instrumentModeArgs, instrumentReadyTimeout, instrumentBootstrapSleep } from "../core/contracts.js";
 import { wrapLaunch, splitRight, splitDown, respawn, paneAlive, paneLabelSet, paneSend, killNow, capturePane, ensurePaneBorders } from "../core/tmux.js";
 import { labelFor } from "../core/colors.js";
-import { captureFailure } from "../core/forensics.js";
+import { captureFailure, captureSpawnFailure, bootstrapFailureArgs } from "../core/forensics.js";
 
 const SLUG = /^[a-z0-9-]+$/;
 export function validateSlug(s: string): boolean { return SLUG.test(s) && s.length >= 1 && s.length <= 32; }
@@ -48,67 +48,76 @@ export async function run(args: string[]): Promise<number> {
   if (instrumentInUse(instrument, topic)) { for (const l of formatCollisionError(instrument, model, topic).split("\n")) log.error(l); return 1; }
 
   const binary = instrumentBinary(model);
-  if (!binary) { log.error(`model '${model}' has no entry in contracts.yaml`); return 1; }
-  if (!haveCmd(binary)) { log.error(`${model}'s binary '${binary}' is not on PATH`); return 1; }
+  if (!binary) { captureSpawnFailure({ instrument, model, topic, reason: "config_error", detail: `model '${model}' has no entry in contracts.yaml` }); log.error(`model '${model}' has no entry in contracts.yaml`); return 1; }
+  if (!haveCmd(binary)) { captureSpawnFailure({ instrument, model, topic, reason: "binary_not_found", detail: `${model}'s binary '${binary}' is not on PATH` }); log.error(`${model}'s binary '${binary}' is not on PATH`); return 1; }
   const useMode = resolveMode(mode, instrumentDefaultMode(model));
   const modeArgs = instrumentModeArgs(model, useMode);
-  if (!modeArgs) { log.error(`mode '${useMode}' not defined for ${model} in contracts.yaml`); return 1; }
+  if (!modeArgs) { captureSpawnFailure({ instrument, model, topic, reason: "config_error", detail: `mode '${useMode}' not defined for ${model} in contracts.yaml` }); log.error(`mode '${useMode}' not defined for ${model} in contracts.yaml`); return 1; }
   const readyTimeout = instrumentReadyTimeout(model);
 
   log.info(`preparing state for ${instrument}-${model} on ${topic}`);
-  stateInit(instrument, model, topic);
-  identityWrite(instrument, model, topic);
+  try {
+    stateInit(instrument, model, topic);
+    identityWrite(instrument, model, topic);
 
-  const launch = wrapLaunch([binary, ...modeArgs].join(" "));
-  const startDir = cwd || repoRoot();
-  let pane: string;
-  if (targetPane) {
-    if (!(await paneAlive(targetPane))) { log.error(`--target-pane ${targetPane} is not alive`); return 1; }
-    pane = await respawn(targetPane, launch, startDir);
-    await paneLabelSet(pane, instrument, model, topic);
-  } else {
-    const lastFile = join(topicDir(topic), ".last_pane");
-    const prior = existsSync(lastFile) ? readFileSync(lastFile, "utf8").trim() : "";
-    if (prior && await paneAlive(prior)) pane = await splitDown(launch, prior, startDir);
-    else pane = await splitRight(launch, undefined, startDir);
-    await paneLabelSet(pane, instrument, model, topic);
-    mkdirSync(topicDir(topic), { recursive: true });
-    writeFileSync(lastFile, pane + "\n");
+    const launch = wrapLaunch([binary, ...modeArgs].join(" "));
+    const startDir = cwd || repoRoot();
+    let pane: string;
+    if (targetPane) {
+      if (!(await paneAlive(targetPane))) {
+        captureSpawnFailure({ instrument, model, topic, reason: "pane_failed", detail: `--target-pane ${targetPane} is not alive` });
+        log.error(`--target-pane ${targetPane} is not alive`); return 1;
+      }
+      pane = await respawn(targetPane, launch, startDir);
+      await paneLabelSet(pane, instrument, model, topic);
+    } else {
+      const lastFile = join(topicDir(topic), ".last_pane");
+      const prior = existsSync(lastFile) ? readFileSync(lastFile, "utf8").trim() : "";
+      if (prior && await paneAlive(prior)) pane = await splitDown(launch, prior, startDir);
+      else pane = await splitRight(launch, undefined, startDir);
+      await paneLabelSet(pane, instrument, model, topic);
+      mkdirSync(topicDir(topic), { recursive: true });
+      writeFileSync(lastFile, pane + "\n");
+    }
+    paneMetaWrite(instrument, model, topic, pane);
+    log.ok(`spawned ${labelFor(instrument, model, topic)} in pane ${pane} (mode=${useMode})`);
+
+    const boot = instrumentBootstrapSleep(model);
+    log.info(`sleeping ${boot}s for ${model} bootstrap`);
+    await sleep(boot * 1000);
+
+    log.info(`asking ${instrument} to read identity`);
+    await paneSend(pane, `Read ${identityPath(instrument, model, topic)} and follow its instructions exactly.`);
+
+    log.info(`waiting for {ready,error} in outbox (timeout ${readyTimeout}s)`);
+    const ev = await outboxWait(instrument, model, topic, ["ready", "error"], readyTimeout);
+    if (!ev || ev.event === "error") {
+      const reason = ev ? "error_event" : "timeout";
+      const tail = await capturePane(pane, 25);
+      process.stderr.write(tail + "\n");
+      const fr = await captureFailure(
+        { instrument, model, topic, paneId: pane, reason: reason as "timeout" | "error_event", eventLine: ev ? JSON.stringify(ev) : undefined, readyTimeout },
+        { partDir, capturePane: (p, n) => capturePane(p, n), atomicWriteSync: (d, c) => writeFileSync(d, c), isWritableDir: (d) => existsSync(d), now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z") },
+      );
+      captureSpawnFailure({ instrument, model, topic, ...bootstrapFailureArgs(ev ?? null, fr.ok ? fr.path : undefined) });
+      await killNow(pane);
+      const arch = stateArchive(instrument, model, topic, "FAILED");
+      log.error(`${instrument} failed bootstrap (${reason}); state archived to: ${arch}`);
+      return 1;
+    }
+    log.ok(`${instrument} is ready`);
+
+    if (initial) {
+      initial = initial.replace(/^"|"$/g, "");
+      inboxWrite(instrument, model, topic, initial);
+      await paneSend(pane, `Read ${inboxPath(instrument, model, topic)} and execute the task. Reply when done.`);
+      log.info(`use: consort collect ${instrument} ${topic}  (to wait for {done})`);
+    }
+
+    process.stdout.write(`\n  part:    ${labelFor(instrument, model, topic)}\n  pane:    ${pane}\n  state:   ${partDir(instrument, model, topic)}\n  ready:   yes\n`);
+    return 0;
+  } catch (e) {
+    captureSpawnFailure({ instrument, model, topic, reason: "spawn_error", detail: String((e as Error)?.message ?? e) });
+    throw e;
   }
-  paneMetaWrite(instrument, model, topic, pane);
-  log.ok(`spawned ${labelFor(instrument, model, topic)} in pane ${pane} (mode=${useMode})`);
-
-  const boot = instrumentBootstrapSleep(model);
-  log.info(`sleeping ${boot}s for ${model} bootstrap`);
-  await sleep(boot * 1000);
-
-  log.info(`asking ${instrument} to read identity`);
-  await paneSend(pane, `Read ${identityPath(instrument, model, topic)} and follow its instructions exactly.`);
-
-  log.info(`waiting for {ready,error} in outbox (timeout ${readyTimeout}s)`);
-  const ev = await outboxWait(instrument, model, topic, ["ready", "error"], readyTimeout);
-  if (!ev || ev.event === "error") {
-    const reason = ev ? "error_event" : "timeout";
-    const tail = await capturePane(pane, 25);
-    process.stderr.write(tail + "\n");
-    await captureFailure(
-      { instrument, model, topic, paneId: pane, reason: reason as "timeout" | "error_event", eventLine: ev ? JSON.stringify(ev) : undefined, readyTimeout },
-      { partDir, capturePane: (p, n) => capturePane(p, n), atomicWriteSync: (d, c) => writeFileSync(d, c), isWritableDir: (d) => existsSync(d), now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z") },
-    );
-    await killNow(pane);
-    const arch = stateArchive(instrument, model, topic, "FAILED");
-    log.error(`${instrument} failed bootstrap (${reason}); state archived to: ${arch}`);
-    return 1;
-  }
-  log.ok(`${instrument} is ready`);
-
-  if (initial) {
-    initial = initial.replace(/^"|"$/g, "");
-    inboxWrite(instrument, model, topic, initial);
-    await paneSend(pane, `Read ${inboxPath(instrument, model, topic)} and execute the task. Reply when done.`);
-    log.info(`use: consort collect ${instrument} ${topic}  (to wait for {done})`);
-  }
-
-  process.stdout.write(`\n  part:    ${labelFor(instrument, model, topic)}\n  pane:    ${pane}\n  state:   ${partDir(instrument, model, topic)}\n  ready:   yes\n`);
-  return 0;
 }
