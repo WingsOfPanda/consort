@@ -41,7 +41,6 @@ export interface PerformArgs {
 
 export class PerformArgError extends Error { code = 2; }
 export class PerformResolveError extends Error { code = 1; constructor(message: string) { super(message); } }
-export class ProviderError extends Error { code = 1; constructor(message: string) { super(message); } }
 
 /** Parse the perform args tokens (port of deploy-init's argv parser). Default branch-on; --no-branch
  *  opts out. --max-rounds is REJECTED (the directive strips it before init). */
