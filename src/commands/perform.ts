@@ -1,12 +1,12 @@
 // src/commands/perform.ts — single-repo command path for /consort:perform.
 // Byte-faithful port of the prior bash plugin's deploy verb set; WIRES the Phase-A core modules.
 // Rebrand: _deploy/->_perform/, feat/deploy-->feat/perform-, conductor sender->From: maestro.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile, kvParse } from "../args.js";
 import { atomicWrite } from "../core/atomic.js";
-import { repoRoot } from "../core/paths.js";
+import { repoRoot, repoStateDir } from "../core/paths.js";
 import { auditDoc } from "../core/audit.js";
 import {
   parsePerformArgs, deriveTopicFromPath, resolveTarget, detectProvider,
@@ -43,8 +43,32 @@ function detectRouting(docText: string): "single" | "multi" {
   return /^\*\*Target Sub-Project\(s\):\*\*/m.test(docText) && /^## Execution DAG[ \t]*$/m.test(docText) ? "multi" : "single";
 }
 function usage(): number {
-  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|scope-check|sibling-baseline|sibling-verify|sibling-rescue|cross-signal|summary|finish|finish-one|forensics|archive|dag-parse|wave-wait|multi-init|send-unit> ...");
+  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|scope-check|sibling-baseline|sibling-verify|sibling-rescue|cross-signal|summary|finish|finish-one|forensics|archive|dag-parse|wave-wait|multi-init|send-unit|find-latest-doc> ...");
   return 2;
+}
+
+// ---- find-latest-doc (deploy Step 0.4 no-arg source default) — newest */_score/design-doc/*-design.md by mtime ----
+async function findLatestDocRun(rest: string[]): Promise<number> {
+  let cwd: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--cwd") { cwd = rest[i + 1]; i++; }
+    else if (rest[i].startsWith("--cwd=")) { cwd = rest[i].slice("--cwd=".length); }
+  }
+  const stateDir = repoStateDir(cwd ? { cwd } : undefined);
+  let best: { path: string; mt: number } | null = null;
+  if (existsSync(stateDir)) for (const topic of readdirSync(stateDir)) {
+    const dd = join(stateDir, topic, "_score", "design-doc");
+    if (!existsSync(dd)) continue;
+    for (const f of readdirSync(dd)) {
+      if (!f.endsWith("-design.md")) continue;
+      const p = join(dd, f); let mt = 0;
+      try { mt = statSync(p).mtimeMs; } catch { continue; }
+      if (!best || mt > best.mt) best = { path: p, mt };
+    }
+  }
+  if (!best) { log.error("perform find-latest-doc: no *-design.md found"); return 1; }
+  process.stdout.write(`DOC=${best.path}\n`);
+  return 0;
 }
 
 // ---- audit (deploy.md Step 0 "Proceed anyway" precheck, standalone) ----
@@ -84,6 +108,7 @@ export async function run(args: string[]): Promise<number> {
     case "wave-wait":    return waveWaitRun(rest);
     case "multi-init": return multiInitRun(rest);
     case "send-unit":  return sendUnitRun(rest);
+    case "find-latest-doc": return findLatestDocRun(rest);
     default:          return usage();
   }
 }
