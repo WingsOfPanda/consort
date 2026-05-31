@@ -25,6 +25,7 @@ import { captureArtDir } from "../core/forensics.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
+import { classifyTopic, skillHintAppend } from "../core/scoreSkill.js";
 import { walkSectionState, auditIssueToSection } from "../core/scoreWalk.js";
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
@@ -103,6 +104,7 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
 
   mkdirSync(scoreDraftDir(topic), { recursive: true }); // creates _score/design-doc/.draft
   atomicWrite(join(art, "topic.txt"), topicText);
+  atomicWrite(join(art, "skill.txt"), classifyTopic(topicText));
   // Full roster written even on a fast-path run; the ensemble path (Phase C) reads roster.txt back.
   atomicWrite(join(art, "roster.txt"), formatRosterFile(rows, isoUtc()));
   const mode = targetHits.length >= 2 ? "multi" : targetHits.length === 1 ? "single-sub" : "single";
@@ -225,7 +227,7 @@ export async function researchSendWith(topic: string, instrument: string, provid
 
   const findingsPath = join(partDir(instrument, provider, topic), "findings.md");
   const promptFile = join(art, `${instrument}_research_prompt.md`);
-  atomicWrite(promptFile, composeResearchPrompt(topicText, findingsPath));
+  atomicWrite(promptFile, skillHintAppend(join(art, "skill.txt"), composeResearchPrompt(topicText, findingsPath)));
 
   const offset = d.offsetFor(instrument, provider, topic);
   atomicWrite(stateFile, `OFFSET=${offset}\n`);
@@ -343,7 +345,7 @@ export async function verifySendWith(topic: string, instrument: string, provider
 
   const verifyPath = join(partDir(instrument, provider, topic), "verify.md");
   const promptFile = join(art, `${instrument}_verify_prompt.md`);
-  atomicWrite(promptFile, composeVerifyPrompt(items, verifyPath));
+  atomicWrite(promptFile, skillHintAppend(join(art, "skill.txt"), composeVerifyPrompt(items, verifyPath)));
 
   const offset = d.offsetFor(instrument, provider, topic);
   atomicWrite(stateFile, `OFFSET=${offset}\n`);

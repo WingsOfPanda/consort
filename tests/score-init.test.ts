@@ -61,6 +61,11 @@ describe("score init", () => {
     await initWith(["dup"], d);
     expect(await initWith(["dup"], d)).toBe(2);
   });
+  it("writes skill.txt classified from the topic text", async () => {
+    await initWith(["why", "is", "login", "broken"], deps(["codex", "claude"], ["viola", "cello"]));
+    const art = scoreArtDir("why-is-login-broken");
+    expect(readFileSync(join(art, "skill.txt"), "utf8")).toBe("systematic-debugging");
+  });
   it("prints ART=<abs _score dir> on stdout", async () => {
     let out = "";
     const orig = process.stdout.write.bind(process.stdout);
