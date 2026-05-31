@@ -17838,13 +17838,14 @@ var solo_exports = {};
 __export(solo_exports, {
   branchWith: () => branchWith,
   finishWith: () => finishWith,
+  forensicsRun: () => forensicsRun,
   initWith: () => initWith,
   run: () => run9,
   turnSendWith: () => turnSendWith,
   turnWaitWith: () => turnWaitWith
 });
 function usage() {
-  log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|summary> ...");
+  log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|forensics|summary> ...");
   return 2;
 }
 async function run9(args) {
@@ -17863,11 +17864,26 @@ async function run9(args) {
       return detectTestRun(rest);
     case "finish":
       return finishRun(rest);
+    case "forensics":
+      return forensicsRun(rest);
     case "summary":
       return summaryRun(rest);
     default:
       return usage();
   }
+}
+async function forensicsRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo forensics <topic>");
+    return 2;
+  }
+  const path6 = captureArtDir({ artDir: soloArtDir(topic), command: "solo" });
+  if (path6) {
+    log.ok(`solo forensics: captured ${path6}`);
+    process.stdout.write(path6 + "\n");
+  } else log.info("solo forensics: no mechanical findings (no file written)");
+  return 0;
 }
 async function initRun(tokens) {
   return initWith(tokens, liveInitDeps);
@@ -18161,6 +18177,7 @@ var init_solo2 = __esm({
     init_archive();
     init_paths();
     init_solo();
+    init_forensics();
     init_contracts();
     init_deps();
     init_instruments();
@@ -19095,7 +19112,7 @@ __export(score_exports, {
   diffRun: () => diffRun,
   drilldownWith: () => drilldownWith,
   emitDagRun: () => emitDagRun,
-  forensicsRun: () => forensicsRun,
+  forensicsRun: () => forensicsRun2,
   initWith: () => initWith2,
   offsetResetRun: () => offsetResetRun,
   researchSendWith: () => researchSendWith,
@@ -19148,7 +19165,7 @@ async function run10(args) {
     case "offset-reset":
       return offsetResetRun(rest);
     case "forensics":
-      return forensicsRun(rest);
+      return forensicsRun2(rest);
     case "archive":
       return archiveRun(rest);
     default:
@@ -19765,7 +19782,7 @@ async function offsetResetRun(rest) {
   log.ok(`score offset-reset: ${phase}/${instrument}${keepFindings ? " (kept findings)" : ""}`);
   return 0;
 }
-async function forensicsRun(rest) {
+async function forensicsRun2(rest) {
   const topic = rest[0];
   if (!topic) {
     log.error("usage: score forensics <topic>");
@@ -20472,7 +20489,7 @@ async function run11(args) {
     case "finish-one":
       return finishOneRun(rest);
     case "forensics":
-      return forensicsRun2(rest);
+      return forensicsRun3(rest);
     case "archive":
       return archiveRun2(rest);
     case "dag-parse":
@@ -21183,7 +21200,7 @@ async function finishOneWith(topic, slug, action, d) {
   log.info(`finish: ${slug} -> ${action} -> ${outcome}`);
   return 0;
 }
-async function forensicsRun2(rest) {
+async function forensicsRun3(rest) {
   const topic = rest[0];
   if (!topic) {
     log.error("usage: perform forensics <topic>");
@@ -22741,7 +22758,7 @@ __export(rehearsal_exports, {
   consensusWith: () => consensusWith,
   experimentSendWith: () => experimentSendWith,
   finalizeWith: () => finalizeWith,
-  forensicsRun: () => forensicsRun3,
+  forensicsRun: () => forensicsRun4,
   freshPartWith: () => freshPartWith,
   handoffExtractWith: () => handoffExtractWith,
   initWith: () => initWith4,
@@ -23864,7 +23881,7 @@ async function teardownWith(args, deps) {
   }
   return 0;
 }
-async function forensicsRun3(rest) {
+async function forensicsRun4(rest) {
   const topic = rest[0];
   if (!topic) {
     log.error("rehearsal forensics: topic required");
@@ -24063,7 +24080,7 @@ async function run13(args) {
     case "fresh-part":
       return freshPartWith(rest, liveFreshPartDeps);
     case "forensics":
-      return forensicsRun3(rest);
+      return forensicsRun4(rest);
     case "abort":
       return abortWith(applyArgsFile(rest), liveAbortDeps);
     case "consensus":
@@ -24538,7 +24555,7 @@ __export(prelude_exports, {
   adversaryWaitWith: () => adversaryWaitWith,
   classifyRun: () => classifyRun,
   confidenceRun: () => confidenceRun,
-  forensicsRun: () => forensicsRun4,
+  forensicsRun: () => forensicsRun5,
   handoffExtractRun: () => handoffExtractRun,
   initWith: () => initWith5,
   researchSendWith: () => researchSendWith2,
@@ -24578,7 +24595,7 @@ async function run14(args) {
     case "synth-final":
       return synthFinalRun(rest);
     case "forensics":
-      return forensicsRun4(rest);
+      return forensicsRun5(rest);
     case "teardown":
       return teardownRun(rest);
     case "handoff-extract":
@@ -24952,7 +24969,7 @@ async function synthFinalRun(rest) {
   process.stdout.write(out + "\n");
   return 0;
 }
-async function forensicsRun4(rest) {
+async function forensicsRun5(rest) {
   const topic = rest[0];
   if (!topic) {
     log.error("usage: prelude forensics <topic>");

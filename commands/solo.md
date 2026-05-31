@@ -100,14 +100,23 @@ Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
 ## Stage 3 — Teardown + SUMMARY
 
-1. Tear down + archive the part with `coda` (graceful FINE banner → kill pane → archive the part
+1. **Forensics + reflection (best-effort, BEFORE teardown).** `FORENSICS=$($CS solo forensics <SLUG>)`
+   — scrapes the part's outbox/status/logs for mechanical signals and writes a `command:solo` file under
+   `~/.consort/forensics/<date>/` (prints its path only if signals were found, else empty — never blocks).
+   Run this **before** `coda`, because `coda` archives the part dir and moves its `outbox.jsonl` /
+   `status.json` out of reach. If `FORENSICS` is non-empty: tell the user "forensics captured: $FORENSICS",
+   then **Read** it and **append** a `## Maestro reflection` section (3–5 interpretive bullets: what's
+   surprising, repeat-vs-first-time patterns, the suggested next action) via the Write/Edit tool.
+   **Idempotent:** skip the append if the file already contains the exact header `## Maestro reflection`.
+   The file lives OUTSIDE the topic state, so it survives teardown and `/consort:playback` later surveys it.
+2. Tear down + archive the part with `coda` (graceful FINE banner → kill pane → archive the part
    dir), capturing the archived path it reports into `archived-path.txt` for the summary. Run this
    single command (do not invoke `coda` separately):
    ```bash
    ARCHIVED=$($CS coda <INSTRUMENT> <SLUG> 2>&1 | sed -n 's/.*archived [^:]*: //p' | tail -1)
    [ -n "$ARCHIVED" ] && printf '%s\n' "$ARCHIVED" > <SLUG state>/_solo/archived-path.txt
    ```
-2. `$CS solo summary <SLUG>` — writes `SUMMARY.md` (reads `archived-path.txt` for the "Archived
+3. `$CS solo summary <SLUG>` — writes `SUMMARY.md` (reads `archived-path.txt` for the "Archived
    state" line). Then print it: `cat <SLUG state>/_solo/SUMMARY.md`.
 
 ## Notes

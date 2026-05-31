@@ -1,12 +1,13 @@
 ---
-description: Review accumulated forensics from solo/score/perform — surface the problems recorded since you last looked, cluster recurring patterns with their lifetime trend, suggest next actions, then archive what was reviewed
+description: Review accumulated forensics from solo/score/perform/prelude/rehearsal — surface the problems recorded since you last looked, cluster recurring patterns with their lifetime trend, suggest next actions, then archive what was reviewed
 allowed-tools: Bash, Read
 ---
 
 # /consort:playback
 
-Survey the forensics that `/consort:solo`, `/consort:score`, and `/consort:perform` recorded at
-teardown, surface what is **new since you last ran playback**, show how often each pattern has
+Survey the forensics that `/consort:solo`, `/consort:score`, `/consort:perform`, `/consort:prelude`, and
+`/consort:rehearsal` record at teardown (each writes a `command:<name>` file under
+`~/.consort/forensics/<date>/`), surface what is **new since you last ran playback**, show how often each pattern has
 recurred over the life of the project, suggest one next action per cluster, then file the surveyed
 files away so the next run only shows new problems. **Zero arguments needed.**
 
