@@ -535,16 +535,20 @@ function outboxOffset(path6) {
   }
 }
 function readFrom(path6, offset) {
-  const size = outboxOffset(path6);
-  const start = size < offset ? 0 : offset;
-  if (size <= start) return "";
-  const fd = (0, import_node_fs5.openSync)(path6, "r");
   try {
-    const buf = Buffer.alloc(size - start);
-    (0, import_node_fs5.readSync)(fd, buf, 0, buf.length, start);
-    return buf.toString("utf8");
-  } finally {
-    (0, import_node_fs5.closeSync)(fd);
+    const size = outboxOffset(path6);
+    const start = size < offset ? 0 : offset;
+    if (size <= start) return "";
+    const fd = (0, import_node_fs5.openSync)(path6, "r");
+    try {
+      const buf = Buffer.alloc(size - start);
+      (0, import_node_fs5.readSync)(fd, buf, 0, buf.length, start);
+      return buf.toString("utf8");
+    } finally {
+      (0, import_node_fs5.closeSync)(fd);
+    }
+  } catch {
+    return "";
   }
 }
 function lastMatch(text, events) {
@@ -628,6 +632,258 @@ var init_ipc = __esm({
     init_atomic();
     SENDER_RE = /^[a-zA-Z0-9_-]+$/;
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  }
+});
+
+// src/core/solo.ts
+function soloArtDir(topic) {
+  return (0, import_node_path4.join)(topicDir(topic), "_solo");
+}
+function soloExecDir(topic) {
+  return (0, import_node_path4.join)(soloArtDir(topic), "execute");
+}
+function deriveSlug(text) {
+  const s = text.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, 20).replace(/-+$/, "");
+  return s;
+}
+function parseSoloArgs(tokens) {
+  let provider;
+  let finish = true;
+  const text = [];
+  for (let i2 = 0; i2 < tokens.length; i2++) {
+    const t = tokens[i2];
+    if (t === "--finish") {
+      finish = true;
+      continue;
+    }
+    if (t === "--no-finish") {
+      finish = false;
+      continue;
+    }
+    if (t === "--provider") {
+      const v = tokens[i2 + 1];
+      if (v && !v.startsWith("--")) {
+        provider = v;
+        i2++;
+      }
+      continue;
+    }
+    if (t.startsWith("--provider=")) {
+      provider = t.slice("--provider=".length);
+      continue;
+    }
+    text.push(t);
+  }
+  return { topicText: text.join(" ").trim(), provider, finish };
+}
+function detectTestCommand(root) {
+  if ((0, import_node_fs6.existsSync)((0, import_node_path4.join)(root, "tests", "run.sh"))) return "bash tests/run.sh";
+  const pkg = (0, import_node_path4.join)(root, "package.json");
+  if ((0, import_node_fs6.existsSync)(pkg)) {
+    try {
+      if (JSON.parse((0, import_node_fs6.readFileSync)(pkg, "utf8"))?.scripts?.test) return "npm test";
+    } catch {
+    }
+  }
+  const mk = (0, import_node_path4.join)(root, "Makefile");
+  if ((0, import_node_fs6.existsSync)(mk)) {
+    try {
+      if (/^test:/m.test((0, import_node_fs6.readFileSync)(mk, "utf8"))) return "make test";
+    } catch {
+    }
+  }
+  if (((0, import_node_fs6.existsSync)((0, import_node_path4.join)(root, "pyproject.toml")) || (0, import_node_fs6.existsSync)((0, import_node_path4.join)(root, "setup.cfg"))) && (0, import_node_fs6.existsSync)((0, import_node_path4.join)(root, "tests"))) return "pytest";
+  return "";
+}
+function renderSummary(f) {
+  const head = [
+    "---",
+    "command: solo",
+    `topic: ${f.topic}`,
+    `status: ${f.status}`,
+    `started: ${f.started}`
+  ];
+  if (f.status === "ok") {
+    head.push(`ended: ${f.ended ?? "unknown"}`, `duration_seconds: ${f.duration ?? 0}`, "---", "");
+    return [
+      ...head,
+      "## Result",
+      `- Provider: ${f.provider}`,
+      `- Instrument: ${f.instrument}`,
+      `- Branch: ${f.branch}`,
+      `- Verify: ${f.verify}`,
+      `- Diff: ${f.diffStats}`,
+      "",
+      "## Where to look",
+      `- Review the work: \`git -C ${f.targetCwd} checkout ${f.branch}\` (diff base: ${f.branchBase})`,
+      `- Archived state: ${f.archived}`,
+      ""
+    ].join("\n");
+  }
+  head.push(
+    `aborted_phase: ${f.abortedPhase ?? "unknown"}`,
+    `aborted_gate: ${f.abortedGate ?? "unknown"}`,
+    `aborted_reason: ${f.abortedReason ?? "unknown"}`,
+    "---",
+    ""
+  );
+  return [
+    ...head,
+    "## Why aborted",
+    `- ${f.abortedReason ?? "unknown"}`,
+    "",
+    "## RESUME instructions",
+    `- Read RESUME.md for the state pointer; re-run /consort:solo to retry.`,
+    ""
+  ].join("\n");
+}
+function renderResume(f) {
+  return [
+    `# RESUME \u2014 ${f.topic} (aborted at ${f.phase}.${f.gate})`,
+    "",
+    "## State pointers",
+    `- State dir: ${f.artDir}`,
+    `- Topic: ${f.topic}`,
+    `- Branch: ${f.branch}`,
+    "",
+    "## Manual resume",
+    `- Inspect ${f.artDir}/execute/ for the part's partial work, then re-run /consort:solo.`,
+    ""
+  ].join("\n");
+}
+var import_node_path4, import_node_fs6;
+var init_solo = __esm({
+  "src/core/solo.ts"() {
+    "use strict";
+    import_node_path4 = require("node:path");
+    import_node_fs6 = require("node:fs");
+    init_paths();
+  }
+});
+
+// src/core/score.ts
+function scoreArtDir(topic, opts) {
+  return (0, import_node_path5.join)(topicDir(topic, opts), "_score");
+}
+function scoreDraftDir(topic, opts) {
+  return (0, import_node_path5.join)(scoreArtDir(topic, opts), "design-doc", ".draft");
+}
+function parseScoreArgs(tokens) {
+  let ensemble = false;
+  let targets = [];
+  const rest = [];
+  for (let i2 = 0; i2 < tokens.length; i2++) {
+    const t = tokens[i2];
+    if (t === "--ensemble") {
+      ensemble = true;
+      continue;
+    }
+    if (t === "--targets" || t.startsWith("--targets=")) {
+      const { value, shift } = kvParse(t, tokens[i2 + 1]);
+      targets = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+      if (shift === 2) i2++;
+      continue;
+    }
+    rest.push(t);
+  }
+  return { topicText: rest.join(" "), ensemble, targets };
+}
+function scoreDocPath(topic, dateUtc, opts) {
+  return (0, import_node_path5.join)(scoreArtDir(topic, opts), "design-doc", `${dateUtc}-${topic}-design.md`);
+}
+function formatRosterFile(rows, isoStamp) {
+  const body = rows.map((r) => `${r.provider}	${r.instrument}`).join("\n");
+  return `# generated ${isoStamp} by /consort:score
+${body}${rows.length ? "\n" : ""}`;
+}
+function nonCommentLines(text) {
+  return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
+}
+function parseRosterFile(text) {
+  return nonCommentLines(text).map((l) => {
+    const [provider, instrument] = l.split("	");
+    return { provider, instrument };
+  }).filter((r) => r.provider && r.instrument);
+}
+function parseMultiRepoMode(text) {
+  const v = text.replace(/\s/g, "");
+  return v === "multi" ? "multi" : v === "single-sub" ? "single-sub" : "single";
+}
+function spawnRosterArg(rows) {
+  return rows.map((r) => `${r.instrument}:${r.provider}`).join(",");
+}
+function spawnResultsTsv(results) {
+  if (!results.length) return "";
+  return results.map((r) => `${r.instrument}	${r.provider}	${r.rc}	${r.rc === 0 ? "" : "spawn-failed"}`).join("\n") + "\n";
+}
+function spawnTally(rcs) {
+  const ok = rcs.filter((rc) => rc === 0).length;
+  if (ok === rcs.length) return 0;
+  if (ok === 0) return 2;
+  return 1;
+}
+function parsePanesFile(text) {
+  const m = /* @__PURE__ */ new Map();
+  for (const t of nonCommentLines(text)) {
+    const [instrument, pane] = t.split("	");
+    if (instrument && pane) m.set(instrument, pane);
+  }
+  return m;
+}
+function paneListedFor(panesTsv, instrument, pane) {
+  return panesTsv.split("\n").some((l) => l === `${instrument}	${pane}`);
+}
+function verifyScopeFiles(target, instruments) {
+  const out = [];
+  for (const c3 of instruments) if (c3 !== target) out.push(`${c3}_only_items.txt`);
+  if (instruments.length >= 3) {
+    for (let i2 = 0; i2 < instruments.length; i2++) {
+      for (let j = i2 + 1; j < instruments.length; j++) {
+        const a2 = instruments[i2], b = instruments[j];
+        if (a2 !== target && b !== target) out.push(`${a2}+${b}_only.txt`);
+      }
+    }
+  }
+  return out;
+}
+function writeTargetsTsv(hits, isoStamp) {
+  return `# generated ${isoStamp} by /consort:score
+` + (hits.length ? hits.map((h2) => `${h2.slug}	${h2.marker}`).join("\n") + "\n" : "");
+}
+function parseRosterTargets(text) {
+  return nonCommentLines(text).map((l) => l.split("	")[0]).filter(Boolean);
+}
+function lastTag(text, tag) {
+  const re = new RegExp(`^${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(.*)$`, "gm");
+  const ms = [...text.matchAll(re)];
+  return ms.length ? ms[ms.length - 1][1].trim() : null;
+}
+function cascadeTargets(phase, keepFindings) {
+  const partFile = phase === "research" ? "findings.md" : "verify.md";
+  if (keepFindings) return { partFile, artGlobs: [], artFiles: [] };
+  if (phase === "research") return { partFile, artGlobs: ["*_only_items.txt", "*_only.txt", "consensus.txt"], artFiles: ["adjudicated-draft.md", "diff.md"] };
+  return { partFile, artGlobs: [], artFiles: ["adjudicated-draft.md"] };
+}
+function resolveDrilldownPath(scratchDir, section, instrument, subproject) {
+  const slug = section.toLowerCase().replace(/ /g, "-");
+  const base = `drilldown-${slug}${subproject ? `-${subproject}` : ""}-${instrument}`;
+  let cand = base;
+  let n2 = 2;
+  while ((0, import_node_fs7.existsSync)((0, import_node_path5.join)(scratchDir, `${cand}.md`))) {
+    cand = `${cand.replace(/-[0-9]+$/, "")}-${n2}`;
+    if (++n2 > 100) throw new Error("resolveDrilldownPath: too many same-section drilldown collisions");
+  }
+  return (0, import_node_path5.join)(scratchDir, `${cand}.md`);
+}
+var import_node_path5, import_node_fs7;
+var init_score = __esm({
+  "src/core/score.ts"() {
+    "use strict";
+    import_node_path5 = require("node:path");
+    import_node_fs7 = require("node:fs");
+    init_paths();
+    init_args();
+    init_solo();
   }
 });
 
@@ -7960,14 +8216,14 @@ var require_dist = __commonJS({
 
 // src/core/instruments.ts
 function instrumentsPath() {
-  const user = (0, import_node_path4.join)(globalRoot(), "instruments.yaml");
-  return (0, import_node_fs6.existsSync)(user) ? user : (0, import_node_path4.join)(pluginRoot(), "config", "instruments.yaml");
+  const user = (0, import_node_path6.join)(globalRoot(), "instruments.yaml");
+  return (0, import_node_fs8.existsSync)(user) ? user : (0, import_node_path6.join)(pluginRoot(), "config", "instruments.yaml");
 }
 function loadInstrumentPool() {
   const p = instrumentsPath();
-  if (!(0, import_node_fs6.existsSync)(p)) return [];
+  if (!(0, import_node_fs8.existsSync)(p)) return [];
   try {
-    const doc = (0, import_yaml.parse)((0, import_node_fs6.readFileSync)(p, "utf8"));
+    const doc = (0, import_yaml.parse)((0, import_node_fs8.readFileSync)(p, "utf8"));
     const list = Array.isArray(doc) ? doc : doc?.instruments;
     return Array.isArray(list) ? list.map((x) => String(x).trim()).filter(Boolean) : [];
   } catch {
@@ -7975,11 +8231,11 @@ function loadInstrumentPool() {
   }
 }
 function instrumentsInDir(dir) {
-  if (!(0, import_node_fs6.existsSync)(dir)) return [];
+  if (!(0, import_node_fs8.existsSync)(dir)) return [];
   const out = [];
-  for (const name of (0, import_node_fs6.readdirSync)(dir, { withFileTypes: true })) {
+  for (const name of (0, import_node_fs8.readdirSync)(dir, { withFileTypes: true })) {
     if (!name.isDirectory() || isArtifactDir(name.name)) continue;
-    const meta = paneMetaReadForDir((0, import_node_path4.join)(dir, name.name));
+    const meta = paneMetaReadForDir((0, import_node_path6.join)(dir, name.name));
     if (meta.instrument) out.push(meta.instrument);
   }
   return out;
@@ -7992,10 +8248,10 @@ function instrumentInUse(instrument, topic) {
 }
 function instrumentsInUseGlobally() {
   const repo = repoStateDir();
-  if (!(0, import_node_fs6.existsSync)(repo)) return [];
+  if (!(0, import_node_fs8.existsSync)(repo)) return [];
   const all = [];
-  for (const t of (0, import_node_fs6.readdirSync)(repo, { withFileTypes: true })) {
-    if (t.isDirectory()) all.push(...instrumentsInDir((0, import_node_path4.join)(repo, t.name)));
+  for (const t of (0, import_node_fs8.readdirSync)(repo, { withFileTypes: true })) {
+    if (t.isDirectory()) all.push(...instrumentsInDir((0, import_node_path6.join)(repo, t.name)));
   }
   return [...new Set(all)].sort();
 }
@@ -8025,20 +8281,20 @@ function pickInstruments(topic, n2, rng = Math.random) {
 }
 function formatCollisionError(instrument, model, topic, sessionId) {
   const lines = [`${instrument} is already deployed on ${topic}; pick another instrument`];
-  const sidFile = (0, import_node_path4.join)(partDir(instrument, model, topic), ".session_id");
+  const sidFile = (0, import_node_path6.join)(partDir(instrument, model, topic), ".session_id");
   let owner = "";
-  if ((0, import_node_fs6.existsSync)(sidFile)) owner = (0, import_node_fs6.readFileSync)(sidFile, "utf8").split("\n")[0] ?? "";
+  if ((0, import_node_fs8.existsSync)(sidFile)) owner = (0, import_node_fs8.readFileSync)(sidFile, "utf8").split("\n")[0] ?? "";
   const me = sessionId ?? process.env.CLAUDE_CODE_SESSION_ID ?? "unknown";
   if (owner && owner !== me) lines.push(`  owned by another Claude Code session (id=${owner.slice(0, 8)}\u2026, mine=${me.slice(0, 8)}\u2026)`);
   lines.push(`  or run: /consort:coda ${instrument} ${topic}`);
   return lines.join("\n");
 }
-var import_node_fs6, import_node_path4, import_yaml;
+var import_node_fs8, import_node_path6, import_yaml;
 var init_instruments = __esm({
   "src/core/instruments.ts"() {
     "use strict";
-    import_node_fs6 = require("node:fs");
-    import_node_path4 = require("node:path");
+    import_node_fs8 = require("node:fs");
+    import_node_path6 = require("node:path");
     import_yaml = __toESM(require_dist(), 1);
     init_paths();
     init_ipc();
@@ -8047,14 +8303,14 @@ var init_instruments = __esm({
 
 // src/core/contracts.ts
 function contractsPath() {
-  const user = (0, import_node_path5.join)(globalRoot(), "contracts.yaml");
-  return (0, import_node_fs7.existsSync)(user) ? user : (0, import_node_path5.join)(pluginRoot(), "config", "contracts.yaml");
+  const user = (0, import_node_path7.join)(globalRoot(), "contracts.yaml");
+  return (0, import_node_fs9.existsSync)(user) ? user : (0, import_node_path7.join)(pluginRoot(), "config", "contracts.yaml");
 }
 function load() {
   const p = contractsPath();
-  if (!(0, import_node_fs7.existsSync)(p)) return {};
+  if (!(0, import_node_fs9.existsSync)(p)) return {};
   try {
-    return (0, import_yaml2.parse)((0, import_node_fs7.readFileSync)(p, "utf8")) ?? {};
+    return (0, import_yaml2.parse)((0, import_node_fs9.readFileSync)(p, "utf8")) ?? {};
   } catch {
     return {};
   }
@@ -8101,14 +8357,14 @@ function consultTimeout(kind) {
   return /^[1-9][0-9]*$/.test(String(v)) ? Number(v) : CONSULT_DEFAULTS[kind];
 }
 function contractsExist() {
-  return (0, import_node_fs7.existsSync)(contractsPath());
+  return (0, import_node_fs9.existsSync)(contractsPath());
 }
-var import_node_fs7, import_node_path5, import_yaml2, CONSULT_DEFAULTS;
+var import_node_fs9, import_node_path7, import_yaml2, CONSULT_DEFAULTS;
 var init_contracts = __esm({
   "src/core/contracts.ts"() {
     "use strict";
-    import_node_fs7 = require("node:fs");
-    import_node_path5 = require("node:path");
+    import_node_fs9 = require("node:fs");
+    import_node_path7 = require("node:path");
     import_yaml2 = __toESM(require_dist(), 1);
     init_paths();
     CONSULT_DEFAULTS = { research: 600, verify: 300, adversary: 600, experiment: 1800 };
@@ -9599,22 +9855,22 @@ function toPath(urlOrPath) {
 function traversePathUp(startPath) {
   return {
     *[Symbol.iterator]() {
-      let currentPath = import_node_path6.default.resolve(toPath(startPath));
+      let currentPath = import_node_path8.default.resolve(toPath(startPath));
       let previousPath;
       while (previousPath !== currentPath) {
         yield currentPath;
         previousPath = currentPath;
-        currentPath = import_node_path6.default.resolve(currentPath, "..");
+        currentPath = import_node_path8.default.resolve(currentPath, "..");
       }
     }
   };
 }
-var import_node_util4, import_node_child_process4, import_node_path6, import_node_url2, execFileOriginal, TEN_MEGABYTES_IN_BYTES;
+var import_node_util4, import_node_child_process4, import_node_path8, import_node_url2, execFileOriginal, TEN_MEGABYTES_IN_BYTES;
 var init_node = __esm({
   "node_modules/unicorn-magic/node.js"() {
     import_node_util4 = require("node:util");
     import_node_child_process4 = require("node:child_process");
-    import_node_path6 = __toESM(require("node:path"), 1);
+    import_node_path8 = __toESM(require("node:path"), 1);
     import_node_url2 = require("node:url");
     init_default2();
     execFileOriginal = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
@@ -9623,11 +9879,11 @@ var init_node = __esm({
 });
 
 // node_modules/npm-run-path/index.js
-var import_node_process5, import_node_path7, npmRunPath, applyPreferLocal, applyExecPath, npmRunPathEnv;
+var import_node_process5, import_node_path9, npmRunPath, applyPreferLocal, applyExecPath, npmRunPathEnv;
 var init_npm_run_path = __esm({
   "node_modules/npm-run-path/index.js"() {
     import_node_process5 = __toESM(require("node:process"), 1);
-    import_node_path7 = __toESM(require("node:path"), 1);
+    import_node_path9 = __toESM(require("node:path"), 1);
     init_path_key();
     init_node();
     npmRunPath = ({
@@ -9637,27 +9893,27 @@ var init_npm_run_path = __esm({
       execPath: execPath2 = import_node_process5.default.execPath,
       addExecPath = true
     } = {}) => {
-      const cwdPath = import_node_path7.default.resolve(toPath(cwd));
+      const cwdPath = import_node_path9.default.resolve(toPath(cwd));
       const result = [];
-      const pathParts = pathOption.split(import_node_path7.default.delimiter);
+      const pathParts = pathOption.split(import_node_path9.default.delimiter);
       if (preferLocal) {
         applyPreferLocal(result, pathParts, cwdPath);
       }
       if (addExecPath) {
         applyExecPath(result, pathParts, execPath2, cwdPath);
       }
-      return pathOption === "" || pathOption === import_node_path7.default.delimiter ? `${result.join(import_node_path7.default.delimiter)}${pathOption}` : [...result, pathOption].join(import_node_path7.default.delimiter);
+      return pathOption === "" || pathOption === import_node_path9.default.delimiter ? `${result.join(import_node_path9.default.delimiter)}${pathOption}` : [...result, pathOption].join(import_node_path9.default.delimiter);
     };
     applyPreferLocal = (result, pathParts, cwdPath) => {
       for (const directory of traversePathUp(cwdPath)) {
-        const pathPart = import_node_path7.default.join(directory, "node_modules/.bin");
+        const pathPart = import_node_path9.default.join(directory, "node_modules/.bin");
         if (!pathParts.includes(pathPart)) {
           result.push(pathPart);
         }
       }
     };
     applyExecPath = (result, pathParts, execPath2, cwdPath) => {
-      const pathPart = import_node_path7.default.resolve(cwdPath, toPath(execPath2), "..");
+      const pathPart = import_node_path9.default.resolve(cwdPath, toPath(execPath2), "..");
       if (!pathParts.includes(pathPart)) {
         result.push(pathPart);
       }
@@ -10940,11 +11196,11 @@ var init_timeout = __esm({
 });
 
 // node_modules/execa/lib/methods/node.js
-var import_node_process6, import_node_path8, mapNode, handleNodeOption;
+var import_node_process6, import_node_path10, mapNode, handleNodeOption;
 var init_node2 = __esm({
   "node_modules/execa/lib/methods/node.js"() {
     import_node_process6 = require("node:process");
-    import_node_path8 = __toESM(require("node:path"), 1);
+    import_node_path10 = __toESM(require("node:path"), 1);
     init_file_url();
     mapNode = ({ options }) => {
       if (options.node === false) {
@@ -10964,7 +11220,7 @@ var init_node2 = __esm({
         throw new TypeError('The "execPath" option has been removed. Please use the "nodePath" option instead.');
       }
       const normalizedNodePath = safeNormalizeFileUrl(nodePath, 'The "nodePath" option');
-      const resolvedNodePath = import_node_path8.default.resolve(cwd, normalizedNodePath);
+      const resolvedNodePath = import_node_path10.default.resolve(cwd, normalizedNodePath);
       const newOptions = {
         ...options,
         nodePath: resolvedNodePath,
@@ -10974,7 +11230,7 @@ var init_node2 = __esm({
       if (!shouldHandleNode) {
         return [file, commandArguments, newOptions];
       }
-      if (import_node_path8.default.basename(file, ".exe") === "node") {
+      if (import_node_path10.default.basename(file, ".exe") === "node") {
         throw new TypeError('When the "node" option is true, the first argument does not need to be "node".');
       }
       return [
@@ -11075,16 +11331,16 @@ Please rename it to one of: ${correctEncodings}.`);
 });
 
 // node_modules/execa/lib/arguments/cwd.js
-var import_node_fs8, import_node_path9, import_node_process7, normalizeCwd, getDefaultCwd, fixCwdError;
+var import_node_fs10, import_node_path11, import_node_process7, normalizeCwd, getDefaultCwd, fixCwdError;
 var init_cwd = __esm({
   "node_modules/execa/lib/arguments/cwd.js"() {
-    import_node_fs8 = require("node:fs");
-    import_node_path9 = __toESM(require("node:path"), 1);
+    import_node_fs10 = require("node:fs");
+    import_node_path11 = __toESM(require("node:path"), 1);
     import_node_process7 = __toESM(require("node:process"), 1);
     init_file_url();
     normalizeCwd = (cwd = getDefaultCwd()) => {
       const cwdString = safeNormalizeFileUrl(cwd, 'The "cwd" option');
-      return import_node_path9.default.resolve(cwdString);
+      return import_node_path11.default.resolve(cwdString);
     };
     getDefaultCwd = () => {
       try {
@@ -11101,7 +11357,7 @@ ${error.message}`;
       }
       let cwdStat;
       try {
-        cwdStat = (0, import_node_fs8.statSync)(cwd);
+        cwdStat = (0, import_node_fs10.statSync)(cwd);
       } catch (error) {
         return `The "cwd" option is invalid: ${cwd}.
 ${error.message}
@@ -11117,10 +11373,10 @@ ${originalMessage}`;
 });
 
 // node_modules/execa/lib/arguments/options.js
-var import_node_path10, import_node_process8, import_cross_spawn, normalizeOptions, addDefaultOptions, getEnv;
+var import_node_path12, import_node_process8, import_cross_spawn, normalizeOptions, addDefaultOptions, getEnv;
 var init_options = __esm({
   "node_modules/execa/lib/arguments/options.js"() {
-    import_node_path10 = __toESM(require("node:path"), 1);
+    import_node_path12 = __toESM(require("node:path"), 1);
     import_node_process8 = __toESM(require("node:process"), 1);
     import_cross_spawn = __toESM(require_cross_spawn(), 1);
     init_npm_run_path();
@@ -11151,7 +11407,7 @@ var init_options = __esm({
       options.killSignal = normalizeKillSignal(options.killSignal);
       options.forceKillAfterDelay = normalizeForceKillAfterDelay(options.forceKillAfterDelay);
       options.lines = options.lines.map((lines, fdNumber) => lines && !BINARY_ENCODINGS.has(options.encoding) && options.buffer[fdNumber]);
-      if (import_node_process8.default.platform === "win32" && import_node_path10.default.basename(file, ".exe") === "cmd") {
+      if (import_node_process8.default.platform === "win32" && import_node_path12.default.basename(file, ".exe") === "cmd") {
         commandArguments.unshift("/q");
       }
       return { file, commandArguments, options };
@@ -12644,10 +12900,10 @@ var init_stdio_option = __esm({
 });
 
 // node_modules/execa/lib/stdio/native.js
-var import_node_fs9, import_node_tty2, handleNativeStream, handleNativeStreamSync, getTargetFd, getTargetFdNumber, handleNativeStreamAsync, getStandardStream;
+var import_node_fs11, import_node_tty2, handleNativeStream, handleNativeStreamSync, getTargetFd, getTargetFdNumber, handleNativeStreamAsync, getStandardStream;
 var init_native = __esm({
   "node_modules/execa/lib/stdio/native.js"() {
-    import_node_fs9 = require("node:fs");
+    import_node_fs11 = require("node:fs");
     import_node_tty2 = __toESM(require("node:tty"), 1);
     init_is_stream();
     init_standard_stream();
@@ -12685,7 +12941,7 @@ var init_native = __esm({
       if (import_node_tty2.default.isatty(targetFdNumber)) {
         throw new TypeError(`The \`${optionName}: ${serializeOptionValue(value)}\` option is invalid: it cannot be a TTY with synchronous methods.`);
       }
-      return { type: "uint8Array", value: bufferToUint8Array((0, import_node_fs9.readFileSync)(targetFdNumber)), optionName };
+      return { type: "uint8Array", value: bufferToUint8Array((0, import_node_fs11.readFileSync)(targetFdNumber)), optionName };
     };
     getTargetFdNumber = (value, fdNumber) => {
       if (value === "inherit") {
@@ -13021,10 +13277,10 @@ For example, you can use the \`pathToFileURL()\` method of the \`url\` core modu
 });
 
 // node_modules/execa/lib/stdio/handle-sync.js
-var import_node_fs10, handleStdioSync, forbiddenIfSync, forbiddenNativeIfSync, throwInvalidSyncValue, addProperties, addPropertiesSync;
+var import_node_fs12, handleStdioSync, forbiddenIfSync, forbiddenNativeIfSync, throwInvalidSyncValue, addProperties, addPropertiesSync;
 var init_handle_sync = __esm({
   "node_modules/execa/lib/stdio/handle-sync.js"() {
-    import_node_fs10 = require("node:fs");
+    import_node_fs12 = require("node:fs");
     init_uint_array();
     init_handle();
     init_type();
@@ -13055,8 +13311,8 @@ var init_handle_sync = __esm({
     addPropertiesSync = {
       input: {
         ...addProperties,
-        fileUrl: ({ value }) => ({ contents: [bufferToUint8Array((0, import_node_fs10.readFileSync)(value))] }),
-        filePath: ({ value: { file } }) => ({ contents: [bufferToUint8Array((0, import_node_fs10.readFileSync)(file))] }),
+        fileUrl: ({ value }) => ({ contents: [bufferToUint8Array((0, import_node_fs12.readFileSync)(value))] }),
+        filePath: ({ value: { file } }) => ({ contents: [bufferToUint8Array((0, import_node_fs12.readFileSync)(file))] }),
         fileNumber: forbiddenIfSync,
         iterable: ({ value }) => ({ contents: [...value] }),
         string: ({ value }) => ({ contents: [value] }),
@@ -13490,10 +13746,10 @@ var init_output = __esm({
 });
 
 // node_modules/execa/lib/io/output-sync.js
-var import_node_fs11, transformOutputSync, transformOutputResultSync, runOutputGeneratorsSync, serializeChunks, logOutputSync, writeToFiles;
+var import_node_fs13, transformOutputSync, transformOutputResultSync, runOutputGeneratorsSync, serializeChunks, logOutputSync, writeToFiles;
 var init_output_sync = __esm({
   "node_modules/execa/lib/io/output-sync.js"() {
-    import_node_fs11 = require("node:fs");
+    import_node_fs13 = require("node:fs");
     init_output();
     init_generator();
     init_split();
@@ -13594,10 +13850,10 @@ var init_output_sync = __esm({
       for (const { path: path6, append } of stdioItems.filter(({ type }) => FILE_TYPES.has(type))) {
         const pathString = typeof path6 === "string" ? path6 : path6.toString();
         if (append || outputFiles.has(pathString)) {
-          (0, import_node_fs11.appendFileSync)(path6, serializedResult);
+          (0, import_node_fs13.appendFileSync)(path6, serializedResult);
         } else {
           outputFiles.add(pathString);
-          (0, import_node_fs11.writeFileSync)(path6, serializedResult);
+          (0, import_node_fs13.writeFileSync)(path6, serializedResult);
         }
       }
     };
@@ -14109,10 +14365,10 @@ var init_early_error = __esm({
 });
 
 // node_modules/execa/lib/stdio/handle-async.js
-var import_node_fs12, import_node_buffer3, import_node_stream3, handleStdioAsync, forbiddenIfAsync, addProperties2, addPropertiesAsync;
+var import_node_fs14, import_node_buffer3, import_node_stream3, handleStdioAsync, forbiddenIfAsync, addProperties2, addPropertiesAsync;
 var init_handle_async = __esm({
   "node_modules/execa/lib/stdio/handle-async.js"() {
-    import_node_fs12 = require("node:fs");
+    import_node_fs14 = require("node:fs");
     import_node_buffer3 = require("node:buffer");
     import_node_stream3 = require("node:stream");
     init_generator();
@@ -14139,8 +14395,8 @@ var init_handle_async = __esm({
     addPropertiesAsync = {
       input: {
         ...addProperties2,
-        fileUrl: ({ value }) => ({ stream: (0, import_node_fs12.createReadStream)(value) }),
-        filePath: ({ value: { file } }) => ({ stream: (0, import_node_fs12.createReadStream)(file) }),
+        fileUrl: ({ value }) => ({ stream: (0, import_node_fs14.createReadStream)(value) }),
+        filePath: ({ value: { file } }) => ({ stream: (0, import_node_fs14.createReadStream)(file) }),
         webStream: ({ value }) => ({ stream: import_node_stream3.Readable.fromWeb(value) }),
         iterable: ({ value }) => ({ stream: import_node_stream3.Readable.from(value) }),
         asyncIterable: ({ value }) => ({ stream: import_node_stream3.Readable.from(value) }),
@@ -14149,8 +14405,8 @@ var init_handle_async = __esm({
       },
       output: {
         ...addProperties2,
-        fileUrl: ({ value }) => ({ stream: (0, import_node_fs12.createWriteStream)(value) }),
-        filePath: ({ value: { file, append } }) => ({ stream: (0, import_node_fs12.createWriteStream)(file, append ? { flags: "a" } : {}) }),
+        fileUrl: ({ value }) => ({ stream: (0, import_node_fs14.createWriteStream)(value) }),
+        filePath: ({ value: { file, append } }) => ({ stream: (0, import_node_fs14.createWriteStream)(file, append ? { flags: "a" } : {}) }),
         webStream: ({ value }) => ({ stream: import_node_stream3.Writable.fromWeb(value) }),
         iterable: forbiddenIfAsync,
         asyncIterable: forbiddenIfAsync,
@@ -16388,7 +16644,7 @@ function paneBorderArgs() {
     ]
   ];
 }
-function wrapLaunch(launch, hasBashrc = (0, import_node_fs13.existsSync)((0, import_node_path11.join)((0, import_node_os5.homedir)(), ".bashrc"))) {
+function wrapLaunch(launch, hasBashrc = (0, import_node_fs15.existsSync)((0, import_node_path13.join)((0, import_node_os5.homedir)(), ".bashrc"))) {
   return hasBashrc ? `bash -ic 'exec ${launch}'` : launch;
 }
 function sentinelCommand(labelFmt2) {
@@ -16467,12 +16723,12 @@ async function killGraceful(pane, pluginRoot2) {
   if (!await paneAlive(pane)) return;
   const label = await paneLabel(pane) || "part";
   const color = await paneColor(pane);
-  const snap = (0, import_node_path11.join)((0, import_node_fs13.mkdtempSync)((0, import_node_path11.join)((0, import_node_os5.tmpdir)(), "cs-snap-")), "snap.txt");
+  const snap = (0, import_node_path13.join)((0, import_node_fs15.mkdtempSync)((0, import_node_path13.join)((0, import_node_os5.tmpdir)(), "cs-snap-")), "snap.txt");
   try {
     const { stdout } = await execa("tmux", ["capture-pane", "-p", "-e", "-t", pane]);
-    (0, import_node_fs13.writeFileSync)(snap, stdout);
+    (0, import_node_fs15.writeFileSync)(snap, stdout);
   } catch {
-    (0, import_node_fs13.writeFileSync)(snap, "");
+    (0, import_node_fs15.writeFileSync)(snap, "");
   }
   await respawn(pane, gracefulRespawnCommand(snap, pluginRoot2, label, color));
 }
@@ -16509,14 +16765,14 @@ async function preflightLayout(topic, roster, opts) {
     throw e;
   }
 }
-var import_node_os5, import_node_fs13, import_node_path11, splitRight, splitDown, respawn;
+var import_node_os5, import_node_fs15, import_node_path13, splitRight, splitDown, respawn;
 var init_tmux = __esm({
   "src/core/tmux.ts"() {
     "use strict";
     init_execa();
     import_node_os5 = require("node:os");
-    import_node_fs13 = require("node:fs");
-    import_node_path11 = require("node:path");
+    import_node_fs15 = require("node:fs");
+    import_node_path13 = require("node:path");
     init_colors();
     splitRight = (launch, target, cwd) => tmux(splitRightArgs(launch, target, cwd));
     splitDown = (launch, target, cwd) => tmux(splitDownArgs(launch, target, cwd));
@@ -16606,31 +16862,31 @@ function scrapeArtDir(artDir) {
   const out = [];
   const read = (p) => {
     try {
-      return (0, import_node_fs14.readFileSync)(p, "utf8");
+      return (0, import_node_fs16.readFileSync)(p, "utf8");
     } catch {
       return null;
     }
   };
-  const a2 = read((0, import_node_path12.join)(artDir, "design-doc", "audit.log"));
+  const a2 = read((0, import_node_path14.join)(artDir, "design-doc", "audit.log"));
   if (a2 !== null) out.push(...scrapeAuditLog(a2));
-  const sr = read((0, import_node_path12.join)(artDir, "spawn-results.tsv"));
+  const sr = read((0, import_node_path14.join)(artDir, "spawn-results.tsv"));
   if (sr !== null) out.push(...scrapeSpawnResults(sr));
   try {
-    for (const f of (0, import_node_fs14.readdirSync)(artDir)) {
+    for (const f of (0, import_node_fs16.readdirSync)(artDir)) {
       if (f.endsWith(".log") || f === "session-summary.md") {
-        const t = read((0, import_node_path12.join)(artDir, f));
+        const t = read((0, import_node_path14.join)(artDir, f));
         if (t !== null) out.push(...scrapeLogs(t, f));
       }
     }
   } catch {
   }
-  const topicDir2 = (0, import_node_path12.dirname)(artDir);
+  const topicDir2 = (0, import_node_path14.dirname)(artDir);
   try {
-    for (const d of (0, import_node_fs14.readdirSync)(topicDir2, { withFileTypes: true })) {
+    for (const d of (0, import_node_fs16.readdirSync)(topicDir2, { withFileTypes: true })) {
       if (!d.isDirectory() || d.name.startsWith("_") || d.name.startsWith(".")) continue;
-      const ob = read((0, import_node_path12.join)(topicDir2, d.name, "outbox.jsonl"));
+      const ob = read((0, import_node_path14.join)(topicDir2, d.name, "outbox.jsonl"));
       if (ob !== null) out.push(...scrapeOutbox(ob, d.name));
-      const st = read((0, import_node_path12.join)(topicDir2, d.name, "status.json"));
+      const st = read((0, import_node_path14.join)(topicDir2, d.name, "status.json"));
       if (st !== null) out.push(...scrapeStatus(st, d.name));
     }
   } catch {
@@ -16667,15 +16923,15 @@ function captureArtDir(opts) {
     const iso = now.toISOString();
     const date = iso.slice(0, 10);
     const time = iso.slice(11, 19).replace(/:/g, "-");
-    const topicSlug = (0, import_node_path12.basename)((0, import_node_path12.dirname)(opts.artDir));
+    const topicSlug = (0, import_node_path14.basename)((0, import_node_path14.dirname)(opts.artDir));
     let hash = "unknown";
     try {
       hash = repoHash();
     } catch {
     }
-    const dir = (0, import_node_path12.join)(globalRoot(), "forensics", date);
-    (0, import_node_fs14.mkdirSync)(dir, { recursive: true });
-    const path6 = (0, import_node_path12.join)(dir, `${time}-${opts.command}-${topicSlug}.md`);
+    const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
+    (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
+    const path6 = (0, import_node_path14.join)(dir, `${time}-${opts.command}-${topicSlug}.md`);
     const md = renderArtForensics({ command: opts.command, topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") }, findings);
     atomicWrite(path6, md);
     return path6;
@@ -16714,9 +16970,9 @@ function captureSpawnFailure(opts) {
       hash = repoHash();
     } catch {
     }
-    const dir = (0, import_node_path12.join)(globalRoot(), "forensics", date);
-    (0, import_node_fs14.mkdirSync)(dir, { recursive: true });
-    const path6 = (0, import_node_path12.join)(dir, `${time}-spawn-${opts.topic}.md`);
+    const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
+    (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
+    const path6 = (0, import_node_path14.join)(dir, `${time}-spawn-${opts.topic}.md`);
     const md = renderArtForensics(
       { command: "spawn", topicSlug: opts.topic, repoHash: hash, artDir: partDir(opts.instrument, opts.model, opts.topic), invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
       findings
@@ -16727,12 +16983,12 @@ function captureSpawnFailure(opts) {
     return "";
   }
 }
-var import_node_fs14, import_node_path12, SCROLLBACK_LINES, NO_EVENT_SENTINEL, FAILURE_FILENAME;
+var import_node_fs16, import_node_path14, SCROLLBACK_LINES, NO_EVENT_SENTINEL, FAILURE_FILENAME;
 var init_forensics = __esm({
   "src/core/forensics.ts"() {
     "use strict";
-    import_node_fs14 = require("node:fs");
-    import_node_path12 = require("node:path");
+    import_node_fs16 = require("node:fs");
+    import_node_path14 = require("node:path");
     init_paths();
     init_atomic();
     init_log();
@@ -16762,7 +17018,7 @@ async function run(args) {
   }
   let instrument = args[0];
   const [, model, topic] = args;
-  let i2 = 3, mode = "", cwd = "", targetPane = "", initial = "";
+  let i2 = 3, mode = "", cwd = "", targetPane = "", preflightArtDir = "", initial = "";
   for (; i2 < args.length; i2++) {
     const a2 = args[i2];
     if (a2 === "--mode" || a2.startsWith("--mode=")) {
@@ -16777,6 +17033,10 @@ async function run(args) {
       const r = kvParse(a2, args[i2 + 1]);
       targetPane = r.value;
       i2 += r.shift - 1;
+    } else if (a2 === "--preflight-art-dir" || a2.startsWith("--preflight-art-dir=")) {
+      const r = kvParse(a2, args[i2 + 1]);
+      preflightArtDir = r.value;
+      i2 += r.shift - 1;
     } else {
       initial = args.slice(i2).join(" ");
       break;
@@ -16790,7 +17050,7 @@ async function run(args) {
     log.error(`instrument must match [a-z0-9-]+ and be <= 32 chars (or 'random'); got: '${instrument}'`);
     return 2;
   }
-  if (cwd && (!cwd.startsWith("/") || !(0, import_node_fs15.existsSync)(cwd))) {
+  if (cwd && (!cwd.startsWith("/") || !(0, import_node_fs17.existsSync)(cwd))) {
     log.error(`spawn --cwd must be an existing absolute path: ${cwd}`);
     return 1;
   }
@@ -16847,6 +17107,15 @@ async function run(args) {
     const startDir = cwd || repoRoot();
     let pane;
     if (targetPane) {
+      if (preflightArtDir) {
+        const pf = (0, import_node_path15.join)(preflightArtDir, "preflight-panes.txt");
+        const ok = (0, import_node_fs17.existsSync)(pf) && paneListedFor((0, import_node_fs17.readFileSync)(pf, "utf8"), instrument, targetPane);
+        if (!ok) {
+          captureSpawnFailure({ instrument, model, topic, reason: "pane_failed", detail: `--target-pane ${targetPane} not listed for ${instrument} in ${pf}` });
+          log.error(`--target-pane ${targetPane} is not a preflight pane for ${instrument} (checked ${pf})`);
+          return 1;
+        }
+      }
       if (!await paneAlive(targetPane)) {
         captureSpawnFailure({ instrument, model, topic, reason: "pane_failed", detail: `--target-pane ${targetPane} is not alive` });
         log.error(`--target-pane ${targetPane} is not alive`);
@@ -16855,13 +17124,13 @@ async function run(args) {
       pane = await respawn(targetPane, launch, startDir);
       await paneLabelSet(pane, instrument, model, topic);
     } else {
-      const lastFile = (0, import_node_path13.join)(topicDir(topic), ".last_pane");
-      const prior = (0, import_node_fs15.existsSync)(lastFile) ? (0, import_node_fs15.readFileSync)(lastFile, "utf8").trim() : "";
+      const lastFile = (0, import_node_path15.join)(topicDir(topic), ".last_pane");
+      const prior = (0, import_node_fs17.existsSync)(lastFile) ? (0, import_node_fs17.readFileSync)(lastFile, "utf8").trim() : "";
       if (prior && await paneAlive(prior)) pane = await splitDown(launch, prior, startDir);
       else pane = await splitRight(launch, void 0, startDir);
       await paneLabelSet(pane, instrument, model, topic);
-      (0, import_node_fs15.mkdirSync)(topicDir(topic), { recursive: true });
-      (0, import_node_fs15.writeFileSync)(lastFile, pane + "\n");
+      (0, import_node_fs17.mkdirSync)(topicDir(topic), { recursive: true });
+      (0, import_node_fs17.writeFileSync)(lastFile, pane + "\n");
     }
     paneMetaWrite(instrument, model, topic, pane);
     log.ok(`spawned ${labelFor(instrument, model, topic)} in pane ${pane} (mode=${useMode})`);
@@ -16876,9 +17145,15 @@ async function run(args) {
       const reason = ev ? "error_event" : "timeout";
       const tail = await capturePane(pane, 25);
       process.stderr.write(tail + "\n");
+      if (!ev) {
+        const ob = outboxDump(instrument, model, topic).trim();
+        if (ob) process.stderr.write(`outbox:
+${ob}
+`);
+      }
       const fr = await captureFailure(
         { instrument, model, topic, paneId: pane, reason, eventLine: ev ? JSON.stringify(ev) : void 0, readyTimeout },
-        { partDir, capturePane: (p, n2) => capturePane(p, n2), atomicWriteSync: (d, c3) => (0, import_node_fs15.writeFileSync)(d, c3), isWritableDir: (d) => (0, import_node_fs15.existsSync)(d), now: () => (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z") }
+        { partDir, capturePane: (p, n2) => capturePane(p, n2), atomicWriteSync: (d, c3) => (0, import_node_fs17.writeFileSync)(d, c3), isWritableDir: (d) => (0, import_node_fs17.existsSync)(d), now: () => (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z") }
       );
       captureSpawnFailure({ instrument, model, topic, ...bootstrapFailureArgs(ev ?? null, fr.ok ? fr.path : void 0) });
       await killNow(pane);
@@ -16905,18 +17180,19 @@ async function run(args) {
     throw e;
   }
 }
-var import_node_fs15, import_node_path13, SLUG, sleep2;
+var import_node_fs17, import_node_path15, SLUG, sleep2;
 var init_spawn = __esm({
   "src/commands/spawn.ts"() {
     "use strict";
-    import_node_fs15 = require("node:fs");
-    import_node_path13 = require("node:path");
+    import_node_fs17 = require("node:fs");
+    import_node_path15 = require("node:path");
     init_args();
     init_log();
     init_deps();
     init_paths();
     init_archive();
     init_ipc();
+    init_score();
     init_instruments();
     init_contracts();
     init_tmux();
@@ -16950,7 +17226,7 @@ async function run2(args) {
   const [instrument, topic] = a2;
   let msg = a2.slice(2).join(" ");
   const td = topicDir(topic);
-  const dir = (0, import_node_fs16.existsSync)(td) ? (0, import_node_fs16.readdirSync)(td, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.startsWith(`${instrument}-`)) : void 0;
+  const dir = (0, import_node_fs18.existsSync)(td) ? (0, import_node_fs18.readdirSync)(td, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.startsWith(`${instrument}-`)) : void 0;
   if (!dir) {
     log.error(`no part '${instrument}' on topic '${topic}' (state dir absent)`);
     log.error(`  spawn first: consort spawn ${instrument} <model> ${topic}`);
@@ -16968,11 +17244,11 @@ async function run2(args) {
   }
   if (msg.startsWith("@")) {
     const f = msg.slice(1);
-    if (!(0, import_node_fs16.existsSync)(f)) {
+    if (!(0, import_node_fs18.existsSync)(f)) {
       log.error(`file not found: ${f}`);
       return 1;
     }
-    msg = (0, import_node_fs16.readFileSync)(f, "utf8");
+    msg = (0, import_node_fs18.readFileSync)(f, "utf8");
   }
   inboxWrite(instrument, model, topic, msg, from ? { from } : void 0);
   const inbox = inboxPath(instrument, model, topic);
@@ -16986,11 +17262,11 @@ async function run2(args) {
 `);
   return 0;
 }
-var import_node_fs16;
+var import_node_fs18;
 var init_send2 = __esm({
   "src/commands/send.ts"() {
     "use strict";
-    import_node_fs16 = require("node:fs");
+    import_node_fs18 = require("node:fs");
     init_log();
     init_paths();
     init_ipc();
@@ -17057,7 +17333,8 @@ __export(roster_exports, {
   classifyStale: () => classifyStale,
   deriveState: () => deriveState,
   lastOutboxEvent: () => lastOutboxEvent,
-  run: () => run4
+  run: () => run4,
+  staleThresholdS: () => staleThresholdS
 });
 function deriveState(lastEvent) {
   switch (lastEvent) {
@@ -17077,8 +17354,8 @@ function deriveState(lastEvent) {
   }
 }
 function lastOutboxEvent(outbox) {
-  if (!(0, import_node_fs17.existsSync)(outbox)) return void 0;
-  const lines = (0, import_node_fs17.readFileSync)(outbox, "utf8").split("\n").filter(Boolean);
+  if (!(0, import_node_fs19.existsSync)(outbox)) return void 0;
+  const lines = (0, import_node_fs19.readFileSync)(outbox, "utf8").split("\n").filter(Boolean);
   if (lines.length === 0) return void 0;
   try {
     return JSON.parse(lines[lines.length - 1]).event;
@@ -17087,15 +17364,15 @@ function lastOutboxEvent(outbox) {
   }
 }
 function classifyStale(state, outbox, thresholdS = 180) {
-  if (state !== "working" || !(0, import_node_fs17.existsSync)(outbox)) return state;
+  if (state !== "working" || !(0, import_node_fs19.existsSync)(outbox)) return state;
   const t = Number.isInteger(thresholdS) && thresholdS >= 0 ? thresholdS : 180;
-  const ageS = (Date.now() - (0, import_node_fs17.statSync)(outbox).mtimeMs) / 1e3;
+  const ageS = (Date.now() - (0, import_node_fs19.statSync)(outbox).mtimeMs) / 1e3;
   return ageS > 0 && ageS > t ? "stale" : state;
 }
 async function run4(args) {
   const filter = args.find((a2) => !a2.startsWith("--"));
   const repo = repoStateDir();
-  if (!(0, import_node_fs17.existsSync)(repo)) {
+  if (!(0, import_node_fs19.existsSync)(repo)) {
     process.stdout.write(`no parts deployed (state dir absent: ${repo})
 `);
     return 0;
@@ -17105,33 +17382,34 @@ async function run4(args) {
 `);
   process.stdout.write(`${"-".repeat(32)} ${"-".repeat(8)} ${"-".repeat(12)} ${"-".repeat(9)} -----
 `);
-  for (const t of (0, import_node_fs17.readdirSync)(repo, { withFileTypes: true })) {
+  for (const t of (0, import_node_fs19.readdirSync)(repo, { withFileTypes: true })) {
     if (!t.isDirectory()) continue;
     if (filter && t.name !== filter) continue;
-    const td = (0, import_node_path14.join)(repo, t.name);
-    for (const p of (0, import_node_fs17.readdirSync)(td, { withFileTypes: true })) {
+    const td = (0, import_node_path16.join)(repo, t.name);
+    for (const p of (0, import_node_fs19.readdirSync)(td, { withFileTypes: true })) {
       if (!p.isDirectory() || isArtifactDir(p.name)) continue;
-      const dir = (0, import_node_path14.join)(td, p.name);
+      const dir = (0, import_node_path16.join)(td, p.name);
       const meta = paneMetaReadForDir(dir);
       const pane = meta.paneId || "?";
       const ob = outboxPath(meta.instrument, meta.model, t.name);
       let state = "[ORPHAN]";
-      if (pane !== "?" && await paneAlive(pane)) state = classifyStale(deriveState(lastOutboxEvent(ob)), ob);
+      if (pane !== "?" && await paneAlive(pane)) state = classifyStale(deriveState(lastOutboxEvent(ob)), ob, staleThresholdS());
       process.stdout.write(`${W(meta.instrument, 32)} ${W(meta.model, 8)} ${W(t.name, 12)} ${W(pane, 9)} ${state}
 `);
     }
   }
   return 0;
 }
-var import_node_fs17, import_node_path14;
+var import_node_fs19, import_node_path16, staleThresholdS;
 var init_roster = __esm({
   "src/commands/roster.ts"() {
     "use strict";
-    import_node_fs17 = require("node:fs");
-    import_node_path14 = require("node:path");
+    import_node_fs19 = require("node:fs");
+    import_node_path16 = require("node:path");
     init_paths();
     init_ipc();
     init_tmux();
+    staleThresholdS = () => Number(process.env.CONSORT_STALE_THRESHOLD_S || "180");
   }
 });
 
@@ -17173,12 +17451,12 @@ function liveDeps() {
     stateArchive: (i2, m, t) => stateArchive(i2, m, t),
     sleep: sleep3,
     readLastPane: (t) => {
-      const f = (0, import_node_path15.join)(topicDir(t), ".last_pane");
-      return (0, import_node_fs18.existsSync)(f) ? (0, import_node_fs18.readFileSync)(f, "utf8").trim() : "";
+      const f = (0, import_node_path17.join)(topicDir(t), ".last_pane");
+      return (0, import_node_fs20.existsSync)(f) ? (0, import_node_fs20.readFileSync)(f, "utf8").trim() : "";
     },
     removeLastPane: (t) => {
       try {
-        (0, import_node_fs18.rmSync)((0, import_node_path15.join)(topicDir(t), ".last_pane"), { force: true });
+        (0, import_node_fs20.rmSync)((0, import_node_path17.join)(topicDir(t), ".last_pane"), { force: true });
       } catch {
       }
     }
@@ -17186,24 +17464,24 @@ function liveDeps() {
 }
 function collectTopicPairs(topic) {
   const td = topicDir(topic);
-  if (!(0, import_node_fs18.existsSync)(td)) return [];
+  if (!(0, import_node_fs20.existsSync)(td)) return [];
   const pairs = [];
-  for (const name of (0, import_node_fs18.readdirSync)(td, { withFileTypes: true })) {
+  for (const name of (0, import_node_fs20.readdirSync)(td, { withFileTypes: true })) {
     if (!name.isDirectory() || isArtifactDir(name.name)) continue;
-    const m = paneMetaReadForDir((0, import_node_path15.join)(td, name.name));
+    const m = paneMetaReadForDir((0, import_node_path17.join)(td, name.name));
     pairs.push({ instrument: m.instrument, model: m.model });
   }
   return pairs;
 }
 function collectInstrumentPairs(topic, instruments) {
   const td = topicDir(topic);
-  if (!(0, import_node_fs18.existsSync)(td)) return [];
-  const dirs = (0, import_node_fs18.readdirSync)(td, { withFileTypes: true }).filter((e) => e.isDirectory());
+  if (!(0, import_node_fs20.existsSync)(td)) return [];
+  const dirs = (0, import_node_fs20.readdirSync)(td, { withFileTypes: true }).filter((e) => e.isDirectory());
   const pairs = [];
   for (const instrument of instruments) {
     for (const e of dirs) {
       if (e.name.startsWith(`${instrument}-`)) {
-        const m = paneMetaReadForDir((0, import_node_path15.join)(td, e.name));
+        const m = paneMetaReadForDir((0, import_node_path17.join)(td, e.name));
         if (m.instrument === instrument) pairs.push({ instrument, model: m.model });
       }
     }
@@ -17213,11 +17491,11 @@ function collectInstrumentPairs(topic, instruments) {
 function cleanupTopicDir(topic) {
   const td = topicDir(topic);
   try {
-    (0, import_node_fs18.rmSync)((0, import_node_path15.join)(td, ".last_pane"), { force: true });
+    (0, import_node_fs20.rmSync)((0, import_node_path17.join)(td, ".last_pane"), { force: true });
   } catch {
   }
   try {
-    (0, import_node_fs18.rmdirSync)(td);
+    (0, import_node_fs20.rmdirSync)(td);
   } catch {
   }
 }
@@ -17234,11 +17512,11 @@ async function run5(args) {
       return 2;
     }
     const repo = repoStateDir();
-    if (!(0, import_node_fs18.existsSync)(repo)) {
+    if (!(0, import_node_fs20.existsSync)(repo)) {
       log.info("no state dirs to tear down");
       return 0;
     }
-    for (const t of (0, import_node_fs18.readdirSync)(repo, { withFileTypes: true })) {
+    for (const t of (0, import_node_fs20.readdirSync)(repo, { withFileTypes: true })) {
       if (t.isDirectory()) {
         await teardownBatch(t.name, collectTopicPairs(t.name), d);
         cleanupTopicDir(t.name);
@@ -17278,12 +17556,12 @@ async function run5(args) {
   process.stderr.write("Usage: coda <topic> | <instrument> <topic> | --all | --pairs <topic> <i...>\n");
   return 2;
 }
-var import_node_fs18, import_node_path15, GRACEFUL_BATCH_WAIT_MS, sleep3;
+var import_node_fs20, import_node_path17, GRACEFUL_BATCH_WAIT_MS, sleep3;
 var init_coda = __esm({
   "src/commands/coda.ts"() {
     "use strict";
-    import_node_fs18 = require("node:fs");
-    import_node_path15 = require("node:path");
+    import_node_fs20 = require("node:fs");
+    import_node_path17 = require("node:path");
     init_log();
     init_paths();
     init_archive();
@@ -17299,9 +17577,9 @@ function parseProviderList(text) {
   return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
 }
 function readProviderList(path6) {
-  if (!(0, import_node_fs19.existsSync)(path6)) return [];
+  if (!(0, import_node_fs21.existsSync)(path6)) return [];
   try {
-    return parseProviderList((0, import_node_fs19.readFileSync)(path6, "utf8"));
+    return parseProviderList((0, import_node_fs21.readFileSync)(path6, "utf8"));
   } catch {
     return [];
   }
@@ -17322,11 +17600,11 @@ ${providers.join("\n")}${providers.length ? "\n" : ""}`;
 function formatActiveFile(providers, isoStamp) {
   return formatProviderFile(providers, isoStamp, "active providers selected by user");
 }
-var import_node_fs19;
+var import_node_fs21;
 var init_providers = __esm({
   "src/core/providers.ts"() {
     "use strict";
-    import_node_fs19 = require("node:fs");
+    import_node_fs21 = require("node:fs");
   }
 });
 
@@ -17339,17 +17617,17 @@ __export(soundcheck_exports, {
   run: () => run6
 });
 function opencodeConfigPath(cwd = process.cwd(), home = (0, import_node_os6.homedir)()) {
-  const proj = (0, import_node_path16.join)(cwd, "opencode.json");
-  if ((0, import_node_fs20.existsSync)(proj)) return proj;
-  const glob = (0, import_node_path16.join)(home, ".config", "opencode", "opencode.json");
-  return (0, import_node_fs20.existsSync)(glob) ? glob : null;
+  const proj = (0, import_node_path18.join)(cwd, "opencode.json");
+  if ((0, import_node_fs22.existsSync)(proj)) return proj;
+  const glob = (0, import_node_path18.join)(home, ".config", "opencode", "opencode.json");
+  return (0, import_node_fs22.existsSync)(glob) ? glob : null;
 }
 function opencodePermissionCheck(cfgPath) {
   const p = cfgPath ?? opencodeConfigPath();
-  if (!p || !(0, import_node_fs20.existsSync)(p)) return { rc: 1, message: "no opencode.json found" };
+  if (!p || !(0, import_node_fs22.existsSync)(p)) return { rc: 1, message: "no opencode.json found" };
   let obj;
   try {
-    obj = JSON.parse((0, import_node_fs20.readFileSync)(p, "utf8"));
+    obj = JSON.parse((0, import_node_fs22.readFileSync)(p, "utf8"));
   } catch {
     return { rc: 1, message: "opencode.json: unparseable", configPath: p };
   }
@@ -17393,7 +17671,7 @@ function rosterSet(providers) {
     return 1;
   }
   const root = globalRoot();
-  (0, import_node_fs20.mkdirSync)(root, { recursive: true });
+  (0, import_node_fs22.mkdirSync)(root, { recursive: true });
   atomicWrite(activePath(), formatActiveFile(providers, isoUtc()));
   process.stdout.write(`active set: ${providers.join(", ")} (written to providers-active.txt)
 `);
@@ -17424,7 +17702,7 @@ function healthCheck() {
   let fail = 0, warn = 0, ok = 0, total = 0;
   const root = globalRoot();
   try {
-    (0, import_node_fs20.mkdirSync)(root, { recursive: true });
+    (0, import_node_fs22.mkdirSync)(root, { recursive: true });
   } catch {
   }
   const ver = tmuxVersionString();
@@ -17447,19 +17725,19 @@ function healthCheck() {
     log.warn("tmux session: not set \u2014 `tmux new -s consort` before spawning");
     warn = 1;
   }
-  if ((0, import_node_fs20.existsSync)(root)) log.ok(`state dir: ${root} (writable)`);
+  if ((0, import_node_fs22.existsSync)(root)) log.ok(`state dir: ${root} (writable)`);
   else {
     log.error(`state dir: ${root} cannot be created or is not writable`);
     fail = 1;
   }
   for (const f of ["contracts.yaml", "instruments.yaml"]) {
-    const dest = (0, import_node_path16.join)(globalRoot(), f);
-    if ((0, import_node_fs20.existsSync)(dest)) log.ok(`config: ${f}`);
+    const dest = (0, import_node_path18.join)(globalRoot(), f);
+    if ((0, import_node_fs22.existsSync)(dest)) log.ok(`config: ${f}`);
     else {
-      const shipped = (0, import_node_path16.join)(pluginRoot(), "config", f);
-      if ((0, import_node_fs20.existsSync)(shipped)) {
+      const shipped = (0, import_node_path18.join)(pluginRoot(), "config", f);
+      if ((0, import_node_fs22.existsSync)(shipped)) {
         try {
-          (0, import_node_fs20.copyFileSync)(shipped, dest);
+          (0, import_node_fs22.copyFileSync)(shipped, dest);
           log.ok(`config: ${f} (copied default into state dir)`);
         } catch {
           log.error(`config: ${f} missing; copy from plugin defaults failed`);
@@ -17471,9 +17749,15 @@ function healthCheck() {
       }
     }
   }
+  const idTpl = (0, import_node_path18.join)(pluginRoot(), "config", "prompt-templates", "identity.md");
+  if ((0, import_node_fs22.existsSync)(idTpl)) log.ok("config: identity.md (template present)");
+  else {
+    log.error(`config: identity template not found at ${idTpl} \u2014 partial install; spawn will fail`);
+    fail = 1;
+  }
   const detected = [];
   if (!contractsExist()) {
-    log.error(`contracts.yaml not found at ${(0, import_node_path16.join)(globalRoot(), "contracts.yaml")}`);
+    log.error(`contracts.yaml not found at ${(0, import_node_path18.join)(globalRoot(), "contracts.yaml")}`);
     fail = 1;
   } else {
     for (const prov of listInstruments()) {
@@ -17484,7 +17768,12 @@ function healthCheck() {
         continue;
       }
       if (haveCmd(bin)) {
-        log.ok(`  ${prov} (${bin}): installed`);
+        let ver2 = "";
+        try {
+          ver2 = (0, import_node_child_process8.execFileSync)(bin, ["--version"], { encoding: "utf8" }).split("\n")[0].trim();
+        } catch {
+        }
+        log.ok(`  ${prov} (${bin}): ${ver2 || "installed"}`);
         ok++;
         detected.push(prov);
       } else log.warn(`  ${prov} (${bin}): not on PATH \u2014 skip if you don't use this provider`);
@@ -17505,13 +17794,13 @@ function healthCheck() {
 `);
   return 0;
 }
-var import_node_fs20, import_node_child_process8, import_node_path16, import_node_os6, availablePath, activePath;
+var import_node_fs22, import_node_child_process8, import_node_path18, import_node_os6, availablePath, activePath;
 var init_soundcheck = __esm({
   "src/commands/soundcheck.ts"() {
     "use strict";
-    import_node_fs20 = require("node:fs");
+    import_node_fs22 = require("node:fs");
     import_node_child_process8 = require("node:child_process");
-    import_node_path16 = require("node:path");
+    import_node_path18 = require("node:path");
     import_node_os6 = require("node:os");
     init_log();
     init_deps();
@@ -17520,8 +17809,8 @@ var init_soundcheck = __esm({
     init_contracts();
     init_providers();
     init_archive();
-    availablePath = () => (0, import_node_path16.join)(globalRoot(), "providers-available.txt");
-    activePath = () => (0, import_node_path16.join)(globalRoot(), "providers-active.txt");
+    availablePath = () => (0, import_node_path18.join)(globalRoot(), "providers-available.txt");
+    activePath = () => (0, import_node_path18.join)(globalRoot(), "providers-active.txt");
   }
 });
 
@@ -17566,9 +17855,9 @@ async function run7(args) {
     log.error(`roster has ${roster.length} entries, expected ${n2}`);
     return 1;
   }
-  const art = artDir || (0, import_node_path17.join)(topicDir(topic), "_consult");
-  (0, import_node_fs21.mkdirSync)(art, { recursive: true });
-  const panesFile = (0, import_node_path17.join)(art, "preflight-panes.txt");
+  const art = artDir || (0, import_node_path19.join)(topicDir(topic), "_consult");
+  (0, import_node_fs23.mkdirSync)(art, { recursive: true });
+  const panesFile = (0, import_node_path19.join)(art, "preflight-panes.txt");
   try {
     const out = await preflightLayout(topic, roster, { writePanes: (tsv) => atomicWrite(panesFile, tsv) });
     log.ok(`preflight: ${out.length} panes allocated for topic ${topic}`);
@@ -17580,12 +17869,12 @@ async function run7(args) {
     return 1;
   }
 }
-var import_node_fs21, import_node_path17, SLUG2;
+var import_node_fs23, import_node_path19, SLUG2;
 var init_preflight = __esm({
   "src/commands/preflight.ts"() {
     "use strict";
-    import_node_fs21 = require("node:fs");
-    import_node_path17 = require("node:path");
+    import_node_fs23 = require("node:fs");
+    import_node_path19 = require("node:path");
     init_args();
     init_log();
     init_paths();
@@ -17606,132 +17895,6 @@ async function run8(_args) {
 var init_hook = __esm({
   "src/commands/hook.ts"() {
     "use strict";
-  }
-});
-
-// src/core/solo.ts
-function soloArtDir(topic) {
-  return (0, import_node_path18.join)(topicDir(topic), "_solo");
-}
-function soloExecDir(topic) {
-  return (0, import_node_path18.join)(soloArtDir(topic), "execute");
-}
-function deriveSlug(text) {
-  const s = text.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, 20).replace(/-+$/, "");
-  return s;
-}
-function parseSoloArgs(tokens) {
-  let provider;
-  let finish = true;
-  const text = [];
-  for (let i2 = 0; i2 < tokens.length; i2++) {
-    const t = tokens[i2];
-    if (t === "--finish") {
-      finish = true;
-      continue;
-    }
-    if (t === "--no-finish") {
-      finish = false;
-      continue;
-    }
-    if (t === "--provider") {
-      const v = tokens[i2 + 1];
-      if (v && !v.startsWith("--")) {
-        provider = v;
-        i2++;
-      }
-      continue;
-    }
-    if (t.startsWith("--provider=")) {
-      provider = t.slice("--provider=".length);
-      continue;
-    }
-    text.push(t);
-  }
-  return { topicText: text.join(" ").trim(), provider, finish };
-}
-function detectTestCommand(root) {
-  if ((0, import_node_fs22.existsSync)((0, import_node_path18.join)(root, "tests", "run.sh"))) return "bash tests/run.sh";
-  const pkg = (0, import_node_path18.join)(root, "package.json");
-  if ((0, import_node_fs22.existsSync)(pkg)) {
-    try {
-      if (JSON.parse((0, import_node_fs22.readFileSync)(pkg, "utf8"))?.scripts?.test) return "npm test";
-    } catch {
-    }
-  }
-  const mk = (0, import_node_path18.join)(root, "Makefile");
-  if ((0, import_node_fs22.existsSync)(mk)) {
-    try {
-      if (/^test:/m.test((0, import_node_fs22.readFileSync)(mk, "utf8"))) return "make test";
-    } catch {
-    }
-  }
-  if (((0, import_node_fs22.existsSync)((0, import_node_path18.join)(root, "pyproject.toml")) || (0, import_node_fs22.existsSync)((0, import_node_path18.join)(root, "setup.cfg"))) && (0, import_node_fs22.existsSync)((0, import_node_path18.join)(root, "tests"))) return "pytest";
-  return "";
-}
-function renderSummary(f) {
-  const head = [
-    "---",
-    "command: solo",
-    `topic: ${f.topic}`,
-    `status: ${f.status}`,
-    `started: ${f.started}`
-  ];
-  if (f.status === "ok") {
-    head.push(`ended: ${f.ended ?? "unknown"}`, `duration_seconds: ${f.duration ?? 0}`, "---", "");
-    return [
-      ...head,
-      "## Result",
-      `- Provider: ${f.provider}`,
-      `- Instrument: ${f.instrument}`,
-      `- Branch: ${f.branch}`,
-      `- Verify: ${f.verify}`,
-      `- Diff: ${f.diffStats}`,
-      "",
-      "## Where to look",
-      `- Review the work: \`git -C ${f.targetCwd} checkout ${f.branch}\` (diff base: ${f.branchBase})`,
-      `- Archived state: ${f.archived}`,
-      ""
-    ].join("\n");
-  }
-  head.push(
-    `aborted_phase: ${f.abortedPhase ?? "unknown"}`,
-    `aborted_gate: ${f.abortedGate ?? "unknown"}`,
-    `aborted_reason: ${f.abortedReason ?? "unknown"}`,
-    "---",
-    ""
-  );
-  return [
-    ...head,
-    "## Why aborted",
-    `- ${f.abortedReason ?? "unknown"}`,
-    "",
-    "## RESUME instructions",
-    `- Read RESUME.md for the state pointer; re-run /consort:solo to retry.`,
-    ""
-  ].join("\n");
-}
-function renderResume(f) {
-  return [
-    `# RESUME \u2014 ${f.topic} (aborted at ${f.phase}.${f.gate})`,
-    "",
-    "## State pointers",
-    `- State dir: ${f.artDir}`,
-    `- Topic: ${f.topic}`,
-    `- Branch: ${f.branch}`,
-    "",
-    "## Manual resume",
-    `- Inspect ${f.artDir}/execute/ for the part's partial work, then re-run /consort:solo.`,
-    ""
-  ].join("\n");
-}
-var import_node_path18, import_node_fs22;
-var init_solo = __esm({
-  "src/core/solo.ts"() {
-    "use strict";
-    import_node_path18 = require("node:path");
-    import_node_fs22 = require("node:fs");
-    init_paths();
   }
 });
 
@@ -17913,16 +18076,16 @@ var init_turn = __esm({
 
 // src/core/fsread.ts
 function readIfExists(path6) {
-  return (0, import_node_fs23.existsSync)(path6) ? (0, import_node_fs23.readFileSync)(path6, "utf8") : "";
+  return (0, import_node_fs24.existsSync)(path6) ? (0, import_node_fs24.readFileSync)(path6, "utf8") : "";
 }
 function readIfExistsOrNull(path6) {
-  return (0, import_node_fs23.existsSync)(path6) ? (0, import_node_fs23.readFileSync)(path6, "utf8") : null;
+  return (0, import_node_fs24.existsSync)(path6) ? (0, import_node_fs24.readFileSync)(path6, "utf8") : null;
 }
-var import_node_fs23;
+var import_node_fs24;
 var init_fsread = __esm({
   "src/core/fsread.ts"() {
     "use strict";
-    import_node_fs23 = require("node:fs");
+    import_node_fs24 = require("node:fs");
   }
 });
 
@@ -17993,7 +18156,7 @@ async function initWith(tokens, d) {
     return 3;
   }
   const art = soloArtDir(slug);
-  if ((0, import_node_fs24.existsSync)(art)) {
+  if ((0, import_node_fs25.existsSync)(art)) {
     log.error(`solo init: topic already in flight: ${art}`);
     log.error("  run /consort:coda or pick a different topic");
     return 2;
@@ -18004,15 +18167,15 @@ async function initWith(tokens, d) {
     return 1;
   }
   const exec = soloExecDir(slug);
-  (0, import_node_fs24.mkdirSync)(exec, { recursive: true });
-  atomicWrite((0, import_node_path19.join)(art, "topic.txt"), slug + "\n");
-  atomicWrite((0, import_node_path19.join)(art, "topic-text.txt"), topicText);
-  atomicWrite((0, import_node_path19.join)(art, "selected-provider.txt"), provider + "\n");
-  atomicWrite((0, import_node_path19.join)(art, "instrument.txt"), instrument + "\n");
-  atomicWrite((0, import_node_path19.join)(art, "timing.txt"), `started=${isoUtc()}
+  (0, import_node_fs25.mkdirSync)(exec, { recursive: true });
+  atomicWrite((0, import_node_path20.join)(art, "topic.txt"), slug + "\n");
+  atomicWrite((0, import_node_path20.join)(art, "topic-text.txt"), topicText);
+  atomicWrite((0, import_node_path20.join)(art, "selected-provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path20.join)(art, "instrument.txt"), instrument + "\n");
+  atomicWrite((0, import_node_path20.join)(art, "timing.txt"), `started=${isoUtc()}
 `);
-  atomicWrite((0, import_node_path19.join)(exec, "provider.txt"), provider + "\n");
-  atomicWrite((0, import_node_path19.join)(exec, "finish.txt"), (finish ? "yes" : "no") + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "finish.txt"), (finish ? "yes" : "no") + "\n");
   const target = repoRoot();
   log.ok(`solo init: topic=${slug} instrument=${instrument} provider=${provider} finish=${finish ? "yes" : "no"}`);
   process.stdout.write(`SLUG=${slug}
@@ -18041,10 +18204,10 @@ async function branchWith(topic, target, r) {
   const branch = `feat/solo-${topic}`;
   const onBranch = createOrResumeBranch(r, branch);
   const exec = soloExecDir(topic);
-  atomicWrite((0, import_node_path19.join)(exec, "target_cwd.txt"), target + "\n");
-  atomicWrite((0, import_node_path19.join)(exec, "start-branch.txt"), snap.branch + "\n");
-  atomicWrite((0, import_node_path19.join)(exec, "branch-base.sha"), snap.baseSha + "\n");
-  atomicWrite((0, import_node_path19.join)(exec, "branch.txt"), branch + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "target_cwd.txt"), target + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "start-branch.txt"), snap.branch + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "branch-base.sha"), snap.baseSha + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "branch.txt"), branch + "\n");
   if (!onBranch) {
     log.warn(`solo branch: checkout ${branch} failed; staying on ${snap.branch}`);
   }
@@ -18066,31 +18229,44 @@ async function turnSendRun(rest) {
 async function turnSendWith(topic, round, d) {
   const art = soloArtDir(topic);
   const exec = soloExecDir(topic);
-  const instrument = readField((0, import_node_path19.join)(art, "instrument.txt"));
-  const provider = readField((0, import_node_path19.join)(art, "selected-provider.txt"));
+  const instrument = readField((0, import_node_path20.join)(art, "instrument.txt"));
+  const provider = readField((0, import_node_path20.join)(art, "selected-provider.txt"));
   if (!instrument || !provider) {
     log.error("solo turn-send: missing instrument.txt/selected-provider.txt (run solo init)");
     return 1;
   }
-  const stateFile = (0, import_node_path19.join)(exec, `turn-${round}.txt`);
-  if ((0, import_node_fs24.existsSync)(stateFile)) {
+  const outbox = outboxPath(instrument, provider, topic);
+  if (!(0, import_node_fs25.existsSync)(outbox)) {
+    log.error(`solo turn-send: outbox not found at ${outbox} \u2014 was ${instrument} spawned?`);
+    return 1;
+  }
+  const sp = statusPath(instrument, provider, topic);
+  if ((0, import_node_fs25.existsSync)(sp)) {
+    const m = (0, import_node_fs25.readFileSync)(sp, "utf8").match(/"state":"([^"]*)"/);
+    if (m && m[1] && m[1] !== "idle") {
+      log.error(`solo turn-send: part not idle (state=${m[1]}); previous turn still in flight`);
+      return 1;
+    }
+  }
+  const stateFile = (0, import_node_path20.join)(exec, `turn-${round}.txt`);
+  if ((0, import_node_fs25.existsSync)(stateFile)) {
     log.error(`solo turn-send: ${stateFile} already exists; rm to retry`);
     return 1;
   }
   let prompt;
   if (round === 1) {
-    const brief = (0, import_node_fs24.existsSync)((0, import_node_path19.join)(art, "task-brief.md")) ? (0, import_node_fs24.readFileSync)((0, import_node_path19.join)(art, "task-brief.md"), "utf8") : "";
-    const branch = readField((0, import_node_path19.join)(exec, "branch.txt")) || `feat/solo-${topic}`;
+    const brief = (0, import_node_fs25.existsSync)((0, import_node_path20.join)(art, "task-brief.md")) ? (0, import_node_fs25.readFileSync)((0, import_node_path20.join)(art, "task-brief.md"), "utf8") : "";
+    const branch = readField((0, import_node_path20.join)(exec, "branch.txt")) || `feat/solo-${topic}`;
     prompt = composeRound1Prompt(brief, branch);
   } else {
-    const bundle = (0, import_node_path19.join)(exec, `fix-prompt-${round}.md`);
-    if (!(0, import_node_fs24.existsSync)(bundle)) {
+    const bundle = (0, import_node_path20.join)(exec, `fix-prompt-${round}.md`);
+    if (!(0, import_node_fs25.existsSync)(bundle)) {
       log.error(`solo turn-send: fix bundle missing: ${bundle} (the directive must write it first)`);
       return 1;
     }
-    prompt = composeFixPrompt((0, import_node_fs24.readFileSync)(bundle, "utf8"), round);
+    prompt = composeFixPrompt((0, import_node_fs25.readFileSync)(bundle, "utf8"), round);
   }
-  const promptFile = (0, import_node_path19.join)(exec, `turn-prompt-${round}.md`);
+  const promptFile = (0, import_node_path20.join)(exec, `turn-prompt-${round}.md`);
   atomicWrite(promptFile, prompt);
   const offset = d.offsetFor(instrument, provider, topic);
   atomicWrite(stateFile, `OFFSET=${offset}
@@ -18120,18 +18296,18 @@ async function turnWaitRun(rest) {
 async function turnWaitWith(topic, round, d) {
   const art = soloArtDir(topic);
   const exec = soloExecDir(topic);
-  const instrument = readField((0, import_node_path19.join)(art, "instrument.txt"));
-  const provider = readField((0, import_node_path19.join)(art, "selected-provider.txt"));
+  const instrument = readField((0, import_node_path20.join)(art, "instrument.txt"));
+  const provider = readField((0, import_node_path20.join)(art, "selected-provider.txt"));
   if (!instrument || !provider) {
     log.error("solo turn-wait: missing instrument.txt/selected-provider.txt");
     return 1;
   }
-  const stateFile = (0, import_node_path19.join)(exec, `turn-${round}.txt`);
-  if (!(0, import_node_fs24.existsSync)(stateFile)) {
+  const stateFile = (0, import_node_path20.join)(exec, `turn-${round}.txt`);
+  if (!(0, import_node_fs25.existsSync)(stateFile)) {
     log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`);
     return 1;
   }
-  const offset = parseOffset((0, import_node_fs24.readFileSync)(stateFile, "utf8"));
+  const offset = parseOffset((0, import_node_fs25.readFileSync)(stateFile, "utf8"));
   if (offset === null) {
     log.error(`solo turn-wait: OFFSET not set in ${stateFile}`);
     return 1;
@@ -18139,8 +18315,8 @@ async function turnWaitWith(topic, round, d) {
   log.info(`solo turn-wait: round=${round} offset=${offset} timeout=${SOLO_TURN_TIMEOUT}s`);
   const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], SOLO_TURN_TIMEOUT);
   const ts = classifyTurn(ev);
-  if (ts === "question" && ev) atomicWrite((0, import_node_path19.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
-  (0, import_node_fs24.appendFileSync)(stateFile, `TS=${ts}
+  if (ts === "question" && ev) atomicWrite((0, import_node_path20.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
+  (0, import_node_fs25.appendFileSync)(stateFile, `TS=${ts}
 `);
   log.ok(`solo turn-wait: round=${round} TS=${ts}`);
   return 0;
@@ -18156,23 +18332,23 @@ async function finishRun(rest) {
     log.error("usage: solo finish <topic>");
     return 2;
   }
-  const target = readField((0, import_node_path19.join)(soloExecDir(topic), "target_cwd.txt")) || repoRoot();
+  const target = readField((0, import_node_path20.join)(soloExecDir(topic), "target_cwd.txt")) || repoRoot();
   return finishWith(topic, runnerAt(target), haveCmd("gh"));
 }
 async function finishWith(topic, r, hasGh) {
   const exec = soloExecDir(topic);
-  const branch = readField((0, import_node_path19.join)(exec, "branch.txt"));
-  const startBranch = readField((0, import_node_path19.join)(exec, "start-branch.txt")) || "main";
-  const doFinish = readField((0, import_node_path19.join)(exec, "finish.txt")) === "yes";
+  const branch = readField((0, import_node_path20.join)(exec, "branch.txt"));
+  const startBranch = readField((0, import_node_path20.join)(exec, "start-branch.txt")) || "main";
+  const doFinish = readField((0, import_node_path20.join)(exec, "finish.txt")) === "yes";
   if (!doFinish) {
     r.run("git", ["checkout", "-q", startBranch]);
-    atomicWrite((0, import_node_path19.join)(exec, "finish-result.txt"), `none	branch-only (kept ${branch})
+    atomicWrite((0, import_node_path20.join)(exec, "finish-result.txt"), `none	branch-only (kept ${branch})
 `);
     log.ok(`solo finish: branch-only \u2014 kept ${branch}, restored ${startBranch}`);
     return 0;
   }
-  const brief = (0, import_node_fs24.existsSync)((0, import_node_path19.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs24.readFileSync)((0, import_node_path19.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
-  const verify = readField((0, import_node_path19.join)(exec, "verify-result.txt"));
+  const brief = (0, import_node_fs25.existsSync)((0, import_node_path20.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs25.readFileSync)((0, import_node_path20.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
+  const verify = readField((0, import_node_path20.join)(exec, "verify-result.txt"));
   const res = finishBranch(r, {
     branch,
     startBranch,
@@ -18184,7 +18360,7 @@ Verify: ${verify}
 
 (Automated solo branch \u2014 review and merge into ${startBranch}.)`
   });
-  atomicWrite((0, import_node_path19.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
+  atomicWrite((0, import_node_path20.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
 `);
   log.ok(`solo finish: ${res.action} \u2192 ${res.outcome}`);
   return 0;
@@ -18197,7 +18373,7 @@ async function summaryRun(rest) {
   }
   const art = soloArtDir(topic);
   const exec = soloExecDir(topic);
-  const started = kvField((0, import_node_path19.join)(art, "timing.txt"), "started") || "unknown";
+  const started = kvField((0, import_node_path20.join)(art, "timing.txt"), "started") || "unknown";
   let ended;
   let duration;
   const i2 = rest.indexOf("--aborted");
@@ -18206,7 +18382,7 @@ async function summaryRun(rest) {
     ended = isoUtc();
     const s = Date.parse(started), e = Date.parse(ended);
     duration = Number.isFinite(s) && Number.isFinite(e) ? Math.round((e - s) / 1e3) : 0;
-    atomicWrite((0, import_node_path19.join)(art, "timing.txt"), `started=${started}
+    atomicWrite((0, import_node_path20.join)(art, "timing.txt"), `started=${started}
 ended=${ended}
 duration=${duration}
 `);
@@ -18217,21 +18393,21 @@ duration=${duration}
     started,
     ended,
     duration,
-    provider: readField((0, import_node_path19.join)(art, "selected-provider.txt")) || "unknown",
-    instrument: readField((0, import_node_path19.join)(art, "instrument.txt")) || "unknown",
-    branch: readField((0, import_node_path19.join)(exec, "branch.txt")) || "unknown",
-    verify: readField((0, import_node_path19.join)(exec, "verify-result.txt")) || "unknown",
-    diffStats: readField((0, import_node_path19.join)(exec, "diff-stats.txt")) || "unknown",
-    archived: readField((0, import_node_path19.join)(art, "archived-path.txt")) || "(not archived)",
-    targetCwd: readField((0, import_node_path19.join)(exec, "target_cwd.txt")) || "<target>",
-    branchBase: readField((0, import_node_path19.join)(exec, "branch-base.sha")) || "<base>",
+    provider: readField((0, import_node_path20.join)(art, "selected-provider.txt")) || "unknown",
+    instrument: readField((0, import_node_path20.join)(art, "instrument.txt")) || "unknown",
+    branch: readField((0, import_node_path20.join)(exec, "branch.txt")) || "unknown",
+    verify: readField((0, import_node_path20.join)(exec, "verify-result.txt")) || "unknown",
+    diffStats: readField((0, import_node_path20.join)(exec, "diff-stats.txt")) || "unknown",
+    archived: readField((0, import_node_path20.join)(art, "archived-path.txt")) || "(not archived)",
+    targetCwd: readField((0, import_node_path20.join)(exec, "target_cwd.txt")) || "<target>",
+    branchBase: readField((0, import_node_path20.join)(exec, "branch-base.sha")) || "<base>",
     abortedPhase: aborted2 ? rest[i2 + 1] : void 0,
     abortedGate: aborted2 ? rest[i2 + 2] : void 0,
     abortedReason: aborted2 ? rest.slice(i2 + 3).join(" ") || "unknown" : void 0
   };
-  atomicWrite((0, import_node_path19.join)(art, "SUMMARY.md"), renderSummary(facts));
+  atomicWrite((0, import_node_path20.join)(art, "SUMMARY.md"), renderSummary(facts));
   if (aborted2) {
-    atomicWrite((0, import_node_path19.join)(art, "RESUME.md"), renderResume({
+    atomicWrite((0, import_node_path20.join)(art, "RESUME.md"), renderResume({
       topic,
       branch: facts.branch,
       artDir: art,
@@ -18239,21 +18415,21 @@ duration=${duration}
       gate: facts.abortedGate ?? "unknown"
     }));
   }
-  log.ok(`solo summary: wrote ${(0, import_node_path19.join)(art, "SUMMARY.md")}`);
+  log.ok(`solo summary: wrote ${(0, import_node_path20.join)(art, "SUMMARY.md")}`);
   return 0;
 }
 function kvField(path6, key) {
-  if (!(0, import_node_fs24.existsSync)(path6)) return "";
+  if (!(0, import_node_fs25.existsSync)(path6)) return "";
   const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = (0, import_node_fs24.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
+  const m = (0, import_node_fs25.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
   return m ? m[1].trim() : "";
 }
-var import_node_fs24, import_node_path19, liveInitDeps, SOLO_TURN_TIMEOUT;
+var import_node_fs25, import_node_path20, liveInitDeps, SOLO_TURN_TIMEOUT;
 var init_solo2 = __esm({
   "src/commands/solo.ts"() {
     "use strict";
-    import_node_fs24 = require("node:fs");
-    import_node_path19 = require("node:path");
+    import_node_fs25 = require("node:fs");
+    import_node_path20 = require("node:path");
     init_log();
     init_args();
     init_atomic();
@@ -18271,129 +18447,6 @@ var init_solo2 = __esm({
     init_fsread();
     liveInitDeps = { haveCmd, instrumentBinary, pickRandomInstrument };
     SOLO_TURN_TIMEOUT = Number(process.env.CONSORT_SOLO_TURN_TIMEOUT) || 14400;
-  }
-});
-
-// src/core/score.ts
-function scoreArtDir(topic, opts) {
-  return (0, import_node_path20.join)(topicDir(topic, opts), "_score");
-}
-function scoreDraftDir(topic, opts) {
-  return (0, import_node_path20.join)(scoreArtDir(topic, opts), "design-doc", ".draft");
-}
-function parseScoreArgs(tokens) {
-  let ensemble = false;
-  let targets = [];
-  const rest = [];
-  for (let i2 = 0; i2 < tokens.length; i2++) {
-    const t = tokens[i2];
-    if (t === "--ensemble") {
-      ensemble = true;
-      continue;
-    }
-    if (t === "--targets" || t.startsWith("--targets=")) {
-      const { value, shift } = kvParse(t, tokens[i2 + 1]);
-      targets = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-      if (shift === 2) i2++;
-      continue;
-    }
-    rest.push(t);
-  }
-  return { topicText: rest.join(" "), ensemble, targets };
-}
-function scoreDocPath(topic, dateUtc, opts) {
-  return (0, import_node_path20.join)(scoreArtDir(topic, opts), "design-doc", `${dateUtc}-${topic}-design.md`);
-}
-function formatRosterFile(rows, isoStamp) {
-  const body = rows.map((r) => `${r.provider}	${r.instrument}`).join("\n");
-  return `# generated ${isoStamp} by /consort:score
-${body}${rows.length ? "\n" : ""}`;
-}
-function nonCommentLines(text) {
-  return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
-}
-function parseRosterFile(text) {
-  return nonCommentLines(text).map((l) => {
-    const [provider, instrument] = l.split("	");
-    return { provider, instrument };
-  }).filter((r) => r.provider && r.instrument);
-}
-function parseMultiRepoMode(text) {
-  const v = text.replace(/\s/g, "");
-  return v === "multi" ? "multi" : v === "single-sub" ? "single-sub" : "single";
-}
-function spawnRosterArg(rows) {
-  return rows.map((r) => `${r.instrument}:${r.provider}`).join(",");
-}
-function spawnResultsTsv(results) {
-  if (!results.length) return "";
-  return results.map((r) => `${r.instrument}	${r.provider}	${r.rc}	${r.rc === 0 ? "" : "spawn-failed"}`).join("\n") + "\n";
-}
-function spawnTally(rcs) {
-  const ok = rcs.filter((rc) => rc === 0).length;
-  if (ok === rcs.length) return 0;
-  if (ok === 0) return 2;
-  return 1;
-}
-function parsePanesFile(text) {
-  const m = /* @__PURE__ */ new Map();
-  for (const t of nonCommentLines(text)) {
-    const [instrument, pane] = t.split("	");
-    if (instrument && pane) m.set(instrument, pane);
-  }
-  return m;
-}
-function verifyScopeFiles(target, instruments) {
-  const out = [];
-  for (const c3 of instruments) if (c3 !== target) out.push(`${c3}_only_items.txt`);
-  if (instruments.length >= 3) {
-    for (let i2 = 0; i2 < instruments.length; i2++) {
-      for (let j = i2 + 1; j < instruments.length; j++) {
-        const a2 = instruments[i2], b = instruments[j];
-        if (a2 !== target && b !== target) out.push(`${a2}+${b}_only.txt`);
-      }
-    }
-  }
-  return out;
-}
-function writeTargetsTsv(hits, isoStamp) {
-  return `# generated ${isoStamp} by /consort:score
-` + (hits.length ? hits.map((h2) => `${h2.slug}	${h2.marker}`).join("\n") + "\n" : "");
-}
-function parseRosterTargets(text) {
-  return nonCommentLines(text).map((l) => l.split("	")[0]).filter(Boolean);
-}
-function lastTag(text, tag) {
-  const re = new RegExp(`^${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(.*)$`, "gm");
-  const ms = [...text.matchAll(re)];
-  return ms.length ? ms[ms.length - 1][1].trim() : null;
-}
-function cascadeTargets(phase, keepFindings) {
-  const partFile = phase === "research" ? "findings.md" : "verify.md";
-  if (keepFindings) return { partFile, artGlobs: [], artFiles: [] };
-  if (phase === "research") return { partFile, artGlobs: ["*_only_items.txt", "*_only.txt", "consensus.txt"], artFiles: ["adjudicated-draft.md", "diff.md"] };
-  return { partFile, artGlobs: [], artFiles: ["adjudicated-draft.md"] };
-}
-function resolveDrilldownPath(scratchDir, section, instrument, subproject) {
-  const slug = section.toLowerCase().replace(/ /g, "-");
-  const base = `drilldown-${slug}${subproject ? `-${subproject}` : ""}-${instrument}`;
-  let cand = base;
-  let n2 = 2;
-  while ((0, import_node_fs25.existsSync)((0, import_node_path20.join)(scratchDir, `${cand}.md`))) {
-    cand = `${cand.replace(/-[0-9]+$/, "")}-${n2}`;
-    if (++n2 > 100) throw new Error("resolveDrilldownPath: too many same-section drilldown collisions");
-  }
-  return (0, import_node_path20.join)(scratchDir, `${cand}.md`);
-}
-var import_node_path20, import_node_fs25;
-var init_score = __esm({
-  "src/core/score.ts"() {
-    "use strict";
-    import_node_path20 = require("node:path");
-    import_node_fs25 = require("node:fs");
-    init_paths();
-    init_args();
-    init_solo();
   }
 });
 
@@ -19397,7 +19450,7 @@ async function spawnAllWith(topic, d) {
   }
   const cwd = d.repoRoot();
   const results = await Promise.all(rows.map(async (r) => {
-    const rc2 = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd]);
+    const rc2 = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd, "--preflight-art-dir", art]);
     return { instrument: r.instrument, provider: r.provider, rc: rc2 };
   }));
   atomicWrite((0, import_node_path24.join)(art, "spawn-results.tsv"), spawnResultsTsv(results));
@@ -19972,6 +20025,7 @@ function parsePerformArgs(tokens) {
       if (shift === 2) i2++;
       continue;
     }
+    if (t.startsWith("-")) throw new PerformArgError(`perform init: unknown flag '${t}'`);
     rest.push(t);
   }
   return { rest: rest.join(" "), branchMode, branchName, topic, targets, force };
@@ -20014,14 +20068,7 @@ function resolveTarget(docPath, cwd) {
   }
   return sub;
 }
-function detectProvider(repoRoot2, override) {
-  if (override) {
-    if (override === "codex" || override === "claude") return override;
-    if (override === "opencode") {
-      throw new ProviderError("perform: opencode is not a supported provider; use codex (default) or claude (plugin-dev)");
-    }
-    throw new ProviderError(`perform: unknown provider override '${override}' (allowed: codex, claude)`);
-  }
+function detectProvider(repoRoot2) {
   return (0, import_node_fs30.existsSync)((0, import_node_path25.join)(repoRoot2, ".claude-plugin", "plugin.json")) ? "claude" : "codex";
 }
 function iterTargets(topic, opts) {
@@ -20043,7 +20090,7 @@ function iterTargets(topic, opts) {
   }
   return [];
 }
-var import_node_path25, import_node_fs30, PerformArgError, PerformResolveError, ProviderError;
+var import_node_path25, import_node_fs30, PerformArgError, PerformResolveError;
 var init_perform = __esm({
   "src/core/perform.ts"() {
     "use strict";
@@ -20056,12 +20103,6 @@ var init_perform = __esm({
       code = 2;
     };
     PerformResolveError = class extends Error {
-      code = 1;
-      constructor(message) {
-        super(message);
-      }
-    };
-    ProviderError = class extends Error {
       code = 1;
       constructor(message) {
         super(message);
@@ -20309,9 +20350,22 @@ var init_performTurn = __esm({
 });
 
 // src/core/performQuestions.ts
-function extractQuestionPayload(ev, askedAt) {
+function validateQuestionLine(ev) {
   const message = typeof ev.message === "string" ? ev.message : "";
-  if (message === "") return null;
+  if (message === "") return false;
+  if (!/^[\x09\x0A\x20-\x7E]*$/.test(message)) return false;
+  if (message.includes('\\"') || message.includes("\\\\")) return false;
+  const claim = ev.claim;
+  if (claim) {
+    const kind = typeof claim.kind === "string" ? claim.kind : "";
+    const value = typeof claim.value === "string" ? claim.value : "";
+    if (!KNOWN_KINDS.has(kind) || value === "") return false;
+  }
+  return true;
+}
+function extractQuestionPayload(ev, askedAt) {
+  if (!validateQuestionLine(ev)) return null;
+  const message = ev.message;
   const encoded = message.split("\n").join("%0A");
   const claim = ev.claim;
   const kind = claim && typeof claim.kind === "string" ? claim.kind : "";
@@ -20324,9 +20378,11 @@ ROUTE=${route}
 ASKED_AT=${askedAt}
 `;
 }
+var KNOWN_KINDS;
 var init_performQuestions = __esm({
   "src/core/performQuestions.ts"() {
     "use strict";
+    KNOWN_KINDS = /* @__PURE__ */ new Set(["path", "git", "env", "cmd", "test"]);
   }
 });
 
@@ -20630,16 +20686,7 @@ async function initWith3(tokens, d) {
     throw e;
   }
   const routing = parsed.targets.length > 0 ? "multi" : detectRouting(text);
-  let provider;
-  try {
-    provider = detectProvider(targetCwd);
-  } catch (e) {
-    if (e instanceof ProviderError) {
-      log.error(e.message);
-      return e.code;
-    }
-    throw e;
-  }
+  const provider = detectProvider(targetCwd);
   (0, import_node_fs32.mkdirSync)(art, { recursive: true });
   atomicWrite((0, import_node_path28.join)(art, "design.md"), text);
   atomicWrite((0, import_node_path28.join)(art, "topic.txt"), topic);
@@ -23028,7 +23075,7 @@ async function spawnAllWith2(args, deps, opts) {
   const results = await Promise.all(rows.map(async (r) => ({
     instrument: r.instrument,
     provider: r.provider,
-    rc: await deps.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd])
+    rc: await deps.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd, "--preflight-art-dir", art])
   })));
   atomicWrite((0, import_node_path32.join)(art, "spawn-results.tsv"), spawnResultsTsv(results));
   const rc = spawnTally(results.map((r) => r.rc));
@@ -23909,12 +23956,16 @@ async function teardownWith(args, deps) {
   const pf = (0, import_node_path32.join)(art, "preflight-panes.txt");
   if ((0, import_node_fs35.existsSync)(pf)) {
     for (const line of (0, import_node_fs35.readFileSync)(pf, "utf8").split("\n")) {
-      const pane = line.trim();
+      const pane = (line.split("	")[1] ?? "").trim();
       if (!pane) continue;
       try {
         await deps.killPane(pane);
       } catch {
       }
+    }
+    try {
+      (0, import_node_fs35.rmSync)(pf, { force: true });
+    } catch {
     }
   }
   const shared = (0, import_node_path32.join)(art, "shared");
@@ -24185,7 +24236,7 @@ var init_rehearsal2 = __esm({
       haveCmd,
       instrumentBinary,
       now: () => isoUtc(),
-      configRoot: () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd()
+      configRoot: () => pluginRoot()
     };
     liveSpawnAllDeps2 = { preflight: run7, spawn: run, repoRoot, pickInstruments };
     liveExperimentSendDeps = {
@@ -24761,7 +24812,7 @@ async function spawnAllWith3(topic, d) {
   }
   const cwd = d.repoRoot();
   const results = await Promise.all(rows.map(async (r) => {
-    const rc2 = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd]);
+    const rc2 = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument), "--cwd", cwd, "--preflight-art-dir", art]);
     return { instrument: r.instrument, provider: r.provider, rc: rc2 };
   }));
   atomicWrite((0, import_node_path35.join)(art, "spawn-results.tsv"), spawnResultsTsv(results));

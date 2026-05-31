@@ -5,7 +5,8 @@ import { log } from "../core/log.js";
 import { inTmuxSession, tmuxVersionOk, haveCmd } from "../core/deps.js";
 import { topicDir, partDir, repoRoot } from "../core/paths.js";
 import { stateInit, stateArchive } from "../core/archive.js";
-import { identityWrite, identityPath, inboxWrite, inboxPath, paneMetaWrite, outboxWait } from "../core/ipc.js";
+import { identityWrite, identityPath, inboxWrite, inboxPath, paneMetaWrite, outboxWait, outboxDump } from "../core/ipc.js";
+import { paneListedFor } from "../core/score.js";
 import { pickRandomInstrument, instrumentInUse, formatCollisionError } from "../core/instruments.js";
 import { instrumentBinary, instrumentDefaultMode, instrumentModeArgs, instrumentReadyTimeout, instrumentBootstrapSleep } from "../core/contracts.js";
 import { wrapLaunch, splitRight, splitDown, respawn, paneAlive, paneLabelSet, paneSend, killNow, capturePane, ensurePaneBorders } from "../core/tmux.js";
@@ -22,12 +23,13 @@ export async function run(args: string[]): Promise<number> {
   if (args.length < 3) { log.error("usage: spawn <instrument|random> <model> <topic> [--mode m] [--cwd abs] [--target-pane id] [initial-prompt]"); return 2; }
   let instrument = args[0];
   const [, model, topic] = args;
-  let i = 3, mode = "", cwd = "", targetPane = "", initial = "";
+  let i = 3, mode = "", cwd = "", targetPane = "", preflightArtDir = "", initial = "";
   for (; i < args.length; i++) {
     const a = args[i];
     if (a === "--mode" || a.startsWith("--mode=")) { const r = kvParse(a, args[i + 1]); mode = r.value; i += r.shift - 1; }
     else if (a === "--cwd" || a.startsWith("--cwd=")) { const r = kvParse(a, args[i + 1]); cwd = r.value; i += r.shift - 1; }
     else if (a === "--target-pane" || a.startsWith("--target-pane=")) { const r = kvParse(a, args[i + 1]); targetPane = r.value; i += r.shift - 1; }
+    else if (a === "--preflight-art-dir" || a.startsWith("--preflight-art-dir=")) { const r = kvParse(a, args[i + 1]); preflightArtDir = r.value; i += r.shift - 1; }
     else { initial = args.slice(i).join(" "); break; }
   }
 
@@ -64,6 +66,14 @@ export async function run(args: string[]): Promise<number> {
     const startDir = cwd || repoRoot();
     let pane: string;
     if (targetPane) {
+      if (preflightArtDir) {
+        const pf = join(preflightArtDir, "preflight-panes.txt");
+        const ok = existsSync(pf) && paneListedFor(readFileSync(pf, "utf8"), instrument, targetPane);
+        if (!ok) {
+          captureSpawnFailure({ instrument, model, topic, reason: "pane_failed", detail: `--target-pane ${targetPane} not listed for ${instrument} in ${pf}` });
+          log.error(`--target-pane ${targetPane} is not a preflight pane for ${instrument} (checked ${pf})`); return 1;
+        }
+      }
       if (!(await paneAlive(targetPane))) {
         captureSpawnFailure({ instrument, model, topic, reason: "pane_failed", detail: `--target-pane ${targetPane} is not alive` });
         log.error(`--target-pane ${targetPane} is not alive`); return 1;
@@ -95,6 +105,10 @@ export async function run(args: string[]): Promise<number> {
       const reason = ev ? "error_event" : "timeout";
       const tail = await capturePane(pane, 25);
       process.stderr.write(tail + "\n");
+      if (!ev) {
+        const ob = outboxDump(instrument, model, topic).trim();
+        if (ob) process.stderr.write(`outbox:\n${ob}\n`);
+      }
       const fr = await captureFailure(
         { instrument, model, topic, paneId: pane, reason: reason as "timeout" | "error_event", eventLine: ev ? JSON.stringify(ev) : undefined, readyTimeout },
         { partDir, capturePane: (p, n) => capturePane(p, n), atomicWriteSync: (d, c) => writeFileSync(d, c), isWritableDir: (d) => existsSync(d), now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z") },

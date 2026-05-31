@@ -408,8 +408,10 @@ describe("teardown", () => {
       opts, killPane: async (p) => { killed.push(p); },
     }));
     expect(rc).toBe(0);
-    // Each non-blank line is passed to killPane (whole line; best-effort).
-    expect(killed.length).toBe(2);
+    // Each non-blank "<instrument>\t<pane>" line passes only the PANE field (tab-split) to killPane.
+    expect(killed).toEqual(["%1", "%2"]);
+    // The file is removed after the kill sweep.
+    expect(existsSync(join(art, "preflight-panes.txt"))).toBe(false);
   });
 });
 

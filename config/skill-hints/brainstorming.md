@@ -1,12 +1,12 @@
-SKILL HINT — this consult is design-shaped.
+SKILL HINT — this score run is design-shaped.
 
 Use the `superpowers:brainstorming` skill to structure your thinking. The
 skill normally asks design questions one at a time; the protocol below
-lets you do that without deadlocking the consult.
+lets you do that without deadlocking the run.
 
 AUTONOMY CONTRACT
 
-This consult is automated. The skill you invoke may try to ask design
+This score run is automated. The skill you invoke may try to ask design
 questions one at a time. You may ask questions back to the Maestro
 via your outbox, but follow these rules:
 
@@ -42,7 +42,7 @@ via your outbox, but follow these rules:
 
 6. Document each Q&A in your findings.md as:
      [Q&A] question: <q> // answer: <a> (resolved by Maestro)
-   This lets the consult reader see the design choices that shaped the
+   This lets the findings reader see the design choices that shaped the
    findings.
 
 7. If the skill says "ask the user X", you ask the Maestro X via this

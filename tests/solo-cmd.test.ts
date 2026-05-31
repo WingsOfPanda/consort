@@ -139,6 +139,7 @@ describe("solo turn-send (turnSendWith core)", () => {
 
   async function scaffold(topic: string) {
     const { soloArtDir, soloExecDir } = await import("../src/core/solo.js");
+    const { partDir } = await import("../src/core/paths.js");
     const { mkdirSync } = await import("node:fs");
     mkdirSync(soloExecDir(topic), { recursive: true });
     const art = soloArtDir(topic);
@@ -146,6 +147,9 @@ describe("solo turn-send (turnSendWith core)", () => {
     writeFileSync(join(art, "selected-provider.txt"), "codex\n");
     writeFileSync(join(art, "task-brief.md"), "## Goal\nDo X");
     writeFileSync(join(soloExecDir(topic), "branch.txt"), "feat/solo-auth\n");
+    const pd = partDir("violin", "codex", topic); // a spawned part has an outbox (turn-send's not-found guard)
+    mkdirSync(pd, { recursive: true });
+    writeFileSync(join(pd, "outbox.jsonl"), "");
   }
 
   it("round 1: writes OFFSET, prompt file, calls send; rc 0", async () => {

@@ -57,17 +57,19 @@ export function outboxOffset(path: string): number {
 }
 
 function readFrom(path: string, offset: number): string {
-  const size = outboxOffset(path);
-  // If the file shrank below the captured offset (crash/rotation recreated it),
-  // re-read from the start so a fresh event in the smaller file is still seen.
-  const start = size < offset ? 0 : offset;
-  if (size <= start) return "";
-  const fd = openSync(path, "r");
   try {
-    const buf = Buffer.alloc(size - start);
-    readSync(fd, buf, 0, buf.length, start);
-    return buf.toString("utf8");
-  } finally { closeSync(fd); }
+    const size = outboxOffset(path);
+    // If the file shrank below the captured offset (crash/rotation recreated it),
+    // re-read from the start so a fresh event in the smaller file is still seen.
+    const start = size < offset ? 0 : offset;
+    if (size <= start) return "";
+    const fd = openSync(path, "r");
+    try {
+      const buf = Buffer.alloc(size - start);
+      readSync(fd, buf, 0, buf.length, start);
+      return buf.toString("utf8");
+    } finally { closeSync(fd); }
+  } catch { return ""; } // unreadable outbox -> treat as a no-match poll; the loop reaches its real timeout
 }
 
 function lastMatch(text: string, events: string[]): OutboxEvent | null {

@@ -13,7 +13,7 @@ import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
 import { runnerAt, preSnapshot, createOrResumeBranch, finishBranch } from "../core/gitwork.js";
 import type { Runner } from "../core/gitwork.js";
-import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
+import { outboxOffset, outboxPath, outboxWaitSince, statusPath, type OutboxEvent } from "../core/ipc.js";
 import { composeRound1Prompt, composeFixPrompt, classifyTurn, parseOffset } from "../core/turn.js";
 import { run as sendRun } from "./send.js";
 import { readIfExists } from "../core/fsread.js";
@@ -130,6 +130,11 @@ export async function turnSendWith(topic: string, round: number, d: TurnSendDeps
   const instrument = readField(join(art, "instrument.txt"));
   const provider = readField(join(art, "selected-provider.txt"));
   if (!instrument || !provider) { log.error("solo turn-send: missing instrument.txt/selected-provider.txt (run solo init)"); return 1; }
+
+  const outbox = outboxPath(instrument, provider, topic);
+  if (!existsSync(outbox)) { log.error(`solo turn-send: outbox not found at ${outbox} — was ${instrument} spawned?`); return 1; }
+  const sp = statusPath(instrument, provider, topic);
+  if (existsSync(sp)) { const m = readFileSync(sp, "utf8").match(/"state":"([^"]*)"/); if (m && m[1] && m[1] !== "idle") { log.error(`solo turn-send: part not idle (state=${m[1]}); previous turn still in flight`); return 1; } }
 
   const stateFile = join(exec, `turn-${round}.txt`);
   if (existsSync(stateFile)) { log.error(`solo turn-send: ${stateFile} already exists; rm to retry`); return 1; }

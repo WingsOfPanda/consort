@@ -138,7 +138,8 @@ the last line is the current outcome). Branch:
      make (high-stakes, irreversibility, a subjective product/architecture tradeoff)? → use
      **AskUserQuestion** to get the answer. Otherwise it is **non-critical** → answer it yourself from
      the topic + findings (Maestro self-answers).
-  3. **Write** the reply to a temp file, then `$CS send --from maestro <INST> <TOPIC> @<reply-file>`.
+  3. **Write** the reply to a temp file **beginning with a line `ANSWER: <your answer>`** (the part's
+     skill-hint reads the line starting `ANSWER: `), then `$CS send --from maestro <INST> <TOPIC> @<reply-file>`.
   4. `rm -f $ART/research-<INST>.done` and **re-arm** the background `$CS score research-wait <TOPIC>
      <INST> <PROV>`. (The wait resumes past the question — it never re-sends the research prompt.)
 - **`FS=failed` / `FS=timeout`** — the part produced no usable findings; drop it.
@@ -175,8 +176,9 @@ For each part, background `$CS score verify-wait <TOPIC> <INST> <PROV>`. On each
 **last** `VS=` line (`grep '^VS=' "$ART/verify-<INST>.txt" | tail -1 | cut -d= -f2`):
 - **`VS=ok` / `VS=skipped` / `VS=missing`** — terminal.
 - **`VS=question`** — same classify+relay as Stage 5 (read `$ART/question-<INST>.txt` + the part's
-  `verify.md`; AskUserQuestion if critical else self-answer; `$CS send --from maestro <INST> <TOPIC>
-  @<reply>`; `rm -f $ART/verify-<INST>.done`; re-arm the background `verify-wait`).
+  `verify.md`; AskUserQuestion if critical else self-answer; write the reply file **beginning with a
+  line `ANSWER: <your answer>`**, then `$CS send --from maestro <INST> <TOPIC> @<reply>`; `rm -f
+  $ART/verify-<INST>.done`; re-arm the background `verify-wait`).
 - **`VS=failed` / `VS=timeout`** — record; the rival's claims this part would have verified surface
   unresolved (N=2: a `## Not-verified` section; N≥3: they fall through the `UNCERTAIN` tier into
   PENDING/Contested) — either way Maestro resolves them in Stage 9.

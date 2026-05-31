@@ -41,7 +41,6 @@ export interface PerformArgs {
 
 export class PerformArgError extends Error { code = 2; }
 export class PerformResolveError extends Error { code = 1; constructor(message: string) { super(message); } }
-export class ProviderError extends Error { code = 1; constructor(message: string) { super(message); } }
 
 /** Parse the perform args tokens (port of deploy-init's argv parser). Default branch-on; --no-branch
  *  opts out. --max-rounds is REJECTED (the directive strips it before init). */
@@ -70,6 +69,7 @@ export function parsePerformArgs(tokens: string[]): PerformArgs {
       targets = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
       if (shift === 2) i++; continue;
     }
+    if (t.startsWith("-")) throw new PerformArgError(`perform init: unknown flag '${t}'`);
     rest.push(t);
   }
   return { rest: rest.join(" "), branchMode, branchName, topic, targets, force };
@@ -111,16 +111,9 @@ export function resolveHub(_docPath: string, repoRoot: string): string {
   return repoRoot;
 }
 
-/** Port of deploy_detect_provider. plugin.json present -> claude; else codex. Non-empty override
- *  short-circuits (codex/claude only; opencode + unknown throw). */
-export function detectProvider(repoRoot: string, override?: string): "codex" | "claude" {
-  if (override) {
-    if (override === "codex" || override === "claude") return override;
-    if (override === "opencode") {
-      throw new ProviderError("perform: opencode is not a supported provider; use codex (default) or claude (plugin-dev)");
-    }
-    throw new ProviderError(`perform: unknown provider override '${override}' (allowed: codex, claude)`);
-  }
+/** Port of deploy_detect_provider. plugin.json present -> claude; else codex. (The --provider override
+ *  is intentionally dropped at the directive level; perform.md uses a runtime claude-confirm gate.) */
+export function detectProvider(repoRoot: string): "codex" | "claude" {
   return existsSync(join(repoRoot, ".claude-plugin", "plugin.json")) ? "claude" : "codex";
 }
 

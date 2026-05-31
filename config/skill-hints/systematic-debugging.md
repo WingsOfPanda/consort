@@ -1,13 +1,13 @@
-SKILL HINT — this consult is bug-hunt shaped.
+SKILL HINT — this score run is bug-hunt shaped.
 
 Use the `superpowers:systematic-debugging` skill to structure your
 investigation. The skill walks through hypothesis → reproduction → root
 cause; the protocol below lets you ask grounding questions without
-deadlocking the consult.
+deadlocking the run.
 
 AUTONOMY CONTRACT
 
-This consult is automated. The skill you invoke may try to ask
+This score run is automated. The skill you invoke may try to ask
 clarifying questions one at a time. You may ask questions back to the
 Maestro via your outbox, but follow these rules:
 

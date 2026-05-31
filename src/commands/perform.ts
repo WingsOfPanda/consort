@@ -10,7 +10,7 @@ import { repoRoot, repoStateDir } from "../core/paths.js";
 import { auditDoc } from "../core/audit.js";
 import {
   parsePerformArgs, deriveTopicFromPath, resolveTarget, detectProvider,
-  performArtDir, iterTargets, PerformArgError, PerformResolveError, ProviderError,
+  performArtDir, iterTargets, PerformArgError, PerformResolveError,
 } from "../core/perform.js";
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/performScope.js";
@@ -147,9 +147,7 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   catch (e) { if (e instanceof PerformResolveError) { log.error(e.message); return e.code; } throw e; }
 
   const routing = parsed.targets.length > 0 ? "multi" : detectRouting(text);
-  let provider: string;
-  try { provider = detectProvider(targetCwd); }
-  catch (e) { if (e instanceof ProviderError) { log.error(e.message); return e.code; } throw e; }
+  const provider: string = detectProvider(targetCwd);
 
   mkdirSync(art, { recursive: true });
   atomicWrite(join(art, "design.md"), text);

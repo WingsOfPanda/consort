@@ -131,6 +131,10 @@ function healthCheck(): number {
     }
   }
 
+  const idTpl = join(pluginRoot(), "config", "prompt-templates", "identity.md");
+  if (existsSync(idTpl)) log.ok("config: identity.md (template present)");
+  else { log.error(`config: identity template not found at ${idTpl} — partial install; spawn will fail`); fail = 1; }
+
   const detected: string[] = [];
   if (!contractsExist()) { log.error(`contracts.yaml not found at ${join(globalRoot(), "contracts.yaml")}`); fail = 1; }
   else {
@@ -138,7 +142,10 @@ function healthCheck(): number {
       total++;
       const bin = instrumentBinary(prov);
       if (!bin) { log.warn(`  ${prov}: binary field missing in contracts.yaml`); continue; }
-      if (haveCmd(bin)) { log.ok(`  ${prov} (${bin}): installed`); ok++; detected.push(prov); }
+      if (haveCmd(bin)) {
+        let ver = ""; try { ver = execFileSync(bin, ["--version"], { encoding: "utf8" }).split("\n")[0].trim(); } catch { /* best-effort */ }
+        log.ok(`  ${prov} (${bin}): ${ver || "installed"}`); ok++; detected.push(prov);
+      }
       else log.warn(`  ${prov} (${bin}): not on PATH — skip if you don't use this provider`);
     }
     if (detected.includes("opencode")) {
