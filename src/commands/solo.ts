@@ -88,7 +88,7 @@ async function branchRun(rest: string[]): Promise<number> {
 
 /** Testable core: snapshot + branch the target repo, recording execute/ facts. */
 export async function branchWith(topic: string, target: string, r: Runner): Promise<number> {
-  const snap = preSnapshot(r, topic);
+  const snap = preSnapshot(r, "solo", topic);
   if (snap.state === "not-git") { log.error(`solo branch: ${target} is not a git repository`); return 1; }
   const branch = `feat/solo-${topic}`;
   const onBranch = createOrResumeBranch(r, branch);

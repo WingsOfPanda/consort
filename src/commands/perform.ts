@@ -203,7 +203,7 @@ export async function preSnapshotWith(topic: string, opts: { home?: string; cwd?
   let clean = 0, committed = 0, blocked = 0;
   for (const { slug, cwd } of iterTargets(topic, opts)) {
     if (!slug || !cwd) continue;
-    const snap = preSnapshot(runnerFor(cwd), topic);
+    const snap = preSnapshot(runnerFor(cwd), "perform", topic);
     if (snap.state === "not-git") { log.error(`perform pre-snapshot: not a git repository: ${cwd}`); return 2; }
     atomicWrite(join(art, "baselines", `${slug}.tsv`),
       `slug=${slug}\ncwd=${cwd}\nbranch=${snap.branch}\nbaseline_sha=${snap.baseSha}\nstate=${snap.state}\nsnapshot_ts=${isoUtc()}\n`);

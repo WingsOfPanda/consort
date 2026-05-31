@@ -35,7 +35,7 @@ describe("preSnapshot", () => {
       "git rev-parse HEAD": { code: 0, stdout: "base111\n" },
       "git status --porcelain": { code: 0, stdout: "" },
     });
-    expect(preSnapshot(r, "auth")).toEqual({ branch: "main", baseSha: "base111", state: "clean" });
+    expect(preSnapshot(r, "solo", "auth")).toEqual({ branch: "main", baseSha: "base111", state: "clean" });
     expect(calls.some((c) => c[1] === "commit")).toBe(false);
   });
   it("dirty tree: add -A + WIP commit, records new HEAD", () => {
@@ -52,7 +52,7 @@ describe("preSnapshot", () => {
         return { code: 0, stdout: "" };
       },
     };
-    expect(preSnapshot(r, "auth")).toEqual({ branch: "main", baseSha: "new222", state: "wip-committed" });
+    expect(preSnapshot(r, "solo", "auth")).toEqual({ branch: "main", baseSha: "new222", state: "wip-committed" });
   });
   it("hook-blocked: commit fails, falls back to pre-attempt HEAD, not fatal", () => {
     const { r } = fakeRunner({
@@ -62,11 +62,21 @@ describe("preSnapshot", () => {
       "git status --porcelain": { code: 0, stdout: " M a.ts" },
       "git commit -q -m chore: WIP before solo auth": { code: 1, stdout: "" },
     });
-    expect(preSnapshot(r, "auth")).toEqual({ branch: "main", baseSha: "pre999", state: "hook-blocked" });
+    expect(preSnapshot(r, "solo", "auth")).toEqual({ branch: "main", baseSha: "pre999", state: "hook-blocked" });
+  });
+  it("threads the command label into the WIP message (perform)", () => {
+    const { r } = fakeRunner({
+      "git rev-parse --git-dir": { code: 0, stdout: ".git" },
+      "git symbolic-ref --short HEAD": { code: 0, stdout: "main" },
+      "git rev-parse HEAD": { code: 0, stdout: "pre999" },
+      "git status --porcelain": { code: 0, stdout: " M a.ts" },
+      "git commit -q -m chore: WIP before perform auth": { code: 1, stdout: "" },
+    });
+    expect(preSnapshot(r, "perform", "auth")).toEqual({ branch: "main", baseSha: "pre999", state: "hook-blocked" });
   });
   it("not-git: rev-parse fails", () => {
     const { r } = fakeRunner({ "git rev-parse --git-dir": { code: 128, stdout: "" } });
-    expect(preSnapshot(r, "auth")).toEqual({ branch: "", baseSha: "", state: "not-git" });
+    expect(preSnapshot(r, "solo", "auth")).toEqual({ branch: "", baseSha: "", state: "not-git" });
   });
 });
 

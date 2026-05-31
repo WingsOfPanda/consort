@@ -29,7 +29,7 @@ export interface SnapshotResult {
 }
 
 /** Capture branch + base SHA; if the tree is dirty, commit a WIP snapshot on the current branch. */
-export function preSnapshot(r: Runner, topic: string): SnapshotResult {
+export function preSnapshot(r: Runner, command: string, topic: string): SnapshotResult {
   if (r.run("git", ["rev-parse", "--git-dir"]).code !== 0) return { branch: "", baseSha: "", state: "not-git" };
   const branch = r.run("git", ["symbolic-ref", "--short", "HEAD"]).stdout.trim() || "(detached)";
   const preSha = r.run("git", ["rev-parse", "HEAD"]).stdout.trim();
@@ -37,7 +37,7 @@ export function preSnapshot(r: Runner, topic: string): SnapshotResult {
     return { branch, baseSha: preSha, state: "clean" };
   }
   r.run("git", ["add", "-A"]);
-  if (r.run("git", ["commit", "-q", "-m", `chore: WIP before solo ${topic}`]).code !== 0) {
+  if (r.run("git", ["commit", "-q", "-m", `chore: WIP before ${command} ${topic}`]).code !== 0) {
     return { branch, baseSha: preSha, state: "hook-blocked" };
   }
   return { branch, baseSha: r.run("git", ["rev-parse", "HEAD"]).stdout.trim(), state: "wip-committed" };
