@@ -190,7 +190,7 @@ export async function spawnAllWith(topic: string, d: SpawnAllDeps): Promise<numb
 
   const cwd = d.repoRoot();
   const results: SpawnResult[] = await Promise.all(rows.map(async (r) => {
-    const rc = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument)!, "--cwd", cwd]);
+    const rc = await d.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument)!, "--cwd", cwd, "--preflight-art-dir", art]);
     return { instrument: r.instrument, provider: r.provider, rc };
   }));
   atomicWrite(join(art, "spawn-results.tsv"), spawnResultsTsv(results));

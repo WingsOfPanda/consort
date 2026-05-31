@@ -102,6 +102,12 @@ export function parsePanesFile(text: string): Map<string, string> {
   return m;
 }
 
+/** True iff <instrument>\t<pane> appears as a line in a preflight-panes.txt body. Port of spawn.sh's
+ *  `grep -qE "^<inst>\t<pane>$"` --target-pane membership check. */
+export function paneListedFor(panesTsv: string, instrument: string, pane: string): boolean {
+  return panesTsv.split("\n").some((l) => l === `${instrument}\t${pane}`);
+}
+
 /** Bucket filenames whose verdicts `target` should verify — every file where target is NOT a member
  *  (port of consult-verify-send.sh): others' `<c>_only_items.txt`, then (N>=3) `<a>+<b>_only.txt` with
  *  target ∉ {a,b}. consensus.txt is always excluded (target is a member). */

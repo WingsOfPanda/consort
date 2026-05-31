@@ -220,7 +220,7 @@ export async function spawnAllWith(args: string[], deps: SpawnAllDeps, opts?: Pa
   const cwd = deps.repoRoot();
   const results: SpawnResult[] = await Promise.all(rows.map(async (r) => ({
     instrument: r.instrument, provider: r.provider,
-    rc: await deps.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument)!, "--cwd", cwd]),
+    rc: await deps.spawn([r.instrument, r.provider, topic, "--target-pane", panes.get(r.instrument)!, "--cwd", cwd, "--preflight-art-dir", art]),
   })));
   atomicWrite(join(art, "spawn-results.tsv"), spawnResultsTsv(results));
 
