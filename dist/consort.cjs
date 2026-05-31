@@ -17335,6 +17335,7 @@ var soundcheck_exports = {};
 __export(soundcheck_exports, {
   opencodeConfigPath: () => opencodeConfigPath,
   opencodePermissionCheck: () => opencodePermissionCheck,
+  paneBorderDiagnosis: () => paneBorderDiagnosis,
   run: () => run6
 });
 function opencodeConfigPath(cwd = process.cwd(), home = (0, import_node_os6.homedir)()) {
@@ -17398,6 +17399,27 @@ function rosterSet(providers) {
 `);
   return 0;
 }
+function paneBorderDiagnosis(pbs, pbf) {
+  const fix = [
+    "  fix: `consort` spawn sets this automatically, or add to ~/.tmux.conf:",
+    "    set -g pane-border-status top",
+    "    set -g pane-border-format ' #{?@cs_label_fmt,#{@cs_label_fmt},#[fg=#{?@cs_color,#{@cs_color},default}#,bold]#{?@cs_label,#{@cs_label},#{pane_title}}#[default]} '"
+  ];
+  if (pbs !== "top" && pbs !== "bottom") {
+    return { ok: false, lines: [`pane-border-status is '${pbs || "off"}'; part labels won't render on pane borders`, ...fix] };
+  }
+  if (!pbf.includes("@cs_label")) {
+    return { ok: false, lines: ["pane-border-format doesn't read @cs_label; consort part names won't show on pane borders", ...fix] };
+  }
+  return { ok: true, lines: [`pane-border: status=${pbs}, format @cs_label-aware (part names visible)`] };
+}
+function tmuxGlobalOption(name) {
+  try {
+    return (0, import_node_child_process8.execFileSync)("tmux", ["show-options", "-gv", name], { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
 function healthCheck() {
   let fail = 0, warn = 0, ok = 0, total = 0;
   const root = globalRoot();
@@ -17413,8 +17435,15 @@ function healthCheck() {
     log.error(`tmux: ${ver} \u2014 consort requires >= 3.0`);
     fail = 1;
   } else log.ok(`tmux: ${ver}`);
-  if (inTmuxSession()) log.ok(`tmux session: ${process.env.TMUX} is set`);
-  else {
+  if (inTmuxSession()) {
+    log.ok(`tmux session: ${process.env.TMUX} is set`);
+    const diag = paneBorderDiagnosis(tmuxGlobalOption("pane-border-status"), tmuxGlobalOption("pane-border-format"));
+    if (diag.ok) log.ok(`  ${diag.lines[0]}`);
+    else {
+      for (const l of diag.lines) log.warn(l);
+      warn = 1;
+    }
+  } else {
     log.warn("tmux session: not set \u2014 `tmux new -s consort` before spawning");
     warn = 1;
   }
@@ -17476,11 +17505,12 @@ function healthCheck() {
 `);
   return 0;
 }
-var import_node_fs20, import_node_path16, import_node_os6, availablePath, activePath;
+var import_node_fs20, import_node_child_process8, import_node_path16, import_node_os6, availablePath, activePath;
 var init_soundcheck = __esm({
   "src/commands/soundcheck.ts"() {
     "use strict";
     import_node_fs20 = require("node:fs");
+    import_node_child_process8 = require("node:child_process");
     import_node_path16 = require("node:path");
     import_node_os6 = require("node:os");
     init_log();
@@ -17710,7 +17740,7 @@ function runnerAt(cwd) {
   return {
     run(cmd, args) {
       try {
-        const stdout = (0, import_node_child_process8.execFileSync)(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+        const stdout = (0, import_node_child_process9.execFileSync)(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
         return { code: 0, stdout };
       } catch (e) {
         const err = e;
@@ -17814,11 +17844,11 @@ function finishBranchAction(r, o2) {
       return "no-branch";
   }
 }
-var import_node_child_process8;
+var import_node_child_process9;
 var init_gitwork = __esm({
   "src/core/gitwork.ts"() {
     "use strict";
-    import_node_child_process8 = require("node:child_process");
+    import_node_child_process9 = require("node:child_process");
   }
 });
 
@@ -23234,7 +23264,7 @@ async function experimentSendWith(args, deps) {
 }
 function liveProbeHardware() {
   try {
-    const csv = (0, import_node_child_process9.execFileSync)("nvidia-smi", [
+    const csv = (0, import_node_child_process10.execFileSync)("nvidia-smi", [
       "--query-gpu=name,memory.total,memory.free,driver_version",
       "--format=csv,noheader,nounits"
     ], { encoding: "utf8" }).trim();
@@ -24114,12 +24144,12 @@ async function run13(args) {
       return usage4();
   }
 }
-var import_node_fs35, import_node_child_process9, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps;
+var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps;
 var init_rehearsal2 = __esm({
   "src/commands/rehearsal.ts"() {
     "use strict";
     import_node_fs35 = require("node:fs");
-    import_node_child_process9 = require("node:child_process");
+    import_node_child_process10 = require("node:child_process");
     import_node_path32 = require("node:path");
     init_log();
     init_args();
@@ -24165,7 +24195,7 @@ var init_rehearsal2 = __esm({
       consultTimeout: () => consultTimeout("experiment"),
       runSmokeTest: (script, cwd, timeoutSec) => {
         try {
-          (0, import_node_child_process9.execFileSync)(script, [], { cwd, timeout: timeoutSec * 1e3, encoding: "utf8" });
+          (0, import_node_child_process10.execFileSync)(script, [], { cwd, timeout: timeoutSec * 1e3, encoding: "utf8" });
           return { ok: true, stderr: "" };
         } catch (e) {
           const err = e;

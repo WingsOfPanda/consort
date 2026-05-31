@@ -1,12 +1,12 @@
 ---
-description: Health check (tmux/state/config/providers) plus interactive roster picker — selects the active provider set for /consort:score
+description: Health check (tmux/pane-border/state/config/providers) plus interactive roster picker — selects the active provider set for /consort:score
 argument-hint: (no args)
 allowed-tools: Bash, Write, AskUserQuestion
 ---
 
 # /consort:soundcheck
 
-Health check (tmux/state/config/providers) + roster picker.
+Health check (tmux/pane-border/state/config/providers) + roster picker.
 
 ## Steps
 
