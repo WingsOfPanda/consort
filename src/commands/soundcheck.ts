@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../core/log.js";
 import { haveCmd, inTmuxSession, tmuxVersionOk, tmuxVersionString } from "../core/deps.js";
-import { globalRoot } from "../core/paths.js";
+import { globalRoot, pluginRoot } from "../core/paths.js";
 import { atomicWrite } from "../core/atomic.js";
 import { contractsExist, listInstruments, instrumentBinary, instrumentConsultValidated } from "../core/contracts.js";
 import { readProviderList, planRoster, formatActiveFile, formatProviderFile } from "../core/providers.js";
@@ -30,7 +30,6 @@ export function opencodePermissionCheck(cfgPath?: string): PermissionResult {
   return { rc: 1, message: "opencode.json: no top-level 'permission' key (defaults to 'ask')", configPath: p };
 }
 
-const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 const availablePath = (): string => join(globalRoot(), "providers-available.txt");
 const activePath = (): string => join(globalRoot(), "providers-active.txt");
 

@@ -32,7 +32,7 @@ import { paneSend, killNow } from "../core/tmux.js";
 import { haveCmd } from "../core/deps.js";
 import { spawnRosterArg, parsePanesFile, spawnResultsTsv, spawnTally, type SpawnResult } from "../core/score.js";
 import { pickInstruments } from "../core/instruments.js";
-import { repoRoot } from "../core/paths.js";
+import { repoRoot, pluginRoot } from "../core/paths.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 import { run as sendRun } from "./send.js";
@@ -395,8 +395,7 @@ export async function experimentSendWith(args: string[], deps: ExperimentSendDep
   const timeBudgetS = String(p.timeout ?? deps.consultTimeout());
 
   // Read + render the template.
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-  const templatePath = join(pluginRoot, "config", "prompt-templates", "rehearsal", "experiment.md");
+  const templatePath = join(pluginRoot(), "config", "prompt-templates", "rehearsal", "experiment.md");
   if (!existsSync(templatePath)) { log.error(`rehearsal experiment-send: template missing: ${templatePath}`); return 1; }
   const template = readFileSync(templatePath, "utf8");
 

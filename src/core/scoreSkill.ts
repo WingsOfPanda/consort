@@ -2,6 +2,7 @@
 // Behavioral port of the consult skill-classify / skill-hint-append helpers (lib/consult.sh).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pluginRoot } from "./paths.js";
 
 const BRAINSTORMING = ["design patterns?", "how should", "best way", "what s the best way", "what is the best way", "decide between"];
 const DEBUGGING = ["why", "broken", "failing", "regressions?", "edge cases?", "bugs?", "doesn t work", "does not work"];
@@ -20,7 +21,6 @@ export function classifyTopic(topic: string): "brainstorming" | "systematic-debu
   return "none";
 }
 
-function pluginRoot(): string { return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd(); }
 /** Append config/skill-hints/<skill>.md to basePrompt. Base unchanged when none/missing/override. */
 export function skillHintAppend(skillTxtPath: string, basePrompt: string): string {
   let skill = "none";

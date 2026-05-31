@@ -8,6 +8,11 @@ export function globalRoot(home?: string): string {
   return home ?? process.env.CONSORT_HOME ?? join(homedir(), ".consort");
 }
 
+/** Plugin install root: CLAUDE_PLUGIN_ROOT when set, else the process CWD. Single source of truth. */
+export function pluginRoot(): string {
+  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+}
+
 export function stateRoot(opts?: { home?: string; cwd?: string }): string {
   if (opts?.home) return opts.home;
   if (process.env.CONSORT_HOME) return process.env.CONSORT_HOME;

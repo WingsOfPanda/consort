@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
-import { topicDir, repoStateDir, isArtifactDir } from "../core/paths.js";
+import { topicDir, repoStateDir, isArtifactDir, pluginRoot } from "../core/paths.js";
 import { stateArchive } from "../core/archive.js";
 import { paneMetaRead, paneMetaReadForDir } from "../core/ipc.js";
 import { paneAlive, killGraceful, killNow } from "../core/tmux.js";
@@ -44,7 +44,6 @@ export async function teardownBatch(topic: string, pairs: Pair[], d: CodaDeps): 
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 
 function liveDeps(): CodaDeps {
   return {

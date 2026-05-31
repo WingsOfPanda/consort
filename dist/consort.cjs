@@ -120,6 +120,9 @@ var init_args = __esm({
 function globalRoot(home) {
   return home ?? process.env.CONSORT_HOME ?? (0, import_node_path.join)((0, import_node_os.homedir)(), ".consort");
 }
+function pluginRoot() {
+  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+}
 function stateRoot(opts) {
   if (opts?.home) return opts.home;
   if (process.env.CONSORT_HOME) return process.env.CONSORT_HOME;
@@ -488,9 +491,6 @@ When done, append a single JSONL line to ${outbox}:
 END_OF_INSTRUCTION
 `;
   atomicWrite(inboxPath(i2, m, t), body);
-}
-function pluginRoot() {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 }
 function identityWrite(i2, m, t) {
   const tplPath = (0, import_node_path3.join)(pluginRoot(), "config", "prompt-templates", "identity.md");
@@ -7947,12 +7947,9 @@ var require_dist = __commonJS({
 });
 
 // src/core/instruments.ts
-function pluginRoot2() {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-}
 function instrumentsPath() {
   const user = (0, import_node_path4.join)(globalRoot(), "instruments.yaml");
-  return (0, import_node_fs6.existsSync)(user) ? user : (0, import_node_path4.join)(pluginRoot2(), "config", "instruments.yaml");
+  return (0, import_node_fs6.existsSync)(user) ? user : (0, import_node_path4.join)(pluginRoot(), "config", "instruments.yaml");
 }
 function loadInstrumentPool() {
   const p = instrumentsPath();
@@ -8037,12 +8034,9 @@ var init_instruments = __esm({
 });
 
 // src/core/contracts.ts
-function pluginRoot3() {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-}
 function contractsPath() {
   const user = (0, import_node_path5.join)(globalRoot(), "contracts.yaml");
-  return (0, import_node_fs7.existsSync)(user) ? user : (0, import_node_path5.join)(pluginRoot3(), "config", "contracts.yaml");
+  return (0, import_node_fs7.existsSync)(user) ? user : (0, import_node_path5.join)(pluginRoot(), "config", "contracts.yaml");
 }
 function load() {
   const p = contractsPath();
@@ -16440,8 +16434,8 @@ function paneLabelSetArgs(pane, instrument, model, topic) {
 async function paneLabelSet(pane, instrument, model, topic) {
   for (const args of paneLabelSetArgs(pane, instrument, model, topic)) await execa("tmux", args);
 }
-function gracefulRespawnCommand(snap, pluginRoot7, label, color) {
-  return `cat '${snap}'; node '${pluginRoot7}/dist/consort.cjs' _banner '${label}' '${color}'; rm -f '${snap}'`;
+function gracefulRespawnCommand(snap, pluginRoot2, label, color) {
+  return `cat '${snap}'; node '${pluginRoot2}/dist/consort.cjs' _banner '${label}' '${color}'; rm -f '${snap}'`;
 }
 async function paneLabel(pane) {
   try {
@@ -16457,7 +16451,7 @@ async function paneColor(pane) {
     return "";
   }
 }
-async function killGraceful(pane, pluginRoot7) {
+async function killGraceful(pane, pluginRoot2) {
   if (!await paneAlive(pane)) return;
   const label = await paneLabel(pane) || "part";
   const color = await paneColor(pane);
@@ -16468,7 +16462,7 @@ async function killGraceful(pane, pluginRoot7) {
   } catch {
     (0, import_node_fs13.writeFileSync)(snap, "");
   }
-  await respawn(pane, gracefulRespawnCommand(snap, pluginRoot7, label, color));
+  await respawn(pane, gracefulRespawnCommand(snap, pluginRoot2, label, color));
 }
 async function preflightLayout(topic, roster, opts) {
   const conductor = await conductorPane();
@@ -17117,7 +17111,7 @@ function liveDeps() {
   return {
     paneMetaRead: (i2, m, t) => paneMetaRead(i2, m, t),
     paneAlive: (p) => paneAlive(p),
-    killGraceful: (p) => killGraceful(p, pluginRoot4()),
+    killGraceful: (p) => killGraceful(p, pluginRoot()),
     killNow: (p) => killNow(p),
     stateArchive: (i2, m, t) => stateArchive(i2, m, t),
     sleep: sleep3,
@@ -17227,7 +17221,7 @@ async function run5(args) {
   process.stderr.write("Usage: coda <topic> | <instrument> <topic> | --all | --pairs <topic> <i...>\n");
   return 2;
 }
-var import_node_fs19, import_node_path15, GRACEFUL_BATCH_WAIT_MS, sleep3, pluginRoot4;
+var import_node_fs19, import_node_path15, GRACEFUL_BATCH_WAIT_MS, sleep3;
 var init_coda = __esm({
   "src/commands/coda.ts"() {
     "use strict";
@@ -17240,7 +17234,6 @@ var init_coda = __esm({
     init_tmux();
     GRACEFUL_BATCH_WAIT_MS = 9e3;
     sleep3 = (ms) => new Promise((r) => setTimeout(r, ms));
-    pluginRoot4 = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
   }
 });
 
@@ -17377,7 +17370,7 @@ function healthCheck() {
     const dest = (0, import_node_path16.join)(globalRoot(), f);
     if ((0, import_node_fs21.existsSync)(dest)) log.ok(`config: ${f}`);
     else {
-      const shipped = (0, import_node_path16.join)(pluginRoot5(), "config", f);
+      const shipped = (0, import_node_path16.join)(pluginRoot(), "config", f);
       if ((0, import_node_fs21.existsSync)(shipped)) {
         try {
           (0, import_node_fs21.copyFileSync)(shipped, dest);
@@ -17426,7 +17419,7 @@ function healthCheck() {
 `);
   return 0;
 }
-var import_node_fs21, import_node_path16, import_node_os6, pluginRoot5, availablePath, activePath;
+var import_node_fs21, import_node_path16, import_node_os6, availablePath, activePath;
 var init_soundcheck = __esm({
   "src/commands/soundcheck.ts"() {
     "use strict";
@@ -17440,7 +17433,6 @@ var init_soundcheck = __esm({
     init_contracts();
     init_providers();
     init_archive();
-    pluginRoot5 = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
     availablePath = () => (0, import_node_path16.join)(globalRoot(), "providers-available.txt");
     activePath = () => (0, import_node_path16.join)(globalRoot(), "providers-active.txt");
   }
@@ -19025,15 +19017,12 @@ function classifyTopic(topic) {
   if (matchAny(f, DEBUGGING)) return "systematic-debugging";
   return "none";
 }
-function pluginRoot6() {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-}
 function skillHintAppend(skillTxtPath, basePrompt) {
   let skill = "none";
   if ((0, import_node_fs27.existsSync)(skillTxtPath)) skill = (0, import_node_fs27.readFileSync)(skillTxtPath, "utf8").replace(/\s/g, "");
   if (process.env.CONSORT_SCORE_SKILL_OVERRIDE === "none") skill = "none";
   if (skill !== "brainstorming" && skill !== "systematic-debugging") return basePrompt;
-  const hintFile = (0, import_node_path22.join)(pluginRoot6(), "config", "skill-hints", `${skill}.md`);
+  const hintFile = (0, import_node_path22.join)(pluginRoot(), "config", "skill-hints", `${skill}.md`);
   if (!(0, import_node_fs27.existsSync)(hintFile)) return basePrompt;
   return `${basePrompt}
 
@@ -19047,6 +19036,7 @@ var init_scoreSkill = __esm({
     "use strict";
     import_node_fs27 = require("node:fs");
     import_node_path22 = require("node:path");
+    init_paths();
     BRAINSTORMING = ["design patterns?", "how should", "best way", "what s the best way", "what is the best way", "decide between"];
     DEBUGGING = ["why", "broken", "failing", "regressions?", "edge cases?", "bugs?", "doesn t work", "does not work"];
   }
@@ -23155,8 +23145,7 @@ async function experimentSendWith(args, deps) {
   const sotaBlock = buildSotaBlock((0, import_node_fs35.existsSync)(sotaPath) ? (0, import_node_fs35.readFileSync)(sotaPath, "utf8") : null);
   const peersBlock = formatPeersBlock(gatherPeers(art, instrument));
   const timeBudgetS = String(p.timeout ?? deps.consultTimeout());
-  const pluginRoot7 = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-  const templatePath = (0, import_node_path32.join)(pluginRoot7, "config", "prompt-templates", "rehearsal", "experiment.md");
+  const templatePath = (0, import_node_path32.join)(pluginRoot(), "config", "prompt-templates", "rehearsal", "experiment.md");
   if (!(0, import_node_fs35.existsSync)(templatePath)) {
     log.error(`rehearsal experiment-send: template missing: ${templatePath}`);
     return 1;
