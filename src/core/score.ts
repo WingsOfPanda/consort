@@ -139,11 +139,6 @@ export function cascadeTargets(phase: ResetPhase, keepFindings: boolean): { part
   return { partFile, artGlobs: [], artFiles: ["adjudicated-draft.md"] };
 }
 
-/** `_score/drilldowns/_scratch` — per-part drill output, kept out of design-doc/ so the doc dir stays clean. */
-export function scoreDrilldownScratchDir(topic: string, opts?: { home?: string; cwd?: string }): string {
-  return join(scoreArtDir(topic, opts), "drilldowns", "_scratch");
-}
-
 /** Collision-resolved drill output path (port of consult-drilldown.sh resolve_out_path). Strips any
  *  prior `-N` before re-appending `-2..-99`, so re-runs don't compound; throws past 99. */
 export function resolveDrilldownPath(scratchDir: string, section: string, instrument: string, subproject?: string): string {

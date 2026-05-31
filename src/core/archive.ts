@@ -4,7 +4,7 @@ import { partDir, topicDir, globalRoot, repoHash } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
 
 export function archiveTs(now: Date = new Date()): string {
-  return now.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "").replace(/Z$/, "Z");
+  return now.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "");
 }
 // archiveTs → YYYYMMDDTHHMMSSZ
 export function isoUtc(now: Date = new Date()): string {

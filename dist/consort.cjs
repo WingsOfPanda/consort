@@ -379,7 +379,7 @@ var init_atomic = __esm({
 
 // src/core/archive.ts
 function archiveTs(now = /* @__PURE__ */ new Date()) {
-  return now.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "").replace(/Z$/, "Z");
+  return now.toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "");
 }
 function isoUtc(now = /* @__PURE__ */ new Date()) {
   return now.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -17121,7 +17121,6 @@ function liveDeps() {
     killNow: (p) => killNow(p),
     stateArchive: (i2, m, t) => stateArchive(i2, m, t),
     sleep: sleep3,
-    topicDir,
     readLastPane: (t) => {
       const f = (0, import_node_path15.join)(topicDir(t), ".last_pane");
       return (0, import_node_fs19.existsSync)(f) ? (0, import_node_fs19.readFileSync)(f, "utf8").trim() : "";
@@ -17152,7 +17151,7 @@ function collectInstrumentPairs(topic, instruments) {
   const pairs = [];
   for (const instrument of instruments) {
     for (const e of dirs) {
-      if (e.name === `${instrument}-${e.name.slice(instrument.length + 1)}` && e.name.startsWith(`${instrument}-`)) {
+      if (e.name.startsWith(`${instrument}-`)) {
         const m = paneMetaReadForDir((0, import_node_path15.join)(td, e.name));
         if (m.instrument === instrument) pairs.push({ instrument, model: m.model });
       }
@@ -19985,7 +19984,6 @@ var init_perform = __esm({
     init_paths();
     init_audit();
     init_args();
-    init_audit();
     PerformArgError = class extends Error {
       code = 2;
     };
@@ -20065,7 +20063,6 @@ var COMPONENTS_HEADER, OTHER_H2, ANY_COMPONENTS_PREFIX, TABLE_ROW, SEPARATOR_ROW
 var init_performScope = __esm({
   "src/core/performScope.ts"() {
     "use strict";
-    init_audit();
     COMPONENTS_HEADER = /^## Components[ \t]*$/;
     OTHER_H2 = /^## [^ ]/;
     ANY_COMPONENTS_PREFIX = /^## Components/;
@@ -24232,7 +24229,7 @@ function topApproach(draft) {
     }
     if (inApproaches) {
       const m = line.match(/^[0-9]+\.\s+(.+)$/);
-      if (m) return m[1].replace(/\s+$/, "").replace(/\s+—.*$/, "").replace(/\s+$/, "");
+      if (m) return m[1].replace(/\s+$/, "").replace(/\s+—.*$/, "");
     }
   }
   return "";

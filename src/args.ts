@@ -19,13 +19,13 @@ export function tokenizeArgsLine(line: string): string[] {
   return out;
 }
 
-export function loadArgsFile(path: string): string[] {
+function loadArgsFile(path: string): string[] {
   if (!existsSync(path)) return [];
   const first = readFileSync(path, "utf8").split("\n")[0] ?? "";
   return tokenizeArgsLine(first);
 }
 
-export function consumeArgsFile(path: string | undefined): void {
+function consumeArgsFile(path: string | undefined): void {
   if (!path) return;
   try { rmSync(path, { force: true }); } catch { /* ignore */ }
 }

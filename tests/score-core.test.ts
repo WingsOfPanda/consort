@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode, verifyScopeFiles, lastTag, writeTargetsTsv, scoreDrilldownScratchDir, resolveDrilldownPath } from "../src/core/score.js";
+import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode, verifyScopeFiles, lastTag, writeTargetsTsv, resolveDrilldownPath } from "../src/core/score.js";
 
 describe("score paths", () => {
   it("scoreArtDir / scoreDraftDir hang off the topic dir under _score", () => {
@@ -95,10 +95,6 @@ describe("writeTargetsTsv", () => {
 });
 
 describe("drilldown paths", () => {
-  it("scratch dir hangs off _score/drilldowns/_scratch", () => {
-    process.env.CONSORT_HOME = "/R";
-    expect(scoreDrilldownScratchDir("t").endsWith(join("t", "_score", "drilldowns", "_scratch"))).toBe(true);
-  });
   it("resolveDrilldownPath: plain, then -2/-3 collisions (no compounding), subproject infix", () => {
     const sc = mkdtempSync(join(tmpdir(), "dd-")); mkdirSync(sc, { recursive: true });
     const p1 = resolveDrilldownPath(sc, "the section", "viola");

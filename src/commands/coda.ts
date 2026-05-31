@@ -16,7 +16,6 @@ export interface CodaDeps {
   killNow(pane: string): Promise<void>;
   stateArchive(i: string, m: string, t: string): string | null;
   sleep(ms: number): Promise<void>;
-  topicDir(t: string): string;
   readLastPane(t: string): string;
   removeLastPane(t: string): void;
 }
@@ -55,7 +54,6 @@ function liveDeps(): CodaDeps {
     killNow: (p) => killNow(p),
     stateArchive: (i, m, t) => stateArchive(i, m, t),
     sleep,
-    topicDir,
     readLastPane: (t) => { const f = join(topicDir(t), ".last_pane"); return existsSync(f) ? readFileSync(f, "utf8").trim() : ""; },
     removeLastPane: (t) => { try { rmSync(join(topicDir(t), ".last_pane"), { force: true }); } catch { /* */ } },
   };
@@ -80,7 +78,7 @@ function collectInstrumentPairs(topic: string, instruments: string[]): Pair[] {
   const pairs: Pair[] = [];
   for (const instrument of instruments) {
     for (const e of dirs) {
-      if (e.name === `${instrument}-${e.name.slice(instrument.length + 1)}` && e.name.startsWith(`${instrument}-`)) {
+      if (e.name.startsWith(`${instrument}-`)) {
         const m = paneMetaReadForDir(join(td, e.name));
         if (m.instrument === instrument) pairs.push({ instrument, model: m.model });
       }
