@@ -16671,6 +16671,18 @@ function captureArtDir(opts) {
     return "";
   }
 }
+function runForensics(command, artDirFor, topic) {
+  if (!topic) {
+    log.error(`usage: ${command} forensics <topic>`);
+    return 2;
+  }
+  const path6 = captureArtDir({ artDir: artDirFor(topic), command });
+  if (path6) {
+    log.ok(`${command} forensics: captured ${path6}`);
+    process.stdout.write(path6 + "\n");
+  } else log.info(`${command} forensics: no mechanical findings (no file written)`);
+  return 0;
+}
 var import_node_fs14, import_node_path12, SCROLLBACK_LINES, NO_EVENT_SENTINEL, FAILURE_FILENAME;
 var init_forensics = __esm({
   "src/core/forensics.ts"() {
@@ -16679,6 +16691,7 @@ var init_forensics = __esm({
     import_node_path12 = require("node:path");
     init_paths();
     init_atomic();
+    init_log();
     SCROLLBACK_LINES = 50;
     NO_EVENT_SENTINEL = "no error event before timeout";
     FAILURE_FILENAME = "failure-reason.txt";
@@ -17868,17 +17881,7 @@ async function run9(args) {
   }
 }
 async function forensicsRun(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: solo forensics <topic>");
-    return 2;
-  }
-  const path6 = captureArtDir({ artDir: soloArtDir(topic), command: "solo" });
-  if (path6) {
-    log.ok(`solo forensics: captured ${path6}`);
-    process.stdout.write(path6 + "\n");
-  } else log.info("solo forensics: no mechanical findings (no file written)");
-  return 0;
+  return runForensics("solo", soloArtDir, rest[0]);
 }
 async function initRun(tokens) {
   return initWith(tokens, liveInitDeps);
@@ -19773,17 +19776,7 @@ async function offsetResetRun(rest) {
   return 0;
 }
 async function forensicsRun2(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: score forensics <topic>");
-    return 2;
-  }
-  const path6 = captureArtDir({ artDir: scoreArtDir(topic), command: "score" });
-  if (path6) {
-    log.ok(`score forensics: captured ${path6}`);
-    process.stdout.write(path6 + "\n");
-  } else log.info("score forensics: no mechanical findings (no file written)");
-  return 0;
+  return runForensics("score", scoreArtDir, rest[0]);
 }
 async function archiveRun(rest) {
   const topic = rest[0];
@@ -21190,17 +21183,7 @@ async function finishOneWith(topic, slug, action, d) {
   return 0;
 }
 async function forensicsRun3(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: perform forensics <topic>");
-    return 2;
-  }
-  const path6 = captureArtDir({ artDir: performArtDir(topic), command: "perform" });
-  if (path6) {
-    log.ok(`perform forensics: captured ${path6}`);
-    process.stdout.write(path6 + "\n");
-  } else log.info("perform forensics: no mechanical findings (no file written)");
-  return 0;
+  return runForensics("perform", performArtDir, rest[0]);
 }
 async function archiveRun2(rest) {
   const topic = rest[0];
@@ -23870,17 +23853,7 @@ async function teardownWith(args, deps) {
   return 0;
 }
 async function forensicsRun4(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("rehearsal forensics: topic required");
-    return 2;
-  }
-  const path6 = captureArtDir({ artDir: rehearsalArtDir(topic), command: "rehearsal" });
-  if (path6) {
-    log.ok(`forensics captured: ${path6}`);
-    process.stdout.write(path6 + "\n");
-  } else log.info("rehearsal forensics: no mechanical findings");
-  return 0;
+  return runForensics("rehearsal", rehearsalArtDir, rest[0]);
 }
 async function freshPartWith(args, deps) {
   if (args.length !== 2) {
@@ -24956,17 +24929,7 @@ async function synthFinalRun(rest) {
   return 0;
 }
 async function forensicsRun5(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: prelude forensics <topic>");
-    return 2;
-  }
-  const path6 = captureArtDir({ artDir: preludeArtDir(topic), command: "prelude" });
-  if (path6) {
-    log.ok(`prelude forensics: captured ${path6}`);
-    process.stdout.write(path6 + "\n");
-  } else log.info("prelude forensics: no mechanical findings (no file written)");
-  return 0;
+  return runForensics("prelude", preludeArtDir, rest[0]);
 }
 async function teardownRun(rest) {
   return teardownWith2(rest, livePreludeTeardownDeps);

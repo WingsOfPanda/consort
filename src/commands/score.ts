@@ -21,7 +21,7 @@ import { pickInstruments } from "../core/instruments.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier } from "../core/contracts.js";
 import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState } from "../core/scoreTurn.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
@@ -587,12 +587,7 @@ export async function offsetResetRun(rest: string[]): Promise<number> {
 // ---- Phase F: forensics + archive (thin wind-down verbs) ----
 
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: score forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: scoreArtDir(topic), command: "score" });
-  if (path) { log.ok(`score forensics: captured ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("score forensics: no mechanical findings (no file written)");
-  return 0; // best-effort: never fails the wind-down
+  return runForensics("score", scoreArtDir, rest[0]);
 }
 
 export async function archiveRun(rest: string[]): Promise<number> {

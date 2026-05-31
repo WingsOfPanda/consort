@@ -9,7 +9,7 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { preludeArtDir, deriveSlug } from "../core/prelude.js";
 import { extractHandoffData } from "../core/preludeHandoff.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { killNow } from "../core/tmux.js";
 import {
   type RosterRow, formatRosterFile, parseRosterFile, spawnRosterArg, spawnResultsTsv, spawnTally,
@@ -369,14 +369,9 @@ export async function synthFinalRun(rest: string[]): Promise<number> {
   return 0;
 }
 
-// ---- forensics (thin captureArtDir wrapper) ----
+// ---- forensics (delegates to core runForensics) ----
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: prelude forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: preludeArtDir(topic), command: "prelude" });
-  if (path) { log.ok(`prelude forensics: captured ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("prelude forensics: no mechanical findings (no file written)");
-  return 0; // best-effort
+  return runForensics("prelude", preludeArtDir, rest[0]);
 }
 
 // ---- teardown (orphan kill + archive; panes torn down by the directive's coda --pairs) ----

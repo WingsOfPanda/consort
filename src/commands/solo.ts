@@ -7,7 +7,7 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import { repoRoot } from "../core/paths.js";
 import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs, detectTestCommand, renderSummary, renderResume, type SummaryFacts } from "../core/solo.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
@@ -46,14 +46,9 @@ export async function run(args: string[]): Promise<number> {
   }
 }
 
-// ---- forensics (thin captureArtDir wrapper; mirrors score.ts::forensicsRun). Feeds /consort:playback. ----
+// ---- forensics (delegates to core runForensics). Feeds /consort:playback. ----
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: solo forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: soloArtDir(topic), command: "solo" });
-  if (path) { log.ok(`solo forensics: captured ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("solo forensics: no mechanical findings (no file written)");
-  return 0; // best-effort: never fails the wind-down
+  return runForensics("solo", soloArtDir, rest[0]);
 }
 
 async function initRun(tokens: string[]): Promise<number> {

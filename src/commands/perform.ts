@@ -15,7 +15,7 @@ import {
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/performScope.js";
 import { runnerAt, preSnapshot, createOrResumeBranch, shortstat, finishBranchAction, type Runner } from "../core/gitwork.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { haveCmd } from "../core/deps.js";
 import { performState, composeRound1Prompt, composeFixPrompt, composeDagUnitPrompt } from "../core/performTurn.js";
 import { pickInstruments } from "../core/instruments.js";
@@ -590,10 +590,7 @@ export async function finishOneWith(topic: string, slug: string, action: "merge"
 
 // ---- forensics (best-effort) + archive (deploy-archive.sh) ----
 async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0]; if (!topic) { log.error("usage: perform forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: performArtDir(topic), command: "perform" });
-  if (path) { log.ok(`perform forensics: captured ${path}`); process.stdout.write(path + "\n"); } else log.info("perform forensics: no mechanical findings (no file written)");
-  return 0;
+  return runForensics("perform", performArtDir, rest[0]);
 }
 export async function archiveRun(rest: string[]): Promise<number> {
   const topic = rest[0]; if (!topic) { log.error("usage: perform archive <topic>"); return 2; }

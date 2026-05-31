@@ -23,7 +23,7 @@ import {
   renderExperimentPrompt, buildSotaBlock, assembleHardwareBlock, hardwareDiffAlert,
   formatPeersBlock, buildDispatchState, EXP_ID_RE, INSTRUMENT_RE, type PeerRow,
 } from "../core/rehearsalExperiment.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { parseScoreboard, buildHandoffKv, type HandoffInput } from "../core/rehearsalHandoff.js";
 import { buildConsensus } from "../core/rehearsalConsensus.js";
 import { instrumentBinary, consultTimeout } from "../core/contracts.js";
@@ -1225,15 +1225,10 @@ const liveTeardownDeps: RehearsalTeardownDeps = {
   now: () => isoUtc(),
 };
 
-// ---- Phase D: forensics — thin captureArtDir wrapper (mirrors score.ts::forensicsRun). ----
+// ---- Phase D: forensics — delegates to core runForensics (mirrors score.ts::forensicsRun). ----
 
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("rehearsal forensics: topic required"); return 2; }
-  const path = captureArtDir({ artDir: rehearsalArtDir(topic), command: "rehearsal" });
-  if (path) { log.ok(`forensics captured: ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("rehearsal forensics: no mechanical findings");
-  return 0;
+  return runForensics("rehearsal", rehearsalArtDir, rest[0]);
 }
 
 // ---- Phase D: fresh-part — graceful codex-session reset by pane respawn. ----
