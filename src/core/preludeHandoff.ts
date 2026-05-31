@@ -6,7 +6,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWrite } from "./atomic.js";
 import { isoUtc } from "./archive.js";
-import { topApproach } from "./preludeConfidence.js"; // reuse the same first-approach scan
+import { topApproach as firstApproach } from "./preludeConfidence.js"; // reuse the same first-approach scan
+import { readIfExistsOrNull as readIf } from "./fsread.js";
 
 export interface HandoffInput {
   topic: string;
@@ -36,8 +37,6 @@ export function buildHandoffKv(i: HandoffInput): string {
   return L.join("\n") + "\n";
 }
 
-function readIf(p: string): string | null { return existsSync(p) ? readFileSync(p, "utf8") : null; }
-
 /** Walk an art dir → write handoff-data.kv. Returns the path, or null if art-dir/topic.txt missing. */
 export function extractHandoffData(artDir: string, now?: Date): string | null {
   if (!existsSync(artDir) || !statSync(artDir).isDirectory()) return null;
@@ -58,7 +57,7 @@ export function extractHandoffData(artDir: string, now?: Date): string | null {
   let top = "", tradeoff = false;
   if (landscapeDoc) {
     const doc = readFileSync(join(artDir, landscapeDoc), "utf8");
-    top = topApproach(doc);
+    top = firstApproach(doc);
     tradeoff = /^## Tradeoff matrix/m.test(doc);
   }
 

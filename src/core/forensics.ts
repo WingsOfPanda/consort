@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { globalRoot, repoHash } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
+import { log } from "./log.js";
 
 export type FailureReason = "timeout" | "error_event";
 export const SCROLLBACK_LINES = 50;
@@ -150,4 +151,14 @@ export function captureArtDir(opts: { artDir: string; command: string; now?: Dat
     atomicWrite(path, md);
     return path;
   } catch { return ""; }
+}
+
+/** Shared body for each command's `forensics` wind-down verb: usage-guard the topic, capture, report.
+ *  Best-effort — rc 0 unless the topic arg is missing (rc 2). Feeds /consort:playback. */
+export function runForensics(command: string, artDirFor: (topic: string) => string, topic: string | undefined): number {
+  if (!topic) { log.error(`usage: ${command} forensics <topic>`); return 2; }
+  const path = captureArtDir({ artDir: artDirFor(topic), command });
+  if (path) { log.ok(`${command} forensics: captured ${path}`); process.stdout.write(path + "\n"); }
+  else log.info(`${command} forensics: no mechanical findings (no file written)`);
+  return 0;
 }

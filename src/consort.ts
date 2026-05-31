@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { applyArgsFile } from "./args.js";
 import { runArgsFile } from "./core/paths.js";
-import { renderBannerHead } from "./core/colors.js";
+import { renderBannerHead, ansiFromColor } from "./core/colors.js";
 
 type Handler = (args: string[]) => Promise<number>;
 
@@ -23,7 +23,7 @@ async function loadHandlers(): Promise<Record<string, Handler>> {
 
 async function banner(label: string, color: string): Promise<number> {
   process.stdout.write(renderBannerHead(label, color) + "\n");
-  const c = /^colour(\d+)$/.test(color) ? `\x1b[38;5;${color.replace("colour", "")}m` : "";
+  const c = ansiFromColor(color);
   const r = "\x1b[0m";
   const fast = Boolean(process.env.CONSORT_BANNER_FAST);
   for (let i = 8; i >= 1; i--) {

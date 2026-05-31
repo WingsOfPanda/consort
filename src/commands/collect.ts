@@ -1,17 +1,6 @@
-import { existsSync, readdirSync } from "node:fs";
 import { kvParse } from "../args.js";
 import { log } from "../core/log.js";
-import { topicDir } from "../core/paths.js";
-import { paneMetaModel, outboxWait, outboxDump } from "../core/ipc.js";
-
-function resolveModel(instrument: string, topic: string): string | null {
-  const td = topicDir(topic);
-  if (!existsSync(td)) return null;
-  const dir = readdirSync(td, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.startsWith(`${instrument}-`));
-  if (!dir) return null;
-  const hint = dir.name.slice(instrument.length + 1);
-  return paneMetaModel(instrument, hint, topic);
-}
+import { resolveModel, outboxWait, outboxDump } from "../core/ipc.js";
 
 export async function run(args: string[]): Promise<number> {
   if (args.length < 2) { log.error("usage: collect <instrument> <topic> [--timeout n]"); return 2; }

@@ -6,6 +6,14 @@ import { SLUG_REGEX } from "./audit.js";
 export interface RepoHit { slug: string; marker: string; }
 export interface TargetValidation { ok: RepoHit[]; errors: string[]; }
 
+/** CLAUDE.md (preferred) else AGENTS.md under dir, realpath-resolved; null if neither exists. */
+function resolveMarker(dir: string): string | null {
+  const marker = existsSync(join(dir, "CLAUDE.md")) ? join(dir, "CLAUDE.md")
+    : existsSync(join(dir, "AGENTS.md")) ? join(dir, "AGENTS.md") : null;
+  if (!marker) return null;
+  try { return join(realpathSync(dir), marker.slice(dir.length + 1)); } catch { return marker; }
+}
+
 /** Validate --targets slugs against `cwd`'s first-level sibling dirs (port of consult-init.sh's
  *  --targets validation, widened with marker existence). Each slug must match SLUG_REGEX (rejects
  *  '/', '..'), be a real sibling dir with CLAUDE.md (pref) or AGENTS.md, and be unique. Returns the
@@ -19,12 +27,9 @@ export function validateTargets(cwd: string, slugs: string[]): TargetValidation 
     if (seen.has(slug)) { errors.push(`duplicate target slug: ${slug}`); continue; }
     seen.add(slug);
     const dir = join(cwd, slug);
-    const marker = existsSync(join(dir, "CLAUDE.md")) ? join(dir, "CLAUDE.md")
-      : existsSync(join(dir, "AGENTS.md")) ? join(dir, "AGENTS.md") : null;
+    const marker = resolveMarker(dir);
     if (!marker) { errors.push(`target '${slug}' is not a sibling dir with CLAUDE.md/AGENTS.md under ${cwd}`); continue; }
-    let abs = marker;
-    try { abs = join(realpathSync(dir), marker.slice(dir.length + 1)); } catch { /* keep marker */ }
-    ok.push({ slug, marker: abs });
+    ok.push({ slug, marker });
   }
   return { ok, errors };
 }
@@ -40,14 +45,10 @@ export function detectMultiRepo(cwd: string, corpus: string): RepoHit[] {
   for (const slug of entries) {
     if (slug.startsWith(".")) continue;
     const dir = join(cwd, slug);
-    let marker: string;
-    if (existsSync(join(dir, "CLAUDE.md"))) marker = join(dir, "CLAUDE.md");
-    else if (existsSync(join(dir, "AGENTS.md"))) marker = join(dir, "AGENTS.md");
-    else continue;
+    const marker = resolveMarker(dir);
+    if (!marker) continue;
     if (!corpusLower.includes(slug.toLowerCase())) continue;
-    let abs = marker;
-    try { abs = join(realpathSync(dir), marker.slice(dir.length + 1)); } catch { /* keep marker */ }
-    hits.push({ slug, marker: abs });
+    hits.push({ slug, marker });
   }
   return hits;
 }

@@ -23,7 +23,7 @@ import {
   renderExperimentPrompt, buildSotaBlock, assembleHardwareBlock, hardwareDiffAlert,
   formatPeersBlock, buildDispatchState, EXP_ID_RE, INSTRUMENT_RE, type PeerRow,
 } from "../core/rehearsalExperiment.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { parseScoreboard, buildHandoffKv, type HandoffInput } from "../core/rehearsalHandoff.js";
 import { buildConsensus } from "../core/rehearsalConsensus.js";
 import { instrumentBinary, consultTimeout } from "../core/contracts.js";
@@ -32,13 +32,18 @@ import { paneSend, killNow } from "../core/tmux.js";
 import { haveCmd } from "../core/deps.js";
 import { spawnRosterArg, parsePanesFile, spawnResultsTsv, spawnTally, type SpawnResult } from "../core/score.js";
 import { pickInstruments } from "../core/instruments.js";
-import { repoRoot } from "../core/paths.js";
+import { repoRoot, pluginRoot } from "../core/paths.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 import { run as sendRun } from "./send.js";
 import { run as codaRun } from "./coda.js";
 
 type PathOpts = { home?: string; cwd?: string };
+
+function usage(): number {
+  log.error("usage: rehearsal <init|metric|sota|spawn-all|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
+  return 2;
+}
 
 export interface RehearsalInitDeps {
   haveCmd(name: string): boolean;
@@ -297,16 +302,11 @@ function gatherPeers(art: string, self: string): PeerRow[] {
     }
     let approach = "", metric = "", status = "", notes = "";
     if (latest) {
-      const resultPath = join(expsDir, latest, "result.json");
-      if (existsSync(resultPath)) {
-        try {
-          const r = JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown>;
-          approach = r.approach_label != null ? String(r.approach_label) : "";
-          metric = r.metric_value != null ? String(r.metric_value) : "";
-          status = r.status != null ? String(r.status) : "";
-          notes = r.notes != null ? String(r.notes) : "";
-        } catch { /* missing/garbled result.json → empty cells */ }
-      }
+      const r = readResultJson(join(expsDir, latest, "result.json"));
+      approach = resultStr(r, "approach_label");
+      metric = resultStr(r, "metric_value");
+      status = resultStr(r, "status");
+      notes = resultStr(r, "notes");
     }
     rows.push({ instrument: peer, phase, currentExp: latest, approach, metric, status, notes });
   }
@@ -395,8 +395,7 @@ export async function experimentSendWith(args: string[], deps: ExperimentSendDep
   const timeBudgetS = String(p.timeout ?? deps.consultTimeout());
 
   // Read + render the template.
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-  const templatePath = join(pluginRoot, "config", "prompt-templates", "rehearsal", "experiment.md");
+  const templatePath = join(pluginRoot(), "config", "prompt-templates", "rehearsal", "experiment.md");
   if (!existsSync(templatePath)) { log.error(`rehearsal experiment-send: template missing: ${templatePath}`); return 1; }
   const template = readFileSync(templatePath, "utf8");
 
@@ -602,15 +601,21 @@ function approachFromPrompt(promptPath: string): string {
  *  approach comes from result.json approach_label (prompt.md is only the fallback,
  *  applied by the caller), metric is `"$m $s"`. */
 function readResultCells(resultPath: string): { approach: string; metric: string } {
-  if (!existsSync(resultPath)) return { approach: "", metric: "—" };
-  try {
-    const r = JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown>;
-    const approach = r.approach_label != null ? String(r.approach_label) : "";
-    const m = r.metric_value != null ? String(r.metric_value) : "";
-    const s = r.status != null ? String(r.status) : "";
-    const metric = `${m} ${s}`.trim() || "—";
-    return { approach, metric };
-  } catch { return { approach: "", metric: "—" }; }
+  const r = readResultJson(resultPath);
+  const approach = resultStr(r, "approach_label");
+  const metric = `${resultStr(r, "metric_value")} ${resultStr(r, "status")}`.trim() || "—";
+  return { approach, metric };
+}
+
+/** scoreboard.md text + completion signals (BOTH scoreboard.md and metric.md must exist, else nulls). */
+function gatherCompletion(art: string): { scoreboardMd: string | null; completion: ReturnType<typeof checkCompletion> | null } {
+  const sbPath = join(art, "scoreboard.md");
+  const scoreboardMd = existsSync(sbPath) ? readFileSync(sbPath, "utf8") : null;
+  const metricPath = join(art, "metric.md");
+  const completion = scoreboardMd !== null && existsSync(metricPath)
+    ? checkCompletion(scoreboardMd, readFileSync(metricPath, "utf8"))
+    : null;
+  return { scoreboardMd, completion };
 }
 
 /** Parse the --latest-instrument / --latest-exp flags + the single positional <topic>. */
@@ -683,14 +688,7 @@ export async function statusBriefWith(args: string[], v: VerbOpts & { stdout?: (
     }
   }
 
-  const sbPath = join(art, "scoreboard.md");
-  const scoreboardMd = existsSync(sbPath) ? readFileSync(sbPath, "utf8") : null;
-  const metricPath = join(art, "metric.md");
-  // Completion signals require BOTH scoreboard.md and metric.md; null otherwise so
-  // the renderer shows "_(scoreboard or metric absent)_" rather than an all-`no` row.
-  const completion = scoreboardMd !== null && existsSync(metricPath)
-    ? checkCompletion(scoreboardMd, readFileSync(metricPath, "utf8"))
-    : null;
+  const { scoreboardMd, completion } = gatherCompletion(art);
 
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : undefined;
   out(buildStatusBrief({ parts, scoreboardMd, completion, latest }));
@@ -748,6 +746,124 @@ function fileCountDepth1(dir: string): number {
   } catch { return 0; }
 }
 
+/** Step 4: enforce status/metric_value joint validity per exp (normalize_result). */
+function normalizeResults(art: string, instruments: string[]): void {
+  for (const instrument of instruments) {
+    const expsRoot = experimentsDir(art, instrument);
+    for (const expId of listExpDirs(expsRoot)) {
+      const resultPath = join(expsRoot, expId, "result.json");
+      if (!existsSync(resultPath)) continue;
+      let parsed: ResultJson;
+      try { parsed = JSON.parse(readFileSync(resultPath, "utf8")) as ResultJson; } catch { continue; }
+      const norm = normalizeResult(parsed);
+      if (norm.status !== parsed.status || norm.metric_value !== parsed.metric_value) {
+        atomicWrite(resultPath, JSON.stringify(norm));
+        log.info(`normalize: ${instrument}/${expId} -> ${norm.status}`);
+      }
+    }
+  }
+}
+
+/** Step 5: prune intermediate checkpoints (caller guards with !keep). */
+function pruneIntermediate(art: string, instruments: string[]): void {
+  for (const instrument of instruments) {
+    const expsRoot = experimentsDir(art, instrument);
+    for (const expId of listExpDirs(expsRoot)) {
+      const expDir = join(expsRoot, expId);
+      const resultPath = join(expDir, "result.json");
+      if (!existsSync(resultPath)) continue;
+      let keptRel: string;
+      try {
+        const r = JSON.parse(readFileSync(resultPath, "utf8")) as { checkpoint_path?: unknown };
+        keptRel = r.checkpoint_path != null ? String(r.checkpoint_path) : "";
+      } catch { continue; }
+      if (!keptRel || keptRel === "null") continue;
+      // Resolve relative to the exp dir; reject paths that escape it.
+      const keptAbs = resolve(expDir, keptRel);
+      if (keptAbs !== expDir && !keptAbs.startsWith(expDir + "/")) {
+        log.warn(`prune: checkpoint_path escapes exp dir: ${keptRel} (in ${expDir}); skipping`);
+        continue;
+      }
+      let entries: string[];
+      try { entries = readdirSync(expDir); } catch { continue; }
+      for (const name of entries) {
+        if (!name.endsWith(".pt")) continue;
+        const pt = join(expDir, name);
+        if (pt === keptAbs) continue;
+        try { if (statSync(pt).isFile()) rmSync(pt, { force: true }); } catch { /* best-effort */ }
+      }
+    }
+  }
+}
+
+/** Step 6: link pane artifacts (relative symlinks of outbox/inbox into the art tree). */
+function linkPaneArtifacts(art: string, instruments: string[], topic: string): void {
+  for (const instrument of instruments) {
+    const model = resolveModel(instrument, topic);
+    if (!model) continue;
+    const targetDir = partStateDir(art, instrument);
+    mkdirSync(targetDir, { recursive: true });
+    const paneFiles: Array<[string, string]> = [
+      ["outbox.jsonl", outboxPath(instrument, model, topic)],
+      ["inbox.md", inboxPath(instrument, model, topic)],
+    ];
+    for (const [name, src] of paneFiles) {
+      if (!existsSync(src)) { log.warn(`link_pane_artifacts: pane file missing for ${instrument}: ${name}`); continue; }
+      const linkPath = join(targetDir, name);
+      const rel = relative(targetDir, src);
+      try {
+        try { if (lstatSync(linkPath)) unlinkSync(linkPath); } catch { /* nothing to replace */ }
+        symlinkSync(rel, linkPath);
+      } catch { /* best-effort */ }
+    }
+  }
+}
+
+/** Step 7: compute size warnings (post-prune); TRUNCATE warnings.txt first. */
+function computeSizeWarnings(art: string, instruments: string[], threshold: number): void {
+  const warningsPath = join(art, "warnings.txt");
+  const sizeLines: string[] = [];
+  for (const instrument of instruments) {
+    const expsRoot = experimentsDir(art, instrument);
+    for (const expId of listExpDirs(expsRoot)) {
+      const expDir = join(expsRoot, expId);
+      const bytes = dirByteSize(expDir);
+      if (bytes >= threshold) {
+        const gb = (bytes / GIB).toFixed(1);
+        sizeLines.push(`size_warn\t${instrument}/${expId}\t${gb}\t${fileCountDepth1(expDir)}`);
+      }
+    }
+  }
+  atomicWrite(warningsPath, sizeLines.length ? sizeLines.join("\n") + "\n" : "");
+}
+
+/** Step 8: audit diff — append audit_warn rows for prompt/audit knob mismatches (AFTER size). */
+function computeAuditWarnings(art: string, instruments: string[], warningsPath: string): void {
+  const auditLines: string[] = [];
+  for (const instrument of instruments) {
+    const expsRoot = experimentsDir(art, instrument);
+    for (const expId of listExpDirs(expsRoot)) {
+      const expDir = join(expsRoot, expId);
+      const promptMd = join(expDir, "prompt.md");
+      const auditJson = join(expDir, "audit.json");
+      if (!existsSync(promptMd) || !existsSync(auditJson)) continue;
+      let audit: Record<string, unknown>;
+      try { audit = JSON.parse(readFileSync(auditJson, "utf8")) as Record<string, unknown>; } catch { continue; }
+      for (const { key, value } of parseHardConstraints(readFileSync(promptMd, "utf8"))) {
+        const actual = audit[key];
+        if (actual == null || String(actual) === "null") continue;
+        if (String(value) !== String(actual)) {
+          auditLines.push(`audit_warn\t${instrument}/${expId}\t${key}\tprompt=${value}  actual=${String(actual)}`);
+        }
+      }
+    }
+  }
+  if (auditLines.length) {
+    const existing = readOr(warningsPath);
+    atomicWrite(warningsPath, existing + auditLines.join("\n") + "\n");
+  }
+}
+
 export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps): Promise<number> {
   const opts = deps.opts;
   // Argument parse: finalize [--keep-intermediate] <topic>.
@@ -802,115 +918,20 @@ export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps):
   // 3. (OMIT active-marker removal — consort has no active-marker lifecycle.)
 
   // 4. normalize_result: enforce status/metric_value joint validity per exp.
-  for (const instrument of instruments) {
-    const expsRoot = experimentsDir(art, instrument);
-    for (const expId of listExpDirs(expsRoot)) {
-      const resultPath = join(expsRoot, expId, "result.json");
-      if (!existsSync(resultPath)) continue;
-      let parsed: ResultJson;
-      try { parsed = JSON.parse(readFileSync(resultPath, "utf8")) as ResultJson; } catch { continue; }
-      const norm = normalizeResult(parsed);
-      if (norm.status !== parsed.status || norm.metric_value !== parsed.metric_value) {
-        atomicWrite(resultPath, JSON.stringify(norm));
-        log.info(`normalize: ${instrument}/${expId} -> ${norm.status}`);
-      }
-    }
-  }
+  normalizeResults(art, instruments);
 
   // 5. prune intermediate checkpoints (skip if --keep-intermediate).
-  if (!keep) {
-    for (const instrument of instruments) {
-      const expsRoot = experimentsDir(art, instrument);
-      for (const expId of listExpDirs(expsRoot)) {
-        const expDir = join(expsRoot, expId);
-        const resultPath = join(expDir, "result.json");
-        if (!existsSync(resultPath)) continue;
-        let keptRel: string;
-        try {
-          const r = JSON.parse(readFileSync(resultPath, "utf8")) as { checkpoint_path?: unknown };
-          keptRel = r.checkpoint_path != null ? String(r.checkpoint_path) : "";
-        } catch { continue; }
-        if (!keptRel || keptRel === "null") continue;
-        // Resolve relative to the exp dir; reject paths that escape it.
-        const keptAbs = resolve(expDir, keptRel);
-        if (keptAbs !== expDir && !keptAbs.startsWith(expDir + "/")) {
-          log.warn(`prune: checkpoint_path escapes exp dir: ${keptRel} (in ${expDir}); skipping`);
-          continue;
-        }
-        let entries: string[];
-        try { entries = readdirSync(expDir); } catch { continue; }
-        for (const name of entries) {
-          if (!name.endsWith(".pt")) continue;
-          const pt = join(expDir, name);
-          if (pt === keptAbs) continue;
-          try { if (statSync(pt).isFile()) rmSync(pt, { force: true }); } catch { /* best-effort */ }
-        }
-      }
-    }
-  }
+  if (!keep) pruneIntermediate(art, instruments);
 
   // 6. link pane artifacts: relative symlinks of the pane outbox/inbox into the art tree.
-  for (const instrument of instruments) {
-    const model = resolveModel(instrument, topic);
-    if (!model) continue;
-    const targetDir = partStateDir(art, instrument);
-    mkdirSync(targetDir, { recursive: true });
-    const paneFiles: Array<[string, string]> = [
-      ["outbox.jsonl", outboxPath(instrument, model, topic)],
-      ["inbox.md", inboxPath(instrument, model, topic)],
-    ];
-    for (const [name, src] of paneFiles) {
-      if (!existsSync(src)) { log.warn(`link_pane_artifacts: pane file missing for ${instrument}: ${name}`); continue; }
-      const linkPath = join(targetDir, name);
-      const rel = relative(targetDir, src);
-      try {
-        try { if (lstatSync(linkPath)) unlinkSync(linkPath); } catch { /* nothing to replace */ }
-        symlinkSync(rel, linkPath);
-      } catch { /* best-effort */ }
-    }
-  }
+  linkPaneArtifacts(art, instruments, topic);
 
   // 7. compute size warnings (post-prune). TRUNCATE warnings.txt first.
   const warningsPath = join(art, "warnings.txt");
-  const threshold = (deps.sizeWarnGb ?? 2) * GIB;
-  const sizeLines: string[] = [];
-  for (const instrument of instruments) {
-    const expsRoot = experimentsDir(art, instrument);
-    for (const expId of listExpDirs(expsRoot)) {
-      const expDir = join(expsRoot, expId);
-      const bytes = dirByteSize(expDir);
-      if (bytes >= threshold) {
-        const gb = (bytes / GIB).toFixed(1);
-        sizeLines.push(`size_warn\t${instrument}/${expId}\t${gb}\t${fileCountDepth1(expDir)}`);
-      }
-    }
-  }
-  atomicWrite(warningsPath, sizeLines.length ? sizeLines.join("\n") + "\n" : "");
+  computeSizeWarnings(art, instruments, (deps.sizeWarnGb ?? 2) * GIB);
 
   // 8. audit diff: append audit_warn rows for prompt/audit knob mismatches (AFTER size).
-  const auditLines: string[] = [];
-  for (const instrument of instruments) {
-    const expsRoot = experimentsDir(art, instrument);
-    for (const expId of listExpDirs(expsRoot)) {
-      const expDir = join(expsRoot, expId);
-      const promptMd = join(expDir, "prompt.md");
-      const auditJson = join(expDir, "audit.json");
-      if (!existsSync(promptMd) || !existsSync(auditJson)) continue;
-      let audit: Record<string, unknown>;
-      try { audit = JSON.parse(readFileSync(auditJson, "utf8")) as Record<string, unknown>; } catch { continue; }
-      for (const { key, value } of parseHardConstraints(readFileSync(promptMd, "utf8"))) {
-        const actual = audit[key];
-        if (actual == null || String(actual) === "null") continue;
-        if (String(value) !== String(actual)) {
-          auditLines.push(`audit_warn\t${instrument}/${expId}\t${key}\tprompt=${value}  actual=${String(actual)}`);
-        }
-      }
-    }
-  }
-  if (auditLines.length) {
-    const existing = readOr(warningsPath);
-    atomicWrite(warningsPath, existing + auditLines.join("\n") + "\n");
-  }
+  computeAuditWarnings(art, instruments, warningsPath);
 
   // 9. render session-summary.md (FULL re-render; wholesale atomic replace).
   const statusRows: StatusRow[] = [];
@@ -930,12 +951,7 @@ export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps):
     }
   }
 
-  const scoreboardPath = join(art, "scoreboard.md");
-  const scoreboardMd = existsSync(scoreboardPath) ? readFileSync(scoreboardPath, "utf8") : null;
-  const metricPath = join(art, "metric.md");
-  const completion = scoreboardMd !== null && existsSync(metricPath)
-    ? checkCompletion(scoreboardMd, readFileSync(metricPath, "utf8"))
-    : null;
+  const { scoreboardMd, completion } = gatherCompletion(art);
 
   const budgetPath = join(art, "time-budget.txt");
   const startPath = join(art, "session-start.txt");
@@ -1083,6 +1099,11 @@ function readResultJson(path: string): Record<string, unknown> {
   try { return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>; } catch { return {}; }
 }
 
+/** A result.json field coerced to string ("" when absent/null). */
+function resultStr(r: Record<string, unknown>, k: string): string {
+  return r[k] != null ? String(r[k]) : "";
+}
+
 export async function handoffExtractWith(args: string[], deps: RehearsalHandoffDeps): Promise<number> {
   const art = args[0];
   if (!art || !existsSync(art) || !statSync(art).isDirectory()) {
@@ -1109,7 +1130,7 @@ export async function handoffExtractWith(args: string[], deps: RehearsalHandoffD
   } else {
     const expRel = `parts/${winner.instrument}/experiments/${winner.expId}`;
     const result = readResultJson(join(art, expRel, "result.json"));
-    const approach = result.approach_label != null ? String(result.approach_label) : "";
+    const approach = resultStr(result, "approach_label");
     const notes = String(result.notes ?? "").replace(/\n/g, " ");
     let checkpoint: string | undefined;
     const ckptRaw = result.checkpoint_path != null ? String(result.checkpoint_path) : "";
@@ -1118,7 +1139,7 @@ export async function handoffExtractWith(args: string[], deps: RehearsalHandoffD
     }
     const runners = runnerUps.map((r) => {
       const rr = readResultJson(join(art, `parts/${r.instrument}/experiments/${r.expId}`, "result.json"));
-      return { instrument: r.instrument, exp: r.expId, metric: r.metric, approach: rr.approach_label != null ? String(rr.approach_label) : "" };
+      return { instrument: r.instrument, exp: r.expId, metric: r.metric, approach: resultStr(rr, "approach_label") };
     });
     input = {
       topic, landscapeDoc, hasMetricMd, generatedTs,
@@ -1226,15 +1247,10 @@ const liveTeardownDeps: RehearsalTeardownDeps = {
   now: () => isoUtc(),
 };
 
-// ---- Phase D: forensics — thin captureArtDir wrapper (mirrors score.ts::forensicsRun). ----
+// ---- Phase D: forensics — delegates to core runForensics (mirrors score.ts::forensicsRun). ----
 
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("rehearsal forensics: topic required"); return 2; }
-  const path = captureArtDir({ artDir: rehearsalArtDir(topic), command: "rehearsal" });
-  if (path) { log.ok(`forensics captured: ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("rehearsal forensics: no mechanical findings");
-  return 0;
+  return runForensics("rehearsal", rehearsalArtDir, rest[0]);
 }
 
 // ---- Phase D: fresh-part — graceful codex-session reset by pane respawn. ----
@@ -1443,6 +1459,6 @@ export async function run(args: string[]): Promise<number> {
     case "forensics": return forensicsRun(rest);
     case "abort": return abortWith(applyArgsFile(rest), liveAbortDeps);
     case "consensus": return consensusWith(rest, liveConsensusDeps);
-    default: log.error(`rehearsal: unknown verb: ${verb ?? "(none)"}`); return 2;
+    default: return usage();
   }
 }

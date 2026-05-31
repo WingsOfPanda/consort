@@ -9,7 +9,7 @@ import {
   deriveSlug, parseScoreArgs, scoreArtDir, scoreDraftDir,
   formatRosterFile, scoreDocPath, parseMultiRepoMode, parseRosterFile,
   spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag, writeTargetsTsv,
-  resolveDrilldownPath, cascadeTargets,
+  parseRosterTargets, resolveDrilldownPath, cascadeTargets,
   type RosterRow, type SpawnResult, type ResetPhase,
 } from "../core/score.js";
 import { detectMultiRepo, validateTargets, type RepoHit } from "../core/multirepo.js";
@@ -21,11 +21,12 @@ import { pickInstruments } from "../core/instruments.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier } from "../core/contracts.js";
 import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState } from "../core/scoreTurn.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
 import { classifyTopic, skillHintAppend } from "../core/scoreSkill.js";
+import { readIfExists as readIf } from "../core/fsread.js";
 import { walkSectionState, auditIssueToSection } from "../core/scoreWalk.js";
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
@@ -120,8 +121,6 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   return 0;
 }
 
-function readIf(path: string): string { return existsSync(path) ? readFileSync(path, "utf8") : ""; }
-
 async function assembleRun(rest: string[]): Promise<number> {
   const topic = rest[0];
   if (!topic) { log.error("usage: score assemble <topic>"); return 2; }
@@ -203,11 +202,11 @@ export async function spawnAllWith(topic: string, d: SpawnAllDeps): Promise<numb
   return rc;
 }
 
-export interface ResearchSendDeps {
+export interface SendDeps {
   offsetFor(instrument: string, model: string, topic: string): number;
   send(args: string[]): Promise<number>;
 }
-const liveResearchSendDeps: ResearchSendDeps = {
+const liveResearchSendDeps: SendDeps = {
   offsetFor: (i, m, t) => outboxOffset(outboxPath(i, m, t)),
   send: sendRun,
 };
@@ -218,7 +217,7 @@ async function researchSendRun(rest: string[]): Promise<number> {
   return researchSendWith(topic, instrument, provider, liveResearchSendDeps);
 }
 
-export async function researchSendWith(topic: string, instrument: string, provider: string, d: ResearchSendDeps): Promise<number> {
+export async function researchSendWith(topic: string, instrument: string, provider: string, d: SendDeps): Promise<number> {
   const art = scoreArtDir(topic);
   const stateFile = join(art, `research-${instrument}.txt`);
   if (existsSync(stateFile)) { log.error(`score research-send: ${stateFile} exists; rm to retry`); return 1; }
@@ -239,11 +238,11 @@ export async function researchSendWith(topic: string, instrument: string, provid
   return 0;
 }
 
-export interface ResearchWaitDeps {
+export interface WaitDeps {
   wait(instrument: string, model: string, topic: string, offset: number, events: string[], timeoutSec: number): Promise<OutboxEvent | null>;
   multiplier(provider: string): string;
 }
-const liveResearchWaitDeps: ResearchWaitDeps = {
+const liveResearchWaitDeps: WaitDeps = {
   wait: (i, m, t, off, ev, to) => outboxWaitSince(i, m, t, off, ev, to),
   multiplier: instrumentTimeoutMultiplier,
 };
@@ -254,7 +253,7 @@ async function researchWaitRun(rest: string[]): Promise<number> {
   return researchWaitWith(topic, instrument, provider, liveResearchWaitDeps);
 }
 
-export async function researchWaitWith(topic: string, instrument: string, provider: string, d: ResearchWaitDeps): Promise<number> {
+export async function researchWaitWith(topic: string, instrument: string, provider: string, d: WaitDeps): Promise<number> {
   const art = scoreArtDir(topic);
   const stateFile = join(art, `research-${instrument}.txt`);
   if (!existsSync(stateFile)) { log.error(`score research-wait: ${stateFile} missing (run score research-send first)`); return 1; }
@@ -320,7 +319,7 @@ async function verifySendRun(rest: string[]): Promise<number> {
   return verifySendWith(topic, instrument, provider, liveResearchSendDeps);
 }
 
-export async function verifySendWith(topic: string, instrument: string, provider: string, d: ResearchSendDeps): Promise<number> {
+export async function verifySendWith(topic: string, instrument: string, provider: string, d: SendDeps): Promise<number> {
   const art = scoreArtDir(topic);
   if (!existsSync(art)) { log.error(`score verify-send: ${art} not found`); return 1; }
   const stateFile = join(art, `verify-${instrument}.txt`);
@@ -362,7 +361,7 @@ async function verifyWaitRun(rest: string[]): Promise<number> {
   return verifyWaitWith(topic, instrument, provider, liveResearchWaitDeps);
 }
 
-export async function verifyWaitWith(topic: string, instrument: string, provider: string, d: ResearchWaitDeps): Promise<number> {
+export async function verifyWaitWith(topic: string, instrument: string, provider: string, d: WaitDeps): Promise<number> {
   const art = scoreArtDir(topic);
   const stateFile = join(art, `verify-${instrument}.txt`);
   if (!existsSync(stateFile)) { log.error(`score verify-wait: ${stateFile} missing (run score verify-send first)`); return 1; }
@@ -407,15 +406,14 @@ export async function adjudicateRun(rest: string[]): Promise<number> {
   if (rows.length < 2) { log.error(`score adjudicate: need >=2 parts, got ${rows.length}`); return 1; }
 
   const instruments = rows.map((r) => r.instrument);
-  const readIfExists = (p: string): string => (existsSync(p) ? readFileSync(p, "utf8") : "");
   const verify: Record<string, string> = {};
   const vs: Record<string, string> = {};
   for (const r of rows) {
-    verify[r.instrument] = readIfExists(join(partDir(r.instrument, r.provider, topic), "verify.md"));
-    vs[r.instrument] = lastTag(readIfExists(join(art, `verify-${r.instrument}.txt`)), "VS") ?? "skipped";
+    verify[r.instrument] = readIf(join(partDir(r.instrument, r.provider, topic), "verify.md"));
+    vs[r.instrument] = lastTag(readIf(join(art, `verify-${r.instrument}.txt`)), "VS") ?? "skipped";
   }
   const buckets: Record<string, string> = {};
-  const addBucket = (f: string): void => { buckets[f] = readIfExists(join(art, f)); };
+  const addBucket = (f: string): void => { buckets[f] = readIf(join(art, f)); };
   for (const c of instruments) addBucket(`${c}_only_items.txt`);
   if (instruments.length >= 3) {
     addBucket("consensus.txt");
@@ -502,15 +500,9 @@ export async function checkDagRun(rest: string[]): Promise<number> {
   return 1;
 }
 
-/** targets.txt may be a plain slug-per-line list (init) or a TSV (multi-repo detect, Phase E). */
-function parseRosterTargets(text: string): string[] {
-  return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"))
-    .map((l) => l.split("\t")[0]).filter(Boolean);
-}
-
 // ---- Phase F: drilldown (optional, parts still live) ----
 
-interface DrilldownDeps extends ResearchSendDeps, ResearchWaitDeps {}
+interface DrilldownDeps extends SendDeps, WaitDeps {}
 interface DrilldownTestHooks { writeProbe?: (outPath: string) => void; }
 // Default to the research turn timeout (the bash predecessor's findings_timeout_s, ~600s) — a real
 // drill turn (read the doc + write cited notes) routinely exceeds 90s; env-overridable. The wait
@@ -589,12 +581,7 @@ export async function offsetResetRun(rest: string[]): Promise<number> {
 // ---- Phase F: forensics + archive (thin wind-down verbs) ----
 
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: score forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: scoreArtDir(topic), command: "score" });
-  if (path) { log.ok(`score forensics: captured ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("score forensics: no mechanical findings (no file written)");
-  return 0; // best-effort: never fails the wind-down
+  return runForensics("score", scoreArtDir, rest[0]);
 }
 
 export async function archiveRun(rest: string[]): Promise<number> {

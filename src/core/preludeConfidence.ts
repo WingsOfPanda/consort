@@ -12,7 +12,7 @@ export function topApproach(draft: string): string {
     if (/^## /.test(line)) { inApproaches = false; continue; }
     if (inApproaches) {
       const m = line.match(/^[0-9]+\.\s+(.+)$/);
-      if (m) return m[1].replace(/\s+$/, "").replace(/\s+—.*$/, "").replace(/\s+$/, "");
+      if (m) return m[1].replace(/\s+$/, "").replace(/\s+—.*$/, "");
     }
   }
   return "";

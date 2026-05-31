@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
-import { topicDir, repoStateDir, isArtifactDir } from "../core/paths.js";
+import { topicDir, repoStateDir, isArtifactDir, pluginRoot } from "../core/paths.js";
 import { stateArchive } from "../core/archive.js";
 import { paneMetaRead, paneMetaReadForDir } from "../core/ipc.js";
 import { paneAlive, killGraceful, killNow } from "../core/tmux.js";
@@ -16,7 +16,6 @@ export interface CodaDeps {
   killNow(pane: string): Promise<void>;
   stateArchive(i: string, m: string, t: string): string | null;
   sleep(ms: number): Promise<void>;
-  topicDir(t: string): string;
   readLastPane(t: string): string;
   removeLastPane(t: string): void;
 }
@@ -45,7 +44,6 @@ export async function teardownBatch(topic: string, pairs: Pair[], d: CodaDeps): 
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const pluginRoot = () => process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 
 function liveDeps(): CodaDeps {
   return {
@@ -55,7 +53,6 @@ function liveDeps(): CodaDeps {
     killNow: (p) => killNow(p),
     stateArchive: (i, m, t) => stateArchive(i, m, t),
     sleep,
-    topicDir,
     readLastPane: (t) => { const f = join(topicDir(t), ".last_pane"); return existsSync(f) ? readFileSync(f, "utf8").trim() : ""; },
     removeLastPane: (t) => { try { rmSync(join(topicDir(t), ".last_pane"), { force: true }); } catch { /* */ } },
   };
@@ -80,7 +77,7 @@ function collectInstrumentPairs(topic: string, instruments: string[]): Pair[] {
   const pairs: Pair[] = [];
   for (const instrument of instruments) {
     for (const e of dirs) {
-      if (e.name === `${instrument}-${e.name.slice(instrument.length + 1)}` && e.name.startsWith(`${instrument}-`)) {
+      if (e.name.startsWith(`${instrument}-`)) {
         const m = paneMetaReadForDir(join(td, e.name));
         if (m.instrument === instrument) pairs.push({ instrument, model: m.model });
       }

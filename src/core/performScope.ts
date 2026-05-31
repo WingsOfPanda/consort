@@ -7,12 +7,6 @@
 // extraction algorithm — section bounds, separator-row skip, first-cell parse, header skip, path
 // heuristic, and the exact/dir-prefix match rules — is preserved exactly.
 
-import { SLUG_REGEX } from "./audit.js";
-
-// SLUG_REGEX is shared with the doc auditor (the bash sourced both helpers from the same library).
-// Referenced here to keep the import live; the scope algorithm itself does not validate against it.
-void SLUG_REGEX;
-
 const COMPONENTS_HEADER = /^## Components[ \t]*$/;
 const OTHER_H2 = /^## [^ ]/;
 const ANY_COMPONENTS_PREFIX = /^## Components/;

@@ -1,6 +1,6 @@
 import { statSync, readFileSync, existsSync, openSync, readSync, closeSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { partDir, topicDir } from "./paths.js";
+import { partDir, topicDir, pluginRoot } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
 
 export function inboxPath(i: string, m: string, t: string) { return join(partDir(i, m, t), "inbox.md"); }
@@ -19,10 +19,6 @@ export function inboxWrite(i: string, m: string, t: string, task: string, opts?:
     `From: ${from}\n\n${task}\n\nWhen done, append a single JSONL line to ${outbox}:\n\n` +
     '`{"event":"done","summary":"<one-line summary>","ts":"<iso-timestamp>"}`\n\nEND_OF_INSTRUCTION\n';
   atomicWrite(inboxPath(i, m, t), body);
-}
-
-function pluginRoot(): string {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 }
 
 export function identityWrite(i: string, m: string, t: string): void {

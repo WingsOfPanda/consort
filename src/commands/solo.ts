@@ -7,7 +7,7 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import { repoRoot } from "../core/paths.js";
 import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs, detectTestCommand, renderSummary, renderResume, type SummaryFacts } from "../core/solo.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
@@ -16,6 +16,7 @@ import type { Runner } from "../core/gitwork.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { composeRound1Prompt, composeFixPrompt, classifyTurn, parseOffset } from "../core/turn.js";
 import { run as sendRun } from "./send.js";
+import { readIfExists } from "../core/fsread.js";
 
 function usage(): number {
   log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|forensics|summary> ...");
@@ -45,14 +46,9 @@ export async function run(args: string[]): Promise<number> {
   }
 }
 
-// ---- forensics (thin captureArtDir wrapper; mirrors score.ts::forensicsRun). Feeds /consort:playback. ----
+// ---- forensics (delegates to core runForensics). Feeds /consort:playback. ----
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: solo forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: soloArtDir(topic), command: "solo" });
-  if (path) { log.ok(`solo forensics: captured ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("solo forensics: no mechanical findings (no file written)");
-  return 0; // best-effort: never fails the wind-down
+  return runForensics("solo", soloArtDir, rest[0]);
 }
 
 async function initRun(tokens: string[]): Promise<number> {
@@ -162,7 +158,7 @@ export async function turnSendWith(topic: string, round: number, d: TurnSendDeps
 
 /** Read the first line of a single-value state file, trimmed; "" if absent. */
 function readField(path: string): string {
-  return existsSync(path) ? readFileSync(path, "utf8").split("\n")[0].trim() : "";
+  return readIfExists(path).split("\n")[0].trim();
 }
 export interface TurnWaitDeps {
   wait(instrument: string, model: string, topic: string, offset: number, events: string[], timeoutSec: number): Promise<OutboxEvent | null>;

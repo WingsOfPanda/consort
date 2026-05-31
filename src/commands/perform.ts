@@ -15,7 +15,7 @@ import {
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/performScope.js";
 import { runnerAt, preSnapshot, createOrResumeBranch, shortstat, finishBranchAction, type Runner } from "../core/gitwork.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { haveCmd } from "../core/deps.js";
 import { performState, composeRound1Prompt, composeFixPrompt, composeDagUnitPrompt } from "../core/performTurn.js";
 import { pickInstruments } from "../core/instruments.js";
@@ -252,6 +252,9 @@ function branchMapField(map: string, slug: string): string {
   return "";
 }
 function isDir(p: string): boolean { try { return statSync(p).isDirectory(); } catch { return false; } }
+function hasRepoMarker(dir: string): boolean {
+  return existsSync(join(dir, "CLAUDE.md")) || existsSync(join(dir, "AGENTS.md"));
+}
 
 // ---- pre-snapshot (deploy-pre-snapshot.sh) ----
 async function preSnapshotRun(rest: string[]): Promise<number> {
@@ -590,10 +593,7 @@ export async function finishOneWith(topic: string, slug: string, action: "merge"
 
 // ---- forensics (best-effort) + archive (deploy-archive.sh) ----
 async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0]; if (!topic) { log.error("usage: perform forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: performArtDir(topic), command: "perform" });
-  if (path) { log.ok(`perform forensics: captured ${path}`); process.stdout.write(path + "\n"); } else log.info("perform forensics: no mechanical findings (no file written)");
-  return 0;
+  return runForensics("perform", performArtDir, rest[0]);
 }
 export async function archiveRun(rest: string[]): Promise<number> {
   const topic = rest[0]; if (!topic) { log.error("usage: perform archive <topic>"); return 2; }
@@ -689,7 +689,7 @@ export async function multiInitWith(topic: string, hubCwd: string, d: MultiInitD
     const p = repoToPath.get(repo)!;
     const cwd = p !== "none" && p !== "" ? p : join(hubCwd, repo);
     if (!existsSync(cwd) || !statSync(cwd).isDirectory()) { log.error(`perform multi-init: sub-repo '${repo}' not found at ${cwd}`); return 1; }
-    if (!existsSync(join(cwd, "CLAUDE.md")) && !existsSync(join(cwd, "AGENTS.md"))) { log.error(`perform multi-init: sub-repo '${repo}' has no CLAUDE.md or AGENTS.md at ${cwd}`); return 1; }
+    if (!hasRepoMarker(cwd)) { log.error(`perform multi-init: sub-repo '${repo}' has no CLAUDE.md or AGENTS.md at ${cwd}`); return 1; }
     const provider = d.detectProvider(cwd);
     const instrument = instruments[i];
     rows.push(`${instrument}\t${cwd}\t${provider}`);
@@ -783,7 +783,7 @@ async function verifyDagReposRun(rest: string[]): Promise<number> {
     const dir = join(hubDir, slug);
     let st: string;
     if (!existsSync(dir) || !statSync(dir).isDirectory()) st = "missing-dir";
-    else if (!existsSync(join(dir, "CLAUDE.md")) && !existsSync(join(dir, "AGENTS.md"))) st = "missing-marker";
+    else if (!hasRepoMarker(dir)) st = "missing-marker";
     else st = "ok";
     if (st !== "ok") bad++;
     process.stdout.write(`REPO=${slug}\tSTATUS=${st}\n`);

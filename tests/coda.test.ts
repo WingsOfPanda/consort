@@ -12,7 +12,6 @@ function deps(alive: Record<string, boolean>) {
       killNow: async () => { calls.killNow++; },
       stateArchive: (i: string, m: string) => { calls.archive++; return `/archive/${i}-${m}`; },
       sleep: async (_ms: number) => { calls.sleep++; },
-      topicDir: () => "/tmp/none",
       lastPanePath: () => "/tmp/none/.last_pane",
       readLastPane: () => "",
       removeLastPane: () => {},

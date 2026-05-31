@@ -1,9 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { globalRoot } from "./paths.js";
+import { globalRoot, pluginRoot } from "./paths.js";
 
-function pluginRoot(): string { return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd(); }
 export function contractsPath(): string {
   const user = join(globalRoot(), "contracts.yaml");
   return existsSync(user) ? user : join(pluginRoot(), "config", "contracts.yaml");

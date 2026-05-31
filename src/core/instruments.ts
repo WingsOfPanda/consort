@@ -1,10 +1,9 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { globalRoot, repoStateDir, topicDir, partDir, isArtifactDir } from "./paths.js";
+import { globalRoot, repoStateDir, topicDir, partDir, isArtifactDir, pluginRoot } from "./paths.js";
 import { paneMetaReadForDir } from "./ipc.js";
 
-function pluginRoot(): string { return process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd(); }
 export function instrumentsPath(): string {
   const user = join(globalRoot(), "instruments.yaml");
   return existsSync(user) ? user : join(pluginRoot(), "config", "instruments.yaml");

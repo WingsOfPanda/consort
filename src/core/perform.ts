@@ -8,8 +8,6 @@ import { topicDir } from "./paths.js";
 import { extractTarget } from "./audit.js";
 import { kvParse } from "../args.js";
 
-export { extractTarget } from "./audit.js"; // REUSED: audit.ts already ports the target-header extractor.
-
 /** `_perform` art dir for a topic. Honors CONSORT_PERFORM_ART_DIR_OVERRIDE; else <topicDir>/_perform. */
 export function performArtDir(topic: string, opts?: { home?: string; cwd?: string }): string {
   const override = process.env.CONSORT_PERFORM_ART_DIR_OVERRIDE;

@@ -9,7 +9,7 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { preludeArtDir, deriveSlug } from "../core/prelude.js";
 import { extractHandoffData } from "../core/preludeHandoff.js";
-import { captureArtDir } from "../core/forensics.js";
+import { runForensics } from "../core/forensics.js";
 import { killNow } from "../core/tmux.js";
 import {
   type RosterRow, formatRosterFile, parseRosterFile, spawnRosterArg, spawnResultsTsv, spawnTally,
@@ -27,6 +27,7 @@ import { composePreludeResearchPrompt, composeAdversaryPrompt, litGuidance } fro
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
+import { readIfExists as readIf } from "../core/fsread.js";
 
 function usage(): number {
   log.error("usage: prelude <init|classify|spawn-all|research-send|research-wait|synth-preliminary|" +
@@ -54,8 +55,6 @@ export async function run(args: string[]): Promise<number> {
     default: return usage();
   }
 }
-
-const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, "utf8") : "");
 
 // ---- init ----
 
@@ -234,6 +233,11 @@ export async function researchWaitWith(topic: string, instrument: string, provid
   return 0;
 }
 
+/** Roster rows whose `<prefix>-<instrument>.md` art file is missing/empty → list of the missing filenames. */
+function missingRosterArtifacts(art: string, rows: RosterRow[], prefix: string): string[] {
+  return rows.filter((r) => !readIf(join(art, `${prefix}-${r.instrument}.md`)).trim()).map((r) => `${prefix}-${r.instrument}.md`);
+}
+
 // ---- synth-preliminary (input validator) ----
 export async function synthPreliminaryRun(rest: string[]): Promise<number> {
   const topic = rest[0];
@@ -244,7 +248,7 @@ export async function synthPreliminaryRun(rest: string[]): Promise<number> {
     if (!readIf(join(art, f)).trim()) { log.error(`prelude synth-preliminary: missing or empty: ${join(art, f)}`); return 1; }
   }
   const rows = parseRosterFile(readIf(join(art, "roster.txt")));
-  const missing = rows.filter((r) => !readIf(join(art, `findings-${r.instrument}.md`)).trim()).map((r) => `findings-${r.instrument}.md`);
+  const missing = missingRosterArtifacts(art, rows, "findings");
   if (missing.length) {
     log.error("prelude synth-preliminary: blocked — missing or empty findings:");
     for (const m of missing) log.error(`  - ${join(art, m)}`);
@@ -356,7 +360,7 @@ export async function synthFinalRun(rest: string[]): Promise<number> {
   const skipped = /^user_decision: skip$/m.test(readIf(join(art, "adversary-skip.txt")));
   if (!skipped) {
     const rows = parseRosterFile(readIf(join(art, "roster.txt")));
-    const missing = rows.filter((r) => !readIf(join(art, `adversary-${r.instrument}.md`)).trim()).map((r) => `adversary-${r.instrument}.md`);
+    const missing = missingRosterArtifacts(art, rows, "adversary");
     if (missing.length) {
       log.error("prelude synth-final: blocked — adversary ran but critiques missing:");
       for (const m of missing) log.error(`  - ${join(art, m)}`);
@@ -370,14 +374,9 @@ export async function synthFinalRun(rest: string[]): Promise<number> {
   return 0;
 }
 
-// ---- forensics (thin captureArtDir wrapper) ----
+// ---- forensics (delegates to core runForensics) ----
 export async function forensicsRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: prelude forensics <topic>"); return 2; }
-  const path = captureArtDir({ artDir: preludeArtDir(topic), command: "prelude" });
-  if (path) { log.ok(`prelude forensics: captured ${path}`); process.stdout.write(path + "\n"); }
-  else log.info("prelude forensics: no mechanical findings (no file written)");
-  return 0; // best-effort
+  return runForensics("prelude", preludeArtDir, rest[0]);
 }
 
 // ---- teardown (orphan kill + archive; panes torn down by the directive's coda --pairs) ----
