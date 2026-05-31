@@ -102,8 +102,10 @@ export function parsePanesFile(text: string): Map<string, string> {
   return m;
 }
 
-/** True iff <instrument>\t<pane> appears as a line in a preflight-panes.txt body. Port of spawn.sh's
- *  `grep -qE "^<inst>\t<pane>$"` --target-pane membership check. */
+/** True iff <instrument>\t<pane> appears as a line in a preflight-panes.txt body. This is the
+ *  --target-pane membership check; stricter-than-spawn.sh: spawn.sh accepts the pane under ANY
+ *  instrument (wildcard `^[a-z0-9-]+\t<pane>$`), this requires the pane be listed for THIS
+ *  instrument so a foreign live pane can never be clobbered. */
 export function paneListedFor(panesTsv: string, instrument: string, pane: string): boolean {
   return panesTsv.split("\n").some((l) => l === `${instrument}\t${pane}`);
 }
