@@ -10,7 +10,7 @@ import { repoRoot, repoStateDir } from "../core/paths.js";
 import { auditDoc } from "../core/audit.js";
 import {
   parsePerformArgs, deriveTopicFromPath, resolveTarget, detectProvider,
-  performArtDir, iterTargets, PerformArgError, PerformResolveError,
+  performArtDir, iterTargets, assertPerformTopic, PerformArgError, PerformResolveError,
 } from "../core/perform.js";
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/performScope.js";
@@ -132,6 +132,7 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   const text = readFileSync(designPath, "utf8");
   const topic = parsed.topic || deriveTopicFromPath(designPath);
   if (!topic) { log.error("perform init: could not derive topic; pass --topic <slug>"); return 1; }
+  if (!assertPerformTopic(topic)) { log.error(`perform init: invalid topic slug '${topic}' (must match ^[a-z0-9][a-z0-9-]{0,31}$, <= 32 chars; pass a shorter --topic)`); return 2; }
 
   const ad = auditDoc(text);
   if (ad.verdict === "FAIL") {
@@ -645,7 +646,7 @@ const PERFORM_WAVE_TIMEOUT = (): number =>
 async function waveWaitRun(rest: string[]): Promise<number> {
   const [topic, instrument, provider] = rest;
   if (!topic || !instrument || !provider) { log.error("usage: perform wave-wait <topic> <instrument> <provider>"); return 2; }
-  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(topic) || !/^[a-z0-9_-]+$/.test(instrument) || !/^[a-z0-9_-]+$/.test(provider)) { log.error("perform wave-wait: bad topic/instrument/provider"); return 2; }
+  if (!assertPerformTopic(topic) || !/^[a-z0-9_-]+$/.test(instrument) || !/^[a-z0-9_-]+$/.test(provider)) { log.error("perform wave-wait: bad topic/instrument/provider"); return 2; }
   return waveWaitWith(topic, instrument, provider, liveWaitDeps);
 }
 export async function waveWaitWith(topic: string, instrument: string, provider: string, d: PerformWaitDeps): Promise<number> {

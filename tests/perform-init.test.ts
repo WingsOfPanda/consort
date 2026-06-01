@@ -133,6 +133,15 @@ describe("perform init", () => {
     expect(outSpy.text()).toContain("TOPIC=custom");
   });
 
+  it("over-length --topic → rc 2 and scaffolds nothing", async () => {
+    const p = docFile("2026-05-30-add-oauth-design.md", PASSING_DOC);
+    const badTopic = "iris-code-simplify-sweep-2-tiers-bce"; // 36 chars
+    const rc = await initWith(["--topic", badTopic, p], deps);
+    expect(rc).toBe(2);
+    expect(existsSync(performArtDir(badTopic))).toBe(false);
+    expect(errSpy.text()).toContain("--topic");
+  });
+
   it("multi-repo doc → rc 0, multi-repo.txt=multi, ROUTING=multi; init writes no dag/parts files (the directive's dag-parse/multi-init do)", async () => {
     const p = docFile("2026-05-30-refactor-design.md", MULTI_DOC);
     const rc = await initWith([p], deps);

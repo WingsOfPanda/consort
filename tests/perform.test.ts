@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   performArtDir, performTopicDir, deriveTopicFromPath, parsePerformArgs, PerformArgError,
-  resolveTarget, resolveHub, PerformResolveError, detectProvider, iterTargets,
+  resolveTarget, resolveHub, PerformResolveError, detectProvider, iterTargets, assertPerformTopic,
 } from "../src/core/perform.js";
 import { topicDir } from "../src/core/paths.js";
 
@@ -150,5 +150,20 @@ describe("iterTargets", () => {
     writeFileSync(join(art, "parts.txt"), "api\t/repo/api\n");
     writeFileSync(join(art, "target_cwd.txt"), "/repo/root\n");
     expect(iterTargets("topic", { home })).toEqual([{ slug: "api", cwd: "/repo/api" }]);
+  });
+});
+
+describe("assertPerformTopic", () => {
+  it("accepts valid slugs up to 32 chars", () => {
+    expect(assertPerformTopic("iris-code-simplify")).toBe(true);
+    expect(assertPerformTopic("a".repeat(32))).toBe(true);
+    expect(assertPerformTopic("x1")).toBe(true);
+  });
+  it("rejects over-length, malformed, and empty slugs", () => {
+    expect(assertPerformTopic("iris-code-simplify-sweep-2-tiers-bce")).toBe(false); // 36 chars
+    expect(assertPerformTopic("a".repeat(33))).toBe(false);
+    expect(assertPerformTopic("")).toBe(false);
+    expect(assertPerformTopic("-leading")).toBe(false);
+    expect(assertPerformTopic("Bad_Topic")).toBe(false);
   });
 });

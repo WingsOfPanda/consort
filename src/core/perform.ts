@@ -30,6 +30,13 @@ export function deriveTopicFromPath(p: string): string {
   return base;
 }
 
+/** Topic-slug guard (port of the predecessor plugin's deploy topic assertion; same shape as
+ *  spawn's 32-char cap). True iff `topic` matches ^[a-z0-9][a-z0-9-]{0,31}$ (1-32 chars, kebab,
+ *  no leading dash). */
+export function assertPerformTopic(topic: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,31}$/.test(topic);
+}
+
 export interface PerformArgs {
   rest: string;
   branchMode: "branch" | "no-branch";
