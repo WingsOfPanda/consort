@@ -9,7 +9,7 @@ import { identityWrite, identityPath, inboxWrite, inboxPath, paneMetaWrite, outb
 import { paneListedFor } from "../core/score.js";
 import { pickRandomInstrument, instrumentInUse, formatCollisionError } from "../core/instruments.js";
 import { instrumentBinary, instrumentDefaultMode, instrumentModeArgs, instrumentReadyTimeout, instrumentBootstrapSleep } from "../core/contracts.js";
-import { wrapLaunch, splitRight, splitDown, respawn, paneAlive, paneLabelSet, paneSend, killNow, capturePane, ensurePaneBorders } from "../core/tmux.js";
+import { wrapLaunch, splitRight, splitDown, respawn, paneAlive, paneLabelSet, paneSend, killNow, capturePane, ensurePaneBorders, ensureWindowBorderStatus } from "../core/tmux.js";
 import { labelFor } from "../core/colors.js";
 import { captureFailure, captureSpawnFailure, bootstrapFailureArgs } from "../core/forensics.js";
 
@@ -40,7 +40,7 @@ export async function run(args: string[]): Promise<number> {
   if (!inTmuxSession()) { log.error("must run inside a tmux session"); return 1; }
   if (!haveCmd("tmux")) { log.error("tmux not on PATH"); return 1; }
   if (!tmuxVersionOk()) { log.error("tmux >= 3.0 required"); return 1; }
-  await ensurePaneBorders(); // render @cs_ part labels on pane borders (not the raw TUI title)
+  if (!(await ensurePaneBorders())) log.warn("could not set pane-border globals; part labels may not render"); // render @cs_ part labels on pane borders (not the raw TUI title)
 
   if (instrument === "random") {
     const pick = pickRandomInstrument(topic);
@@ -89,6 +89,7 @@ export async function run(args: string[]): Promise<number> {
       mkdirSync(topicDir(topic), { recursive: true });
       writeFileSync(lastFile, pane + "\n");
     }
+    if (!(await ensureWindowBorderStatus(pane))) log.warn(`could not force pane-border-status on the spawn window; '${labelFor(instrument, model, topic)}' label may not render`);
     paneMetaWrite(instrument, model, topic, pane);
     log.ok(`spawned ${labelFor(instrument, model, topic)} in pane ${pane} (mode=${useMode})`);
 

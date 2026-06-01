@@ -47,6 +47,11 @@ export function paneBorderArgs(): string[][] {
       'set-option -g pane-active-border-style "fg=#{?@cs_color,#{@cs_color},green}"'],
   ];
 }
+/** Force pane-border-status on a specific window (by pane or window id) so a window-local
+ *  `pane-border-status off` can't suppress the @cs_ part label that paneLabelSet stamped. */
+export function windowBorderStatusArgs(target: string): string[] {
+  return ["set-option", "-w", "-t", target, "pane-border-status", "top"];
+}
 export function wrapLaunch(launch: string, hasBashrc: boolean = existsSync(join(homedir(), ".bashrc"))): string {
   return hasBashrc ? `bash -ic 'exec ${launch}'` : launch;
 }
@@ -72,9 +77,17 @@ export const respawn = async (pane: string, launch: string, cwd?: string): Promi
 export async function setOption(pane: string, opt: string, val: string): Promise<void> { await tmux(setOptionArgs(pane, opt, val)); }
 
 /** Apply the orchestra pane-border config (idempotent `set -g`) so part labels render on the
- *  border instead of the raw TUI title. Called from spawn; tolerant of tmux errors. */
-export async function ensurePaneBorders(): Promise<void> {
-  for (const a of paneBorderArgs()) { try { await tmux(a); } catch { /* tolerate */ } }
+ *  border instead of the raw TUI title. Called from spawn; tolerant of tmux errors. Returns
+ *  false if any set-option failed (caller may warn). */
+export async function ensurePaneBorders(): Promise<boolean> {
+  let ok = true;
+  for (const a of paneBorderArgs()) { try { await tmux(a); } catch { ok = false; } }
+  return ok;
+}
+
+/** Set pane-border-status top on `target`'s window; false on tmux error (never throws). */
+export async function ensureWindowBorderStatus(target: string): Promise<boolean> {
+  try { await tmux(windowBorderStatusArgs(target)); return true; } catch { return false; }
 }
 
 export async function paneAlive(pane: string): Promise<boolean> {
@@ -167,6 +180,7 @@ export async function preflightLayout(topic: string, roster: PreflightEntry[], o
       flag = "-v";
     }
     await selectLayoutMainVertical(conductor);
+    await ensureWindowBorderStatus(conductor);
     opts.writePanes(out.map((o) => `${o.instrument}\t${o.pane}`).join("\n") + "\n");
     return out;
   } catch (e) {

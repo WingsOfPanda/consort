@@ -45,4 +45,7 @@ describe("tmux arg builders", () => {
     expect(c).toContain("reserved — awaiting spawn");
     expect(c).toContain("sleep infinity");
   });
+  it("windowBorderStatusArgs sets pane-border-status top on the target window", () => {
+    expect(T.windowBorderStatusArgs("%5")).toEqual(["set-option", "-w", "-t", "%5", "pane-border-status", "top"]);
+  });
 });
