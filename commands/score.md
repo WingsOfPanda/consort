@@ -1,7 +1,7 @@
 ---
 description: Cross-verified multi-model research synthesized into a deploy-audit-passing design doc — Maestro fast-path or escalate to a 2-3 part ensemble
 argument-hint: [--ensemble] [--targets a,b,c] <topic — what to research / design>
-allowed-tools: Bash, Write, Read, Edit, AskUserQuestion, WebSearch, Skill
+allowed-tools: Bash, Write, Read, Edit, AskUserQuestion, WebSearch, Skill, TodoWrite
 ---
 
 # /consort:score
@@ -11,6 +11,17 @@ deploy-schema design doc (Problem / Goal / Architecture / Components / Testing /
 Criteria) that passes the deploy-audit gate — the artifact `/consort:perform` will consume.
 
 Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
+
+## Progress tracking
+
+Maintain a **TodoWrite** list so the user can see where the run is. Seed it after Stage 0 `init`
+with a single `route` item; once Stage 1 decides the path, replace it with the path-appropriate
+high-level stages, marking each `in_progress` on entry and `completed` on exit:
+
+- **fast-path:** `draft sections`, `assemble+audit`, `export+present`.
+- **escalation:** `spawn ensemble`, `research`, `diff`, `cross-verify`, `adjudicate`,
+  `detect-multi-repo` (skip when `--targets` was passed), `design walk`, `assemble+audit`,
+  `drilldown` (optional), `teardown+archive`, `export+present`.
 
 ## Stage 0 — args-file + init
 
@@ -75,8 +86,12 @@ observations). Audit-required sections must NOT be empty; if a section truly doe
 emit the heading + a one-line explanation (never `_(skipped)_` on the four required ones).
 
 Then assemble + audit: `$CS score assemble <TOPIC>`.
-- **rc 0** → it prints the design-doc path. **Read and present** the doc to the user, then point at
-  the next step: `/consort:perform <path>` (once perform ships).
+- **rc 0** → it prints the design-doc path. Run `EXPORTED=$($CS score export-doc <TOPIC> | sed -n
+  's/^EXPORTED=//p')` to copy the doc into `docs/superpowers/specs/` (a non-zero `export-doc` is
+  non-fatal — just skip the exported path). **Read and present** the doc to the user, state its
+  location clearly — **`$EXPORTED` (docs/superpowers/specs/) as the primary, discoverable path**, with
+  the `_score/design-doc/` path as the source — then point at the next step:
+  `/consort:perform $EXPORTED`.
 - **rc 1** (audit FAIL) → it printed `ISSUE=<code>` lines to stderr. Map each to its section
   (`no_goal_section`→goal, `no_arch_section`→architecture, `no_testing_section`→testing,
   `no_success_section`→success-criteria, `tbd_marker`/`todo_marker`/`fill_in_later_marker`/
@@ -280,8 +295,10 @@ success-criteria** (single-sub uses the 6 base sections + the singular header). 
 ## Stage 12 — assemble + deploy-audit gate (retry loop)
 
 `$CS score assemble <TOPIC>`.
-- **rc 0** → it prints the design-doc path. **Read and present** the doc, then point at
-  `/consort:perform <path>` (once perform ships). Continue to Stage 13 (Phase F).
+- **rc 0** → it prints the design-doc path. Immediately run `EXPORTED=$($CS score export-doc <TOPIC>
+  | sed -n 's/^EXPORTED=//p')` to copy the doc into `docs/superpowers/specs/` **before** teardown/
+  archive (Stages 14b/15) so the `_score` source still exists (a non-zero `export-doc` is non-fatal).
+  **Read and present** the doc, then continue to Stage 13 (Phase F). Carry `$EXPORTED` to Stage 16.
 - **rc 1** (audit FAIL) → it printed paired `ISSUE=<code>` + `SECTION=<mapped>` lines to stderr. For
   each `SECTION=`:
   - a **section name** (problem/goal/architecture/components/testing/success-criteria) → re-walk that
@@ -347,10 +364,12 @@ Stage 14a is untouched (it lives outside the state tree). Fast-path: skip (nothi
 
 ## Stage 16 — present + perform handoff
 
-**Read and present** the final design-doc (`$ART/design-doc/<date>-<TOPIC>-design.md` — the path
-`assemble` printed; after Stage 15 it's the archived copy). Then point the user at the next step:
-"run `/consort:perform <doc>` once perform ships" — the deploy-audit gate already guarantees the doc is
-perform-ready (single-repo AND multi-repo). This is the end of `score`.
+**Read and present** the final design-doc. State its location clearly: **`$EXPORTED`
+(`docs/superpowers/specs/`) is the primary, discoverable copy** (exported in Stage 12, survives
+teardown/archive); the source `_score`/archive copy (`$ART/design-doc/<date>-<TOPIC>-design.md`, or
+the archived path after Stage 15) is noted as provenance. Then point the user at the next step:
+`/consort:perform $EXPORTED` — the deploy-audit gate already guarantees the doc is perform-ready
+(single-repo AND multi-repo). This is the end of `score`.
 
 ## Notes
 
