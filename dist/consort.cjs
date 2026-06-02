@@ -20303,6 +20303,11 @@ function blockers(testCmd) {
   appending ONE question event to your outbox.jsonl, then stop:
     {"event":"question","message":"<why you are asking>","claim":{"kind":"<path|git|env|cmd|test>","value":"<the value to check>"},"ts":"<iso>"}
   Omit the "claim" object for a judgment question (no ground-truth to check).
+- If you believe the PLAN ITSELF is wrong \u2014 a design flaw, a contradiction,
+  or an approach that will not work (NOT a missing referent) \u2014 do NOT
+  silently implement it. Halt and append ONE question whose message begins
+  "OBJECTION:" explaining why, OMIT the "claim" object, then stop. The
+  Maestro will revise the plan or tell you to proceed.
 - The Maestro verifies the claim and replies via your inbox.md, then re-engages you.
 - After reading any inbox.md reply, acknowledge by appending an ack event:
     {"event":"ack","task_summary":"<what you read>","ts":"<iso>"}
@@ -20378,6 +20383,8 @@ function composeDagUnitPrompt(args) {
     'Report status via outbox: emit {"event":"done"} when all tasks are',
     'complete and verified. Emit {"event":"error", "reason":"..."} on any',
     "unrecoverable failure.",
+    "",
+    blockers(""),
     "",
     "BRANCH DISCIPLINE (hard rule):",
     `- You are operating on the current branch in sub-repo "${slug}".`,
@@ -20455,6 +20462,34 @@ var init_performTurn = __esm({
 });
 
 // src/core/performQuestions.ts
+function percentDecode(s) {
+  let out = s;
+  out = out.split("%0A").join("\n");
+  out = out.split("%09").join("	");
+  out = out.split("%22").join('"');
+  out = out.split("%5C").join("\\");
+  out = out.split("%2C").join(",");
+  out = out.split("%25").join("%");
+  return out;
+}
+function parseQuestionPayload(body) {
+  const first = (key) => {
+    for (const line of body.split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      if (line.slice(0, eq) === key) return line.slice(eq + 1);
+    }
+    return null;
+  };
+  const rawText = first("TEXT");
+  const text = rawText === null ? "" : percentDecode(rawText);
+  const rawKind = first("CLAIM_KIND") ?? "";
+  const claimKind = KNOWN_KINDS.has(rawKind) ? rawKind : "";
+  const claimValue = first("CLAIM_VALUE") ?? "";
+  const rawRoute = first("ROUTE") ?? "escalate";
+  const route = rawRoute === "verify" ? "verify" : rawRoute === "objection" ? "objection" : "escalate";
+  return { text, claimKind, claimValue, route };
+}
 function validateQuestionLine(ev) {
   const message = typeof ev.message === "string" ? ev.message : "";
   if (message === "") return false;
@@ -20470,12 +20505,13 @@ function validateQuestionLine(ev) {
 }
 function extractQuestionPayload(ev, askedAt) {
   if (!validateQuestionLine(ev)) return null;
-  const message = ev.message;
-  const encoded = message.split("\n").join("%0A");
+  let message = ev.message;
   const claim = ev.claim;
+  const route = claim ? "verify" : /^OBJECTION:/.test(message) ? "objection" : "escalate";
+  if (route === "objection") message = message.replace(/^OBJECTION: ?/, "");
+  const encoded = message.split("\n").join("%0A");
   const kind = claim && typeof claim.kind === "string" ? claim.kind : "";
   const value = claim && typeof claim.value === "string" ? claim.value : "";
-  const route = claim ? "verify" : "escalate";
   return `TEXT=${encoded}
 CLAIM_KIND=${kind}
 CLAIM_VALUE=${value}
@@ -20611,6 +20647,11 @@ __export(perform_exports, {
 function partModel(art) {
   const p = (0, import_node_path28.join)(art, "provider.txt");
   return (0, import_node_fs32.existsSync)(p) ? (0, import_node_fs32.readFileSync)(p, "utf8").trim() || "codex" : "codex";
+}
+function latestObjections(stateFile) {
+  if (!(0, import_node_fs32.existsSync)(stateFile)) return 0;
+  const ms = [...(0, import_node_fs32.readFileSync)(stateFile, "utf8").matchAll(/^OBJECTIONS=(\d+)\s*$/gm)];
+  return ms.length ? Number(ms[ms.length - 1][1]) : 0;
 }
 function detectRouting(docText) {
   return /^\*\*Target Sub-Project\(s\):\*\*/m.test(docText) && /^## Execution DAG[ \t]*$/m.test(docText) ? "multi" : "single";
@@ -20910,9 +20951,11 @@ async function turnWaitWith2(topic, round, d) {
     if (payload !== null) {
       atomicWrite((0, import_node_path28.join)(art, `question-${PART}-${round}.txt`), payload);
       const bumped = outboxOffset(outboxPath(PART, model, topic));
+      const objLine = parseQuestionPayload(payload).route === "objection" ? `OBJECTIONS=${latestObjections(stateFile) + 1}
+` : "";
       (0, import_node_fs32.appendFileSync)(stateFile, `OFFSET=${bumped}
 TS=question
-`);
+${objLine}`);
     } else {
       ts = "failed";
       (0, import_node_fs32.appendFileSync)(stateFile, "TS=failed\n");
@@ -21497,26 +21540,36 @@ STEPS=${nodes.length}
   return 0;
 }
 async function waveWaitRun(rest) {
-  const [topic, instrument, provider] = rest;
-  if (!topic || !instrument || !provider) {
-    log.error("usage: perform wave-wait <topic> <instrument> <provider>");
+  const [topic, instrument, provider, dispatchStr, sinceStr] = rest;
+  if (!topic || !instrument || !provider || !dispatchStr) {
+    log.error("usage: perform wave-wait <topic> <instrument> <provider> <dispatch> [<since>]");
     return 2;
   }
   if (!assertPerformTopic(topic) || !/^[a-z0-9_-]+$/.test(instrument) || !/^[a-z0-9_-]+$/.test(provider)) {
     log.error("perform wave-wait: bad topic/instrument/provider");
     return 2;
   }
-  return waveWaitWith(topic, instrument, provider, liveWaitDeps);
+  if (!/^[0-9]+$/.test(dispatchStr)) {
+    log.error("perform wave-wait: dispatch must be a non-negative integer");
+    return 2;
+  }
+  if (sinceStr !== void 0 && !/^[0-9]+$/.test(sinceStr)) {
+    log.error("perform wave-wait: since must be a non-negative integer");
+    return 2;
+  }
+  return waveWaitWith(topic, instrument, provider, Number(dispatchStr), liveWaitDeps, sinceStr !== void 0 ? Number(sinceStr) : void 0);
 }
-async function waveWaitWith(topic, instrument, provider, d) {
+async function waveWaitWith(topic, instrument, provider, dispatch, d, since) {
   const art = performArtDir(topic);
   if (!(0, import_node_fs32.existsSync)(art)) {
     log.error(`perform wave-wait: _perform art-dir missing for ${topic}`);
     return 1;
   }
+  const dispatchFile = (0, import_node_path28.join)(art, `wave-${instrument}-${dispatch}.txt`);
+  const startOffset = since ?? ((0, import_node_fs32.existsSync)(dispatchFile) ? parseLatestOffset((0, import_node_fs32.readFileSync)(dispatchFile, "utf8")) ?? 0 : 0);
   const timeout = scaledTimeout(PERFORM_WAVE_TIMEOUT(), d.multiplier(provider));
-  log.info(`[wave-wait] ${instrument} timeout=${timeout}s`);
-  const ev = await d.wait(instrument, provider, topic, 0, ["done", "error"], timeout);
+  log.info(`[wave-wait] ${instrument} dispatch=${dispatch} offset=${startOffset} timeout=${timeout}s`);
+  const ev = await d.wait(instrument, provider, topic, startOffset, ["done", "error", "question"], timeout);
   let ts;
   const extra = [];
   if (ev === null) {
@@ -21531,6 +21584,24 @@ async function waveWaitWith(topic, instrument, provider, d) {
     ts = "failed";
     extra.push("EVENT=error", `REASON=${typeof ev.reason === "string" ? ev.reason : ""}`);
     log.error(`[wave-wait] ${instrument} TS=failed`);
+  } else if (ev.event === "question") {
+    const payload = extractQuestionPayload(ev, d.now());
+    if (payload !== null) {
+      ts = "question";
+      atomicWrite((0, import_node_path28.join)(art, `question-${instrument}-${dispatch}.txt`), payload);
+      const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+      const objLine = parseQuestionPayload(payload).route === "objection" ? `OBJECTIONS=${latestObjections(dispatchFile) + 1}
+` : "";
+      (0, import_node_fs32.appendFileSync)(dispatchFile, `OFFSET=${bumped}
+TS=question
+${objLine}`);
+      extra.push("EVENT=question");
+      log.ok(`[wave-wait] ${instrument} TS=question`);
+    } else {
+      ts = "failed";
+      extra.push("EVENT=question-malformed");
+      log.warn(`[wave-wait] ${instrument} malformed question; TS=failed`);
+    }
   } else {
     ts = "failed";
     extra.push("EVENT=unknown");
