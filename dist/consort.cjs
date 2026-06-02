@@ -16936,6 +16936,25 @@ function scrapeArtDir(artDir) {
     return true;
   });
 }
+function writeForensicsFeed(opts) {
+  const iso = opts.now.toISOString();
+  const date = iso.slice(0, 10);
+  const time = iso.slice(11, 19).replace(/:/g, "-");
+  let hash = "unknown";
+  try {
+    hash = repoHash();
+  } catch {
+  }
+  const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
+  (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
+  const path6 = (0, import_node_path14.join)(dir, opts.fileNameFor(time));
+  const md = renderArtForensics(
+    { command: opts.command, topicSlug: opts.topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+    opts.findings
+  );
+  atomicWrite(path6, md);
+  return path6;
+}
 function renderArtForensics(meta, findings) {
   const fm = [
     "---",
@@ -16956,22 +16975,15 @@ function captureArtDir(opts) {
   try {
     const findings = scrapeArtDir(opts.artDir);
     if (findings.length === 0) return "";
-    const now = opts.now ?? /* @__PURE__ */ new Date();
-    const iso = now.toISOString();
-    const date = iso.slice(0, 10);
-    const time = iso.slice(11, 19).replace(/:/g, "-");
     const topicSlug = (0, import_node_path14.basename)((0, import_node_path14.dirname)(opts.artDir));
-    let hash = "unknown";
-    try {
-      hash = repoHash();
-    } catch {
-    }
-    const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
-    (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
-    const path6 = (0, import_node_path14.join)(dir, `${time}-${opts.command}-${topicSlug}.md`);
-    const md = renderArtForensics({ command: opts.command, topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") }, findings);
-    atomicWrite(path6, md);
-    return path6;
+    return writeForensicsFeed({
+      now: opts.now ?? /* @__PURE__ */ new Date(),
+      fileNameFor: (time) => `${time}-${opts.command}-${topicSlug}.md`,
+      command: opts.command,
+      topicSlug,
+      artDir: opts.artDir,
+      findings
+    });
   } catch {
     return "";
   }
@@ -16998,24 +17010,14 @@ function captureSpawnFailure(opts) {
       { source: "spawn_failure", key: `reason=${opts.reason} ${opts.detail}`.replace(/\s+/g, " ").trim(), context: ctx }
     ];
     if (opts.failureReportPath) findings.push({ source: "spawn_failure", key: `failure_report=${opts.failureReportPath}`, context: ctx });
-    const now = opts.now ?? /* @__PURE__ */ new Date();
-    const iso = now.toISOString();
-    const date = iso.slice(0, 10);
-    const time = iso.slice(11, 19).replace(/:/g, "-");
-    let hash = "unknown";
-    try {
-      hash = repoHash();
-    } catch {
-    }
-    const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
-    (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
-    const path6 = (0, import_node_path14.join)(dir, `${time}-spawn-${opts.topic}.md`);
-    const md = renderArtForensics(
-      { command: "spawn", topicSlug: opts.topic, repoHash: hash, artDir: partDir(opts.instrument, opts.model, opts.topic), invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+    return writeForensicsFeed({
+      now: opts.now ?? /* @__PURE__ */ new Date(),
+      fileNameFor: (time) => `${time}-spawn-${opts.topic}.md`,
+      command: "spawn",
+      topicSlug: opts.topic,
+      artDir: partDir(opts.instrument, opts.model, opts.topic),
       findings
-    );
-    atomicWrite(path6, md);
-    return path6;
+    });
   } catch {
     return "";
   }
@@ -17025,24 +17027,14 @@ function recordMaestroFlag(opts) {
     const note = opts.note.trim();
     if (!note) return "";
     const finding = { source: "maestro_flag", key: note, context: `from=maestro command=${opts.command}` };
-    const now = opts.now ?? /* @__PURE__ */ new Date();
-    const iso = now.toISOString();
-    const date = iso.slice(0, 10);
-    const time = iso.slice(11, 19).replace(/:/g, "-");
-    let hash = "unknown";
-    try {
-      hash = repoHash();
-    } catch {
-    }
-    const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
-    (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
-    const path6 = (0, import_node_path14.join)(dir, `${time}-${opts.command}-flag-${opts.topic}.md`);
-    const md = renderArtForensics(
-      { command: opts.command, topicSlug: opts.topic, repoHash: hash, artDir: "(maestro-flag)", invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
-      [finding]
-    );
-    atomicWrite(path6, md);
-    return path6;
+    return writeForensicsFeed({
+      now: opts.now ?? /* @__PURE__ */ new Date(),
+      fileNameFor: (time) => `${time}-${opts.command}-flag-${opts.topic}.md`,
+      command: opts.command,
+      topicSlug: opts.topic,
+      artDir: "(maestro-flag)",
+      findings: [finding]
+    });
   } catch {
     return "";
   }

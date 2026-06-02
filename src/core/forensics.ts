@@ -124,6 +124,30 @@ export function scrapeArtDir(artDir: string): Finding[] {
 
 export interface ForensicsMeta { command: string; topicSlug: string; repoHash: string; artDir: string; invokedAt: string; }
 
+/** Common playback-feed write shared by all three feed writers. Splits the single `now` instant into
+ *  the UTC `<date>` directory + `<time>` filename segment (so filename + frontmatter share one
+ *  timestamp), resolves repoHash, ensures globalRoot()/forensics/<date>/, then renders + atomic-writes.
+ *  `fileNameFor(time)` builds the leaf basename from the HH-MM-SS segment; `meta` carries the
+ *  per-caller command/topicSlug/artDir. Returns the written path. */
+function writeForensicsFeed(opts: {
+  now: Date; fileNameFor: (time: string) => string;
+  command: string; topicSlug: string; artDir: string; findings: Finding[];
+}): string {
+  const iso = opts.now.toISOString();
+  const date = iso.slice(0, 10);
+  const time = iso.slice(11, 19).replace(/:/g, "-");
+  let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
+  const dir = join(globalRoot(), "forensics", date);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, opts.fileNameFor(time));
+  const md = renderArtForensics(
+    { command: opts.command, topicSlug: opts.topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+    opts.findings,
+  );
+  atomicWrite(path, md);
+  return path;
+}
+
 /** YAML frontmatter + `## Mechanical findings` bullets. */
 export function renderArtForensics(meta: ForensicsMeta, findings: Finding[]): string {
   const fm = [
@@ -143,18 +167,12 @@ export function captureArtDir(opts: { artDir: string; command: string; now?: Dat
   try {
     const findings = scrapeArtDir(opts.artDir);
     if (findings.length === 0) return "";
-    const now = opts.now ?? new Date();
-    const iso = now.toISOString();        // YYYY-MM-DDTHH:MM:SS.sssZ
-    const date = iso.slice(0, 10);
-    const time = iso.slice(11, 19).replace(/:/g, "-");
     const topicSlug = basename(dirname(opts.artDir));
-    let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
-    const dir = join(globalRoot(), "forensics", date);
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `${time}-${opts.command}-${topicSlug}.md`);
-    const md = renderArtForensics({ command: opts.command, topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") }, findings);
-    atomicWrite(path, md);
-    return path;
+    return writeForensicsFeed({
+      now: opts.now ?? new Date(),
+      fileNameFor: (time) => `${time}-${opts.command}-${topicSlug}.md`,
+      command: opts.command, topicSlug, artDir: opts.artDir, findings,
+    });
   } catch { return ""; }
 }
 
@@ -194,20 +212,11 @@ export function captureSpawnFailure(opts: {
       { source: "spawn_failure", key: `reason=${opts.reason} ${opts.detail}`.replace(/\s+/g, " ").trim(), context: ctx },
     ];
     if (opts.failureReportPath) findings.push({ source: "spawn_failure", key: `failure_report=${opts.failureReportPath}`, context: ctx });
-    const now = opts.now ?? new Date();
-    const iso = now.toISOString();
-    const date = iso.slice(0, 10);
-    const time = iso.slice(11, 19).replace(/:/g, "-");
-    let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
-    const dir = join(globalRoot(), "forensics", date);
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `${time}-spawn-${opts.topic}.md`);
-    const md = renderArtForensics(
-      { command: "spawn", topicSlug: opts.topic, repoHash: hash, artDir: partDir(opts.instrument, opts.model, opts.topic), invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
-      findings,
-    );
-    atomicWrite(path, md);
-    return path;
+    return writeForensicsFeed({
+      now: opts.now ?? new Date(),
+      fileNameFor: (time) => `${time}-spawn-${opts.topic}.md`,
+      command: "spawn", topicSlug: opts.topic, artDir: partDir(opts.instrument, opts.model, opts.topic), findings,
+    });
   } catch { return ""; }
 }
 
@@ -220,20 +229,11 @@ export function recordMaestroFlag(opts: { command: string; topic: string; note: 
     const note = opts.note.trim();
     if (!note) return "";
     const finding: Finding = { source: "maestro_flag", key: note, context: `from=maestro command=${opts.command}` };
-    const now = opts.now ?? new Date();
-    const iso = now.toISOString();
-    const date = iso.slice(0, 10);
-    const time = iso.slice(11, 19).replace(/:/g, "-");
-    let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
-    const dir = join(globalRoot(), "forensics", date);
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `${time}-${opts.command}-flag-${opts.topic}.md`);
-    const md = renderArtForensics(
-      { command: opts.command, topicSlug: opts.topic, repoHash: hash, artDir: "(maestro-flag)", invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
-      [finding],
-    );
-    atomicWrite(path, md);
-    return path;
+    return writeForensicsFeed({
+      now: opts.now ?? new Date(),
+      fileNameFor: (time) => `${time}-${opts.command}-flag-${opts.topic}.md`,
+      command: opts.command, topicSlug: opts.topic, artDir: "(maestro-flag)", findings: [finding],
+    });
   } catch { return ""; }
 }
 
