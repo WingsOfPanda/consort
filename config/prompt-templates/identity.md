@@ -16,6 +16,11 @@ Report progress via JSONL events appended to outbox.jsonl. Required event types:
 
 After every event, update status.json with `{"state": "<state>", "updated": "<iso>", "last_event": "<event>"}`.
 
+**Flagging suspicions:** If something looks suspicious, surprising, or wrong while you work — even a
+possible false alarm — emit a progress event whose `note` is prefixed `FLAG:`, e.g.
+`{"event":"progress","note":"FLAG: the test harness silently skipped 3 cases"}`, then keep working.
+The Maestro collects these for later review; over-reporting is welcome.
+
 Stay in your pane between assignments — do **not** exit. After `done` or `error`, set status to
 `idle` and wait for the next inbox.
 
