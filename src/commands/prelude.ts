@@ -9,7 +9,7 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { preludeArtDir, deriveSlug } from "../core/prelude.js";
 import { extractHandoffData } from "../core/preludeHandoff.js";
-import { runForensics } from "../core/forensics.js";
+import { runForensics, runFlag } from "../core/forensics.js";
 import { killNow } from "../core/tmux.js";
 import {
   type RosterRow, formatRosterFile, parseRosterFile, spawnRosterArg, spawnResultsTsv, spawnTally,
@@ -50,6 +50,7 @@ export async function run(args: string[]): Promise<number> {
     case "adversary-wait": return adversaryWaitRun(rest);
     case "synth-final": return synthFinalRun(rest);
     case "forensics": return forensicsRun(rest);
+    case "flag": return runFlag("prelude", rest[0], rest.slice(1).join(" "));
     case "teardown": return teardownRun(rest);
     case "handoff-extract": return handoffExtractRun(rest);
     default: return usage();

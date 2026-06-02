@@ -23,7 +23,7 @@ import {
   renderExperimentPrompt, buildSotaBlock, assembleHardwareBlock, hardwareDiffAlert,
   formatPeersBlock, buildDispatchState, EXP_ID_RE, INSTRUMENT_RE, type PeerRow,
 } from "../core/rehearsalExperiment.js";
-import { runForensics } from "../core/forensics.js";
+import { runForensics, runFlag } from "../core/forensics.js";
 import { parseScoreboard, buildHandoffKv, type HandoffInput } from "../core/rehearsalHandoff.js";
 import { buildConsensus } from "../core/rehearsalConsensus.js";
 import { instrumentBinary, consultTimeout } from "../core/contracts.js";
@@ -1458,6 +1458,7 @@ export async function run(args: string[]): Promise<number> {
     case "teardown": return teardownWith(rest, liveTeardownDeps);
     case "fresh-part": return freshPartWith(rest, liveFreshPartDeps);
     case "forensics": return forensicsRun(rest);
+    case "flag": return runFlag("rehearsal", rest[0], rest.slice(1).join(" "));
     case "abort": return abortWith(applyArgsFile(rest), liveAbortDeps);
     case "consensus": return consensusWith(rest, liveConsensusDeps);
     default: return usage();

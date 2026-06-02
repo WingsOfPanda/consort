@@ -14,6 +14,13 @@ source. This directive covers Phases 0-4 (setup + spawn + the adaptive experimen
 
 Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
+## Flagging suspicions
+
+At any point in the run, if something looks weird, surprising, or suspicious — even a likely false
+alarm — record it: `$CS rehearsal flag <TOPIC> "<what looked off>"`. It writes straight to the playback
+feed (survives teardown and aborts) and costs nothing, so prefer over-recording. Review later with
+`/consort:playback`.
+
 ## Phase 0 — args-file + init
 1. Mint an args path: `$CS rehearsal --mint-args-file` → prints `<args-path>`.
 2. **Write tool:** `file_path` = `<args-path>`, `content` = `$ARGUMENTS` (verbatim, unquoted). Never echo it into a shell.

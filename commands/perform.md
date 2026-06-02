@@ -23,6 +23,13 @@ todo per round/wave.
 - `ROUTING=multi` → seed: `preflight`, `wave dispatch (rolling)`, `cross-repo verify`, `fix loop`,
   `sibling+scope+finish`, `teardown+archive`.
 
+## Flagging suspicions
+
+At any point in the run, if something looks weird, surprising, or suspicious — even a likely false
+alarm — record it: `$CS perform flag <TOPIC> "<what looked off>"`. It writes straight to the playback
+feed (survives teardown and aborts) and costs nothing, so prefer over-recording. Review later with
+`/consort:playback`.
+
 > **Scope (this build):** single-repo **and multi-repo DAG execution, end to end**. A multi-repo doc
 > (a `**Target Sub-Project(s):**` header plus a `## Execution DAG` section) routes through Stages
 > 3a/3b (preflight panes → wave-by-wave dispatch), then 3c/3d/4 (cross-repo verify → per-repo

@@ -23,6 +23,13 @@ high-level stages, marking each `in_progress` on entry and `completed` on exit:
   `detect-multi-repo` (skip when `--targets` was passed), `design walk`, `assemble+audit`,
   `drilldown` (optional), `teardown+archive`, `export+present`.
 
+## Flagging suspicions
+
+At any point in the run, if something looks weird, surprising, or suspicious — even a likely false
+alarm — record it: `$CS score flag <TOPIC> "<what looked off>"`. It writes straight to the playback
+feed (survives teardown and aborts) and costs nothing, so prefer over-recording. Review later with
+`/consort:playback`.
+
 ## Stage 0 — args-file + init
 
 1. Mint an args path: `$CS score --mint-args-file` → prints `<args-path>`.

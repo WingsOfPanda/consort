@@ -7,7 +7,7 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc } from "../core/archive.js";
 import { repoRoot } from "../core/paths.js";
 import { soloArtDir, soloExecDir, deriveSlug, parseSoloArgs, detectTestCommand, renderSummary, renderResume, type SummaryFacts } from "../core/solo.js";
-import { runForensics } from "../core/forensics.js";
+import { runForensics, runFlag } from "../core/forensics.js";
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
@@ -41,6 +41,7 @@ export async function run(args: string[]): Promise<number> {
     case "detect-test": return detectTestRun(rest);
     case "finish": return finishRun(rest);
     case "forensics": return forensicsRun(rest);
+    case "flag": return runFlag("solo", rest[0], rest.slice(1).join(" "));
     case "summary": return summaryRun(rest);
     default: return usage();
   }

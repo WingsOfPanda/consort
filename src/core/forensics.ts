@@ -65,12 +65,17 @@ export interface Finding { source: string; key: string; context: string; }
 export function scrapeAuditLog(text: string): Finding[] {
   return text.split("\n").filter((l) => /^ISSUE=/.test(l)).map((l) => ({ source: "audit_log", key: l, context: "audit.log" }));
 }
-/** outbox.jsonl: JSON.parse each line (skip non-JSON), keep event error|question, label by part. */
+/** outbox.jsonl: JSON.parse each line (skip non-JSON). Keep event error|question (source=outbox);
+ *  also keep any event whose `note` is FLAG:-prefixed (source=part_note, FLAG: stripped). */
 export function scrapeOutbox(text: string, part: string): Finding[] {
   const out: Finding[] = [];
   for (const l of text.split("\n")) {
     if (!l.trim()) continue;
-    try { const o = JSON.parse(l); if (o.event === "error" || o.event === "question") out.push({ source: "outbox", key: l.trim(), context: `part=${part}` }); }
+    try {
+      const o = JSON.parse(l);
+      if (o.event === "error" || o.event === "question") out.push({ source: "outbox", key: l.trim(), context: `part=${part}` });
+      else if (typeof o.note === "string" && /^\s*FLAG:/i.test(o.note)) out.push({ source: "part_note", key: o.note.replace(/^\s*FLAG:\s*/i, "").trim(), context: `part=${part}` });
+    }
     catch { /* skip non-JSON */ }
   }
   return out;
@@ -204,4 +209,40 @@ export function captureSpawnFailure(opts: {
     atomicWrite(path, md);
     return path;
   } catch { return ""; }
+}
+
+/** Record a Maestro suspicion straight to the playback feed
+ *  (globalRoot()/forensics/<date>/<time>-<command>-flag-<topic>.md, source=maestro_flag), reusing
+ *  renderArtForensics so /consort:playback consumes it unchanged. Teardown-independent (lands even on
+ *  abort/handoff). Best-effort: returns the written path, or "" on empty note / any error. Never throws. */
+export function recordMaestroFlag(opts: { command: string; topic: string; note: string; now?: Date }): string {
+  try {
+    const note = opts.note.trim();
+    if (!note) return "";
+    const finding: Finding = { source: "maestro_flag", key: note, context: `from=maestro command=${opts.command}` };
+    const now = opts.now ?? new Date();
+    const iso = now.toISOString();
+    const date = iso.slice(0, 10);
+    const time = iso.slice(11, 19).replace(/:/g, "-");
+    let hash = "unknown"; try { hash = repoHash(); } catch { /* keep unknown */ }
+    const dir = join(globalRoot(), "forensics", date);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${time}-${opts.command}-flag-${opts.topic}.md`);
+    const md = renderArtForensics(
+      { command: opts.command, topicSlug: opts.topic, repoHash: hash, artDir: "(maestro-flag)", invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+      [finding],
+    );
+    atomicWrite(path, md);
+    return path;
+  } catch { return ""; }
+}
+
+/** Shared `<command> flag <topic> <note>` verb: usage-guard, record, report. rc 2 on missing
+ *  topic/empty note, else rc 0 (best-effort; mirrors runForensics). Feeds /consort:playback. */
+export function runFlag(command: string, topic: string | undefined, note: string): number {
+  if (!topic || !note.trim()) { log.error(`usage: ${command} flag <topic> <observation>`); return 2; }
+  const path = recordMaestroFlag({ command, topic, note });
+  if (path) { log.ok(`${command} flag: recorded ${path}`); process.stdout.write(path + "\n"); }
+  else log.info(`${command} flag: nothing recorded`);
+  return 0;
 }

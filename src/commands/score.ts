@@ -21,7 +21,7 @@ import { pickInstruments } from "../core/instruments.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier } from "../core/contracts.js";
 import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState } from "../core/scoreTurn.js";
-import { runForensics } from "../core/forensics.js";
+import { runForensics, runFlag } from "../core/forensics.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
@@ -32,7 +32,7 @@ import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 
-function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|forensics|archive> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
@@ -55,6 +55,7 @@ export async function run(args: string[]): Promise<number> {
     case "drilldown": return drilldownRun(rest);
     case "offset-reset": return offsetResetRun(rest);
     case "forensics": return forensicsRun(rest);
+    case "flag": return runFlag("score", rest[0], rest.slice(1).join(" "));
     case "archive": return archiveRun(rest);
     case "export-doc": return exportDocRun(rest);
     default: return usage();

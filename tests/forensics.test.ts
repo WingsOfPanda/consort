@@ -63,6 +63,26 @@ describe("forensics scrapers", () => {
     expect(f.every((x) => x.context === "part=viola")).toBe(true);
     expect(f[0].key).toContain('"event":"error"');
   });
+  it("scrapeOutbox captures FLAG:-prefixed notes as part_note, ignores routine notes", () => {
+    const lines = [
+      '{"event":"progress","note":"50% done"}',
+      '{"event":"progress","note":"FLAG: the harness skipped 3 cases"}',
+      '{"event":"done","summary":"ok","note":"FLAG: leftover temp file"}',
+      '{"event":"error","message":"boom"}',
+      '{"event":"question","message":"which?"}',
+    ].join("\n");
+    const f = scrapeOutbox(lines, "violin");
+    expect(f.filter((x) => x.source === "part_note").map((x) => x.key)).toEqual([
+      "the harness skipped 3 cases",
+      "leftover temp file",
+    ]);
+    expect(f.filter((x) => x.source === "outbox").length).toBe(2); // error + question unchanged
+    expect(f).toHaveLength(4);
+  });
+  it("scrapeOutbox FLAG: marker is case-insensitive and tolerates leading space", () => {
+    const f = scrapeOutbox('{"event":"progress","note":"  flag: lowercase works"}', "oboe");
+    expect(f).toEqual([{ source: "part_note", key: "lowercase works", context: "part=oboe" }]);
+  });
   it("status.json state=error; spawn-results rc!=0; logs [error]/log_error", () => {
     expect(scrapeStatus('{"state":"error","updated":"x"}', "cello")).toEqual([{ source: "status", key: "state=error", context: "part=cello" }]);
     expect(scrapeStatus('{"state":"ready"}', "cello")).toEqual([]);

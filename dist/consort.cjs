@@ -16870,6 +16870,7 @@ function scrapeOutbox(text, part) {
     try {
       const o2 = JSON.parse(l);
       if (o2.event === "error" || o2.event === "question") out.push({ source: "outbox", key: l.trim(), context: `part=${part}` });
+      else if (typeof o2.note === "string" && /^\s*FLAG:/i.test(o2.note)) out.push({ source: "part_note", key: o2.note.replace(/^\s*FLAG:\s*/i, "").trim(), context: `part=${part}` });
     } catch {
     }
   }
@@ -17018,6 +17019,45 @@ function captureSpawnFailure(opts) {
   } catch {
     return "";
   }
+}
+function recordMaestroFlag(opts) {
+  try {
+    const note = opts.note.trim();
+    if (!note) return "";
+    const finding = { source: "maestro_flag", key: note, context: `from=maestro command=${opts.command}` };
+    const now = opts.now ?? /* @__PURE__ */ new Date();
+    const iso = now.toISOString();
+    const date = iso.slice(0, 10);
+    const time = iso.slice(11, 19).replace(/:/g, "-");
+    let hash = "unknown";
+    try {
+      hash = repoHash();
+    } catch {
+    }
+    const dir = (0, import_node_path14.join)(globalRoot(), "forensics", date);
+    (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
+    const path6 = (0, import_node_path14.join)(dir, `${time}-${opts.command}-flag-${opts.topic}.md`);
+    const md = renderArtForensics(
+      { command: opts.command, topicSlug: opts.topic, repoHash: hash, artDir: "(maestro-flag)", invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+      [finding]
+    );
+    atomicWrite(path6, md);
+    return path6;
+  } catch {
+    return "";
+  }
+}
+function runFlag(command, topic, note) {
+  if (!topic || !note.trim()) {
+    log.error(`usage: ${command} flag <topic> <observation>`);
+    return 2;
+  }
+  const path6 = recordMaestroFlag({ command, topic, note });
+  if (path6) {
+    log.ok(`${command} flag: recorded ${path6}`);
+    process.stdout.write(path6 + "\n");
+  } else log.info(`${command} flag: nothing recorded`);
+  return 0;
 }
 var import_node_fs16, import_node_path14, SCROLLBACK_LINES, NO_EVENT_SENTINEL, FAILURE_FILENAME;
 var init_forensics = __esm({
@@ -18159,6 +18199,8 @@ async function run9(args) {
       return finishRun(rest);
     case "forensics":
       return forensicsRun(rest);
+    case "flag":
+      return runFlag("solo", rest[0], rest.slice(1).join(" "));
     case "summary":
       return summaryRun(rest);
     default:
@@ -19298,7 +19340,7 @@ __export(score_exports, {
   walkStateRun: () => walkStateRun
 });
 function usage2() {
-  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|forensics|archive> ...");
+  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ...");
   return 2;
 }
 async function run10(args) {
@@ -19339,6 +19381,8 @@ async function run10(args) {
       return offsetResetRun(rest);
     case "forensics":
       return forensicsRun2(rest);
+    case "flag":
+      return runFlag("score", rest[0], rest.slice(1).join(" "));
     case "archive":
       return archiveRun(rest);
     case "export-doc":
@@ -20672,6 +20716,8 @@ async function run11(args) {
       return finishOneRun(rest);
     case "forensics":
       return forensicsRun3(rest);
+    case "flag":
+      return runFlag("perform", rest[0], rest.slice(1).join(" "));
     case "archive":
       return archiveRun2(rest);
     case "dag-parse":
@@ -24255,6 +24301,8 @@ async function run13(args) {
       return freshPartWith(rest, liveFreshPartDeps);
     case "forensics":
       return forensicsRun4(rest);
+    case "flag":
+      return runFlag("rehearsal", rest[0], rest.slice(1).join(" "));
     case "abort":
       return abortWith(applyArgsFile(rest), liveAbortDeps);
     case "consensus":
@@ -24767,6 +24815,8 @@ async function run14(args) {
       return synthFinalRun(rest);
     case "forensics":
       return forensicsRun5(rest);
+    case "flag":
+      return runFlag("prelude", rest[0], rest.slice(1).join(" "));
     case "teardown":
       return teardownRun(rest);
     case "handoff-extract":

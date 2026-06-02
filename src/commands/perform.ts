@@ -15,7 +15,7 @@ import {
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import { extractComponentsPaths, matchDiffAgainstComponents } from "../core/performScope.js";
 import { runnerAt, preSnapshot, createOrResumeBranch, shortstat, finishBranchAction, type Runner } from "../core/gitwork.js";
-import { runForensics } from "../core/forensics.js";
+import { runForensics, runFlag } from "../core/forensics.js";
 import { haveCmd } from "../core/deps.js";
 import { performState, composeRound1Prompt, composeFixPrompt, composeDagUnitPrompt } from "../core/performTurn.js";
 import { pickInstruments } from "../core/instruments.js";
@@ -106,6 +106,7 @@ export async function run(args: string[]): Promise<number> {
     case "finish":       return finishRun(rest);
     case "finish-one":   return finishOneRun(rest);
     case "forensics":    return forensicsRun(rest);
+    case "flag":         return runFlag("perform", rest[0], rest.slice(1).join(" "));
     case "archive":      return archiveRun(rest);
     case "dag-parse":    return dagParseRun(rest);
     case "wave-wait":    return waveWaitRun(rest);
