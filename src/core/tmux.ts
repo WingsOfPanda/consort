@@ -6,14 +6,14 @@ import { labelFor, colorFor, labelFmt } from "./colors.js";
 
 // ---------- pure arg builders (unit-tested) ----------
 export function splitRightArgs(launch: string, target?: string, cwd?: string): string[] {
-  const a = ["split-window", "-P", "-F", "#{pane_id}", "-h"];
+  const a = ["split-window", "-P", "-F", "#{pane_id}", "-h", "-d"];
   if (target) a.push("-t", target);
   if (cwd) a.push("-c", cwd);
   a.push(launch);
   return a;
 }
 export function splitDownArgs(launch: string, target: string, cwd?: string): string[] {
-  const a = ["split-window", "-P", "-F", "#{pane_id}", "-v", "-t", target];
+  const a = ["split-window", "-P", "-F", "#{pane_id}", "-v", "-d", "-t", target];
   if (cwd) a.push("-c", cwd);
   a.push(launch);
   return a;
