@@ -42,6 +42,11 @@ function blockers(testCmd: string): string {
     '    {"event":"question","message":"<why you are asking>",' +
     '"claim":{"kind":"<path|git|env|cmd|test>","value":"<the value to check>"},"ts":"<iso>"}\n' +
     '  Omit the "claim" object for a judgment question (no ground-truth to check).\n' +
+    "- If you believe the PLAN ITSELF is wrong — a design flaw, a contradiction,\n" +
+    "  or an approach that will not work (NOT a missing referent) — do NOT\n" +
+    "  silently implement it. Halt and append ONE question whose message begins\n" +
+    '  "OBJECTION:" explaining why, OMIT the "claim" object, then stop. The\n' +
+    "  Maestro will revise the plan or tell you to proceed.\n" +
     "- The Maestro verifies the claim and replies via your inbox.md, then re-engages you.\n" +
     "- After reading any inbox.md reply, acknowledge by appending an ack event:\n" +
     '    {"event":"ack","task_summary":"<what you read>","ts":"<iso>"}\n' +
@@ -130,6 +135,8 @@ export function composeDagUnitPrompt(args: { slug: string; designPath: string; s
     'Report status via outbox: emit {"event":"done"} when all tasks are',
     'complete and verified. Emit {"event":"error", "reason":"..."} on any',
     "unrecoverable failure.",
+    "",
+    blockers(""),
     "",
     "BRANCH DISCIPLINE (hard rule):",
     `- You are operating on the current branch in sub-repo "${slug}".`,

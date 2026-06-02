@@ -24,6 +24,11 @@ describe("perform test-command auto-detect", () => {
     expect(blockers("")).toContain("Running your repository's test suite is your job");
     expect(blockers("")).not.toContain("bash tests/run.sh");
   });
+  it("blockers() carries the objection clause (OBJECTION: marker, omit claim)", () => {
+    expect(blockers("")).toContain('"OBJECTION:"');
+    expect(blockers("")).toMatch(/PLAN ITSELF is wrong/);
+    expect(blockers("pytest")).toContain('"OBJECTION:"');
+  });
 });
 
 describe("performState", () => {
@@ -111,6 +116,15 @@ describe("composeDagUnitPrompt", () => {
     expect(p).toContain("BRANCH DISCIPLINE (hard rule):");
     expect(p).toMatch(/Do NOT run 'git checkout', 'git switch'/);
     expect(p).toContain('{"event":"error","reason":"branch-discipline: needed new branch"}');
+  });
+  it("carries the blockers/objection protocol so DAG parts can ask AND object", () => {
+    expect(p).toContain("BLOCKERS / QUESTIONS");
+    expect(p).toContain('{"event":"question"');
+    expect(p).toContain('"OBJECTION:"');
+    expect(p).toContain('{"event":"ack"');
+    // still carries the terminal done/error reporting block, before the question protocol
+    expect(p).toContain('{"event":"done"}');
+    expect(p).toContain('{"event":"error", "reason":"..."}');
   });
   it("renders a root sub-repo when upstreamCsv is \"none\"", () => {
     const root = composeDagUnitPrompt({ slug: "api", designPath: "/d/design.md", step: "1", total: 3, upstreamCsv: "none" });
