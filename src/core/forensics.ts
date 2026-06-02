@@ -65,12 +65,17 @@ export interface Finding { source: string; key: string; context: string; }
 export function scrapeAuditLog(text: string): Finding[] {
   return text.split("\n").filter((l) => /^ISSUE=/.test(l)).map((l) => ({ source: "audit_log", key: l, context: "audit.log" }));
 }
-/** outbox.jsonl: JSON.parse each line (skip non-JSON), keep event error|question, label by part. */
+/** outbox.jsonl: JSON.parse each line (skip non-JSON). Keep event error|question (source=outbox);
+ *  also keep any event whose `note` is FLAG:-prefixed (source=part_note, FLAG: stripped). */
 export function scrapeOutbox(text: string, part: string): Finding[] {
   const out: Finding[] = [];
   for (const l of text.split("\n")) {
     if (!l.trim()) continue;
-    try { const o = JSON.parse(l); if (o.event === "error" || o.event === "question") out.push({ source: "outbox", key: l.trim(), context: `part=${part}` }); }
+    try {
+      const o = JSON.parse(l);
+      if (o.event === "error" || o.event === "question") out.push({ source: "outbox", key: l.trim(), context: `part=${part}` });
+      else if (typeof o.note === "string" && /^\s*FLAG:/i.test(o.note)) out.push({ source: "part_note", key: o.note.replace(/^\s*FLAG:\s*/i, "").trim(), context: `part=${part}` });
+    }
     catch { /* skip non-JSON */ }
   }
   return out;
