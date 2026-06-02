@@ -18,6 +18,11 @@ export function splitDownArgs(launch: string, target: string, cwd?: string): str
   a.push(launch);
   return a;
 }
+export function preflightSplitArgs(flag: "-h" | "-v", prev: string, cwd?: string): string[] {
+  const a = ["split-window", "-P", "-F", "#{pane_id}", flag, "-d", "-t", prev];
+  if (cwd) a.push("-c", cwd);
+  return a;
+}
 export function respawnArgs(pane: string, launch: string, cwd?: string): string[] {
   const a = ["respawn-pane", "-k", "-t", pane];
   if (cwd) a.push("-c", cwd);
@@ -168,9 +173,7 @@ export async function preflightLayout(topic: string, roster: PreflightEntry[], o
   try {
     for (const e of roster) {
       const sentinel = sentinelCommand(labelFmt(e.instrument, e.model, topic));
-      const args = ["split-window", "-P", "-F", "#{pane_id}", flag, "-t", prev];
-      if (e.cwd) args.push("-c", e.cwd);
-      args.push(sentinel);
+      const args = [...preflightSplitArgs(flag, prev, e.cwd), sentinel];
       const { stdout } = await execa("tmux", args);
       const pane = stdout.trim();
       created.push(pane);

@@ -12,6 +12,12 @@ describe("tmux arg builders", () => {
     expect(T.splitDownArgs("LAUNCH", "%2", "/repo")).toEqual(
       ["split-window", "-P", "-F", "#{pane_id}", "-v", "-d", "-t", "%2", "-c", "/repo", "LAUNCH"]);
   });
+  it("preflightSplitArgs: -d detached, direction flag, target, optional cwd", () => {
+    expect(T.preflightSplitArgs("-h", "%0")).toEqual(
+      ["split-window", "-P", "-F", "#{pane_id}", "-h", "-d", "-t", "%0"]);
+    expect(T.preflightSplitArgs("-v", "%1", "/repo")).toEqual(
+      ["split-window", "-P", "-F", "#{pane_id}", "-v", "-d", "-t", "%1", "-c", "/repo"]);
+  });
   it("respawnArgs: -k, optional cwd", () => {
     expect(T.respawnArgs("%3", "LAUNCH", "/repo")).toEqual(
       ["respawn-pane", "-k", "-t", "%3", "-c", "/repo", "LAUNCH"]);
