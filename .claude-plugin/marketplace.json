@@ -9,7 +9,7 @@
       "name": "consort",
       "source": "./",
       "description": "Multi-model tmux pane orchestration for Claude Code — spawn codex/claude/agy/opencode TUIs as attachable parts",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "author": { "name": "WingsOfPanda", "email": "WingsOfPanda@users.noreply.github.com" },
       "homepage": "https://github.com/WingsOfPanda/consort",
       "repository": "https://github.com/WingsOfPanda/consort",
