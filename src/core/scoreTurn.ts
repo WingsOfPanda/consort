@@ -112,13 +112,13 @@ export function verifyState(ev: OutboxEvent | null, verifyText: string | null): 
 export type GateStatus = "terminal" | "question" | "pending";
 
 /** Per-part readiness for the research/verify wait gate. `key` is the status-line prefix
- *  (`FS` for research, `VS` for verify). A part is `terminal` once its `.done` marker exists and
+ *  (`FS` for research, `VS` for verify, `AS` for prelude's adversary). A part is `terminal` once its `.done` marker exists and
  *  its LAST `<key>=` line is a non-`question` value; `question` while its last `<key>=` line is
  *  `question` (transient — awaiting a relay+re-arm); otherwise `pending` (still running). Pure:
  *  callers pass the pre-read `.done` existence and `.txt` text so this stays IPC-free and testable. */
 export function gateState(
   parts: Array<{ instrument: string; doneExists: boolean; stateText: string | null }>,
-  key: "FS" | "VS",
+  key: "FS" | "VS" | "AS",
 ): Array<{ instrument: string; status: GateStatus }> {
   return parts.map((p) => {
     const matches = (p.stateText ?? "").split("\n").filter((l) => l.startsWith(`${key}=`));

@@ -62,6 +62,15 @@ describe("gateState (pure)", () => {
     ], "FS");
     expect(out[0].status).toBe("pending");
   });
+
+  it("verify-style AS key: terminal / question / pending", () => {
+    const out = gateState([
+      { instrument: "viola", doneExists: true, stateText: "OFFSET=2\nAS=ok\n" },
+      { instrument: "cello", doneExists: true, stateText: "OFFSET=4\nAS=question\n" },
+      { instrument: "oboe", doneExists: false, stateText: null },
+    ], "AS");
+    expect(out.map((s) => s.status)).toEqual(["terminal", "question", "pending"]);
+  });
 });
 
 describe("score wait-gate (verb)", () => {
