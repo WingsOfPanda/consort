@@ -267,6 +267,10 @@ describe("rehearsal experiment-send", () => {
     const inbox = readFileSync(inboxPath(INST, MODEL, TOPIC), "utf8");
     expect(inbox).toContain("a plain baseline");
     expect(inbox).toContain("END_OF_INSTRUCTION");
+    // A1: the experiment template owns the SOLE done contract — no generic wrapper.
+    expect(inbox).not.toContain("<one-line summary>");
+    expect((inbox.match(/"event":"done"/g) ?? []).length).toBe(1);
+    expect(inbox).toContain("experiment exp-001 metric=<value> status=<status>");
     // state transition
     const st = readFileSync(join(sd, "state.txt"), "utf8");
     expect(st).toContain("phase=working");
@@ -274,6 +278,16 @@ describe("rehearsal experiment-send", () => {
     expect(st).toContain("exp_counter=1");
     expect(st).toContain("last_event=dispatched");
     void art; void o;
+  });
+
+  it("inbox carries exactly one done contract — the template's specific one, not the generic wrapper", async () => {
+    const h = home();
+    scaffold(h);
+    await experimentSendWith([TOPIC, INST, "exp-001", "baseline", "a plain baseline"], deps(h));
+    const inbox = readFileSync(inboxPath(INST, MODEL, TOPIC), "utf8");
+    expect(inbox).toContain("END_OF_INSTRUCTION");
+    expect(inbox).not.toContain("<one-line summary>");
+    expect((inbox.match(/"event":"done"/g) ?? []).length).toBe(1);
   });
 
   it("phase=working -> rc 1 (state untouched)", async () => {

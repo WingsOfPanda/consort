@@ -411,7 +411,7 @@ export async function experimentSendWith(args: string[], deps: ExperimentSendDep
 
   // Persist prompt.md, write the inbox (canonical fence), transition state.
   atomicWrite(join(branchDir, "prompt.md"), prompt);
-  inboxWrite(instrument, model, topic, prompt, { from: "maestro" });
+  inboxWrite(instrument, model, topic, prompt, { from: "maestro", noDoneInstruction: true });
   atomicWrite(stateTxt, buildDispatchState(readFileSync(stateTxt, "utf8"), expId, deps.now()));
 
   // Best-effort pane nudge (NON-FATAL; inbox + state already committed).

@@ -11,13 +11,19 @@ export function paneMetaPath(i: string, m: string, t: string) { return join(part
 
 const SENDER_RE = /^[a-zA-Z0-9_-]+$/;
 
-export function inboxWrite(i: string, m: string, t: string, task: string, opts?: { from?: string }): void {
+export function inboxWrite(i: string, m: string, t: string, task: string, opts?: { from?: string; noDoneInstruction?: boolean }): void {
   const from = opts?.from ?? "maestro";
   if (!SENDER_RE.test(from)) throw new Error(`inboxWrite: invalid sender name '${from}' (allowed: [a-zA-Z0-9_-])`);
   const outbox = outboxPath(i, m, t);
-  const body =
-    `From: ${from}\n\n${task}\n\nWhen done, append a single JSONL line to ${outbox}:\n\n` +
-    '`{"event":"done","summary":"<one-line summary>","ts":"<iso-timestamp>"}`\n\nEND_OF_INSTRUCTION\n';
+  // When the task body already specifies its own done-event contract (e.g. the rehearsal experiment
+  // template's `summary="experiment exp-NNN metric=… status=…"`), the caller passes noDoneInstruction
+  // to suppress this generic one — otherwise the part receives two conflicting done instructions and
+  // the loop's exp-NNN derivation can read the wrong summary.
+  const doneInstruction = opts?.noDoneInstruction
+    ? ""
+    : `When done, append a single JSONL line to ${outbox}:\n\n` +
+      '`{"event":"done","summary":"<one-line summary>","ts":"<iso-timestamp>"}`\n\n';
+  const body = `From: ${from}\n\n${task}\n\n${doneInstruction}END_OF_INSTRUCTION\n`;
   atomicWrite(inboxPath(i, m, t), body);
 }
 
