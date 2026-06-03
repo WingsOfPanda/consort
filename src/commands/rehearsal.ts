@@ -12,6 +12,7 @@ import { deriveSlug } from "../core/solo.js";
 import { extractMetric, formatMetricBlock, formatSotaBlock, parseMetricMd } from "../core/rehearsalMetric.js";
 import { rehearsalArtDir, partsDir, partStateDir, experimentsDir, experimentDir, seedLib } from "../core/rehearsal.js";
 import { computeScore, type ScoreFs, type ScoreComputation } from "../core/rehearsalScore.js";
+import { sanityRow, SANITY_TSV_HEADER } from "../core/rehearsalSanity.js";
 import { parseState, mergeState, reconcileFromOutbox, readHaltFlag } from "../core/rehearsalState.js";
 import { checkCompletion, checkTimeBudget } from "../core/rehearsalComplete.js";
 import { normalizeResult, type ResultJson } from "../core/rehearsalResult.js";
@@ -617,6 +618,7 @@ export async function scoreWith(args: string[], deps: RehearsalScoreDeps): Promi
   for (const p of c.staleSidecars) deps.removeFile(p);
   for (const pc of c.phaseClears) deps.writeAtomic(pc.statePath, pc.merged);
   for (const m of c.manifests) deps.writeAtomic(m.path, m.body);
+  deps.writeAtomic(join(art, "sanity.tsv"), SANITY_TSV_HEADER + c.sanityRows.map(sanityRow).join(""));
   for (const w of c.warnings) log.warn(w);
   return 0;
 }

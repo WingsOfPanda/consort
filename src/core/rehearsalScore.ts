@@ -7,6 +7,8 @@ import { validateResult, buildScoreboard, type ScoreRow } from "./rehearsalResul
 import { mergeState, parseState } from "./rehearsalState.js";
 import { parseMetricMd } from "./rehearsalMetric.js";
 import { parseVerifyBlock, buildManifest } from "./rehearsalVerify.js";
+import { sanityFlags, type SanityRow } from "./rehearsalSanity.js";
+import { parseHardConstraints } from "./rehearsalFinalize.js";
 import { partsDir, partStateDir, experimentsDir, experimentDir } from "./rehearsal.js";
 
 export interface ScoreFs {
@@ -36,6 +38,7 @@ export interface ScoreComputation {
   phaseClears: { statePath: string; merged: string }[];
   warnings: string[];
   manifests: { path: string; body: string }[];
+  sanityRows: SanityRow[];
 }
 
 function str(v: unknown): string {
@@ -54,6 +57,7 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
   const staleSidecars: string[] = [];
   const warnings: string[] = [];
   const manifests: { path: string; body: string }[] = [];
+  const sanityRows: SanityRow[] = [];
 
   // Walk like the bash `parts/*/experiments/*/` glob under nullglob: listDir
   // returns [] for a non-existent dir, so no explicit dir-existence gate.
@@ -90,6 +94,20 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
           if (manifest) manifests.push({ path: manifestPath, body: JSON.stringify(manifest) + "\n" });
         }
       }
+      const promptMd = fs.read(join(branchDir, "prompt.md"));
+      let auditObj: Record<string, unknown> | null = null;
+      const auditRaw = fs.read(join(branchDir, "audit.json"));
+      if (auditRaw) { try { auditObj = JSON.parse(auditRaw) as Record<string, unknown>; } catch { auditObj = null; } }
+      const flags = sanityFlags({
+        result: o,
+        direction: parsed?.direction,
+        ceiling: parsed?.ceiling,
+        minRuntimeS: parsed?.minRuntimeS ?? 1.0,
+        readLog: (rel) => fs.read(join(branchDir, rel)),
+        hardConstraints: promptMd ? parseHardConstraints(promptMd) : [],
+        audit: auditObj,
+      });
+      for (const f of flags) sanityRows.push({ expId, instrument, flag: f.flag, detail: f.detail, ts: now() });
     }
   }
 
@@ -106,5 +124,5 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
   }
 
   return { scoreboardMd: buildScoreboard(rows, parsed?.direction), resultsTsv: buildResultsTsv(tsvRows),
-    sidecars, staleSidecars, phaseClears, warnings, manifests };
+    sidecars, staleSidecars, phaseClears, warnings, manifests, sanityRows };
 }
