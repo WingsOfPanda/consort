@@ -89,8 +89,11 @@ diff remains as the final backstop. Missing `prompt.md`/`audit.json` => the chec
 
 ### 4.4 Sanity flags + the `sanity.tsv` store
 
-One row per flag: `exp_id \t instrument \t flag \t detail \t ts`. Written in the score pass; mirrors
-`verification.tsv`. A result with no flags writes no rows. `status-brief` joins it (instrument/exp ->
+One row per flag: `exp_id \t instrument \t flag \t detail \t ts`. The format mirrors A1's
+`verification.tsv` (a flat tsv), but `sanity.tsv` is a **rewritten snapshot** each score pass —
+`computeScore` re-walks all experiments and produces the full current flag set, so `scoreWith`
+**overwrites** the file (an append, as A1's per-experiment `verification.tsv` uses, would duplicate
+rows every pass). A pass with no flags writes just the header. `status-brief` joins it (instrument/exp ->
 flags) and annotates the top-3 with ` [suspect: <flag>[,<flag>…]]`; absent `sanity.tsv` => no
 annotation (back-compat). `finalize` reads `sanity.tsv` into session-summary `## Warnings` (each row
 as `sanity <exp> <flag>: <detail>`), alongside the existing audit warnings.
@@ -100,7 +103,7 @@ as `sanity <exp> <flag>: <detail>`), alongside the existing audit warnings.
 After each `done`, the loop already runs `score`. A3 extends the score pass:
 1. `computeScore` validates each result (unchanged), then for each VALID result runs the four checks
    (4.1) + the per-experiment audit-diff (4.3), accumulating `sanity.tsv` rows.
-2. `scoreWith` writes `sanity.tsv` (append-or-create, like `verification.tsv`).
+2. `scoreWith` **overwrites** `sanity.tsv` with the full current flag set (a snapshot, NOT append — see §4.4).
 3. `status-brief` (run next in the loop) joins `sanity.tsv` and annotates its top-3.
 4. The Maestro reads the `[suspect: …]` annotations; acting on them is A2 (it should not steer the
    roster toward a `[suspect]` leader, mirroring the A1 `mismatch` guidance already in the directive).
