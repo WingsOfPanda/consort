@@ -75,8 +75,8 @@ function tokenizeArgsLine(line) {
 }
 function loadArgsFile(path6) {
   if (!(0, import_node_fs.existsSync)(path6)) return [];
-  const first = (0, import_node_fs.readFileSync)(path6, "utf8").split("\n")[0] ?? "";
-  return tokenizeArgsLine(first);
+  const raw = (0, import_node_fs.readFileSync)(path6, "utf8").replace(/\r?\n/g, " ");
+  return tokenizeArgsLine(raw);
 }
 function consumeArgsFile(path6) {
   if (!path6) return;

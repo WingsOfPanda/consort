@@ -21,8 +21,12 @@ export function tokenizeArgsLine(line: string): string[] {
 
 function loadArgsFile(path: string): string[] {
   if (!existsSync(path)) return [];
-  const first = readFileSync(path, "utf8").split("\n")[0] ?? "";
-  return tokenizeArgsLine(first);
+  // The conductor writes $ARGUMENTS verbatim, which may span multiple lines (a
+  // multi-paragraph topic). Read the WHOLE file; collapse newlines to spaces so line
+  // breaks act as token separators without gluing words across the seam. Reading only
+  // the first line silently dropped everything after the first newline.
+  const raw = readFileSync(path, "utf8").replace(/\r?\n/g, " ");
+  return tokenizeArgsLine(raw);
 }
 
 function consumeArgsFile(path: string | undefined): void {
