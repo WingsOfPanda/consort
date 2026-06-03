@@ -22,7 +22,7 @@ import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier
 import { classifyTopic } from "../core/preludeLit.js";
 import { computeSignals, renderSkipRecord, type Decision } from "../core/preludeConfidence.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
-import { parseLatestOffset, scaledTimeout, researchState, verifyState } from "../core/scoreTurn.js";
+import { parseLatestOffset, scaledTimeout, researchState, verifyState, gateState } from "../core/scoreTurn.js";
 import { composePreludeResearchPrompt, composeAdversaryPrompt, litGuidance } from "../core/preludeTurn.js";
 import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
@@ -30,7 +30,7 @@ import { run as preflightRun } from "./preflight.js";
 import { readIfExists as readIf } from "../core/fsread.js";
 
 function usage(): number {
-  log.error("usage: prelude <init|classify|spawn-all|research-send|research-wait|synth-preliminary|" +
+  log.error("usage: prelude <init|classify|spawn-all|research-send|research-wait|wait-gate|synth-preliminary|" +
     "confidence|adversary-send|adversary-wait|synth-final|forensics|teardown|handoff-extract> ...");
   return 2;
 }
@@ -44,6 +44,7 @@ export async function run(args: string[]): Promise<number> {
     case "spawn-all": return spawnAllRun(rest);
     case "research-send": return researchSendRun(rest);
     case "research-wait": return researchWaitRun(rest);
+    case "wait-gate": return preludeWaitGateRun(rest);
     case "synth-preliminary": return synthPreliminaryRun(rest);
     case "confidence": return confidenceRun(rest);
     case "adversary-send": return adversarySendRun(rest);
@@ -347,6 +348,30 @@ export async function adversaryWaitWith(topic: string, instrument: string, provi
   writeFileSync(join(art, `adversary-${instrument}.done`), "");
   log.ok(`prelude adversary-wait: ${instrument} AS=${as}`);
   return 0;
+}
+
+// ---- wait-gate (composes the pure gateState over research/adversary state files) ----
+export async function preludeWaitGateRun(rest: string[]): Promise<number> {
+  const [topic, phase] = rest;
+  if (!topic || !phase) { log.error("usage: prelude wait-gate <topic> <research|adversary>"); return 2; }
+  if (phase !== "research" && phase !== "adversary") { log.error(`prelude wait-gate: phase must be research|adversary (got ${phase})`); return 2; }
+  const art = preludeArtDir(topic);
+  const rosterPath = join(art, "roster.txt");
+  if (!existsSync(rosterPath)) { log.error(`prelude wait-gate: roster.txt missing at ${art}`); return 2; }
+  const rows = parseRosterFile(readFileSync(rosterPath, "utf8"));
+  if (rows.length === 0) { log.error("prelude wait-gate: roster.txt has no parts"); return 2; }
+  const key = phase === "research" ? "FS" : "AS";
+  const parts = rows.map((r) => {
+    const stateFile = join(art, `${phase}-${r.instrument}.txt`);
+    return {
+      instrument: r.instrument,
+      doneExists: existsSync(join(art, `${phase}-${r.instrument}.done`)),
+      stateText: existsSync(stateFile) ? readFileSync(stateFile, "utf8") : null,
+    };
+  });
+  const states = gateState(parts, key);
+  for (const s of states) process.stdout.write(`${s.instrument}\t${s.status}\n`);
+  return states.every((s) => s.status === "terminal") ? 0 : 1;
 }
 
 // ---- synth-final (input validator) ----
