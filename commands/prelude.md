@@ -139,7 +139,7 @@ Each `research-wait` blocks on that part's `done`/`error`/`question` outbox even
 `FS=` line to `$ART/research-<instrument>.txt` and writes the
 `$ART/research-<instrument>.done` sentinel.
 
-**Proceed when all N parts have written their `research-<instrument>.done` sentinel.** The `FS=`
+**Do not proceed until `$CS prelude wait-gate <TOPIC> research` exits 0** — it prints `<INST>\t<terminal|question|pending>` per part and returns 0 only when every part is terminal. rc 1 means at least one part is still `pending` (researching) or `question` (needs a relay): keep handling notifications / relay, then re-run the gate. The `FS=`
 value is informational — do **NOT** gate on `FS=ok`; a part with `FS=empty`/`FS=malformed` still
 produced its `findings-<instrument>.md` and the synth validator (Phase 5) catches truly missing
 findings. If a part emits a `question` event (its state file's last line shows `FS=question`),
@@ -239,7 +239,7 @@ Bash(command='$CS prelude adversary-wait <TOPIC> <instrument> <provider>', run_i
      description='prelude adversary-wait <instrument>')
 ```
 
-**Proceed when all N `$ART/adversary-<instrument>.done` sentinels exist.** The `AS=` value is
+**Do not proceed until `$CS prelude wait-gate <TOPIC> adversary` exits 0** — it prints `<INST>\t<terminal|question|pending>` per part; rc 1 means some part is still `pending`/`question`, so keep handling / relay and re-run. Only on rc 0 continue. The `AS=` value is
 informational (do NOT gate on `AS=ok`). Same question handling as Phase 4 — if a part's state file's
 last line shows `AS=question`, handle via **Intervention Pattern 1** before proceeding. A malformed
 or empty adversary critique is handled by **Intervention Pattern 2**.
