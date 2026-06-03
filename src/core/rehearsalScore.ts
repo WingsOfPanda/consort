@@ -43,8 +43,8 @@ function str(v: unknown): string {
 /** Compute the full score plan for a rehearsal art dir. now() stamps sidecar/last_event_ts. */
 export function computeScore(art: string, fs: ScoreFs, now: () => string): ScoreComputation {
   const metricMd = fs.read(join(art, "metric.md"));
-  const primary = metricMd ? parseMetricMd(metricMd).primaryMetric : "";
-  const expectedMetric = primary ? primary : undefined;
+  const parsed = metricMd ? parseMetricMd(metricMd) : null;
+  const expectedMetric = parsed?.primaryMetric || undefined;
 
   const rows: ScoreRow[] = [];
   const tsvRows: TsvRow[] = [];
@@ -94,6 +94,6 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
       last_event: "scored", last_event_ts: now(), phase: "idle", current_exp_id: "" }) });
   }
 
-  return { scoreboardMd: buildScoreboard(rows), resultsTsv: buildResultsTsv(tsvRows),
+  return { scoreboardMd: buildScoreboard(rows, parsed?.direction), resultsTsv: buildResultsTsv(tsvRows),
     sidecars, staleSidecars, phaseClears, warnings };
 }

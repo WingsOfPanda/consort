@@ -22167,6 +22167,7 @@ function formatMetricBlock(fields) {
 }
 function parseMetricMd(text) {
   let primaryMetric = "";
+  let direction;
   let minOp, minVal;
   let tgtOp, tgtVal;
   let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
@@ -22178,6 +22179,9 @@ function parseMetricMd(text) {
     let m;
     if (m = line.match(/^\*\*Primary metric:\*\*\s+(.*)$/)) {
       primaryMetric = m[1].trim();
+    } else if (m = line.match(/^\*\*Direction:\*\*\s+(.*)$/)) {
+      const d = m[1].trim();
+      if (d === "maximize" || d === "minimize") direction = d;
     } else if (m = line.match(/^\*\*min_acceptable:\*\*\s+(.*)$/)) {
       [minOp, minVal] = opVal(m[1]);
     } else if (m = line.match(/^\*\*target:\*\*\s+(.*)$/)) {
@@ -22190,7 +22194,7 @@ function parseMetricMd(text) {
       plateauThreshold = parseFloat(m[1].trim()) || 0.01;
     }
   }
-  return { primaryMetric, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
 }
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
@@ -22313,10 +22317,11 @@ function expNum(expId) {
   const n2 = parseInt(expId.replace(/^exp-/, ""), 10);
   return Number.isNaN(n2) ? Number.POSITIVE_INFINITY : n2;
 }
-function buildScoreboard(rows) {
+function buildScoreboard(rows, direction) {
   const ok = rows.filter((r) => r.status === "ok");
   const fail = rows.filter((r) => r.status !== "ok");
-  ok.sort((a2, b) => parseFloat(b.metric) - parseFloat(a2.metric) || parseFloat(a2.runtime) - parseFloat(b.runtime) || expNum(a2.expId) - expNum(b.expId));
+  const minimize = direction === "minimize";
+  ok.sort((a2, b) => (minimize ? parseFloat(a2.metric) - parseFloat(b.metric) : parseFloat(b.metric) - parseFloat(a2.metric)) || parseFloat(a2.runtime) - parseFloat(b.runtime) || expNum(a2.expId) - expNum(b.expId));
   fail.sort((a2, b) => expNum(a2.expId) - expNum(b.expId));
   const lines = [
     "<!-- scoreboard schema_version=2 -->",
@@ -22436,8 +22441,8 @@ function str(v) {
 }
 function computeScore(art, fs, now) {
   const metricMd = fs.read((0, import_node_path31.join)(art, "metric.md"));
-  const primary = metricMd ? parseMetricMd(metricMd).primaryMetric : "";
-  const expectedMetric = primary ? primary : void 0;
+  const parsed = metricMd ? parseMetricMd(metricMd) : null;
+  const expectedMetric = parsed?.primaryMetric || void 0;
   const rows = [];
   const tsvRows = [];
   const sidecars = [];
@@ -22505,7 +22510,7 @@ function computeScore(art, fs, now) {
     }) });
   }
   return {
-    scoreboardMd: buildScoreboard(rows),
+    scoreboardMd: buildScoreboard(rows, parsed?.direction),
     resultsTsv: buildResultsTsv(tsvRows),
     sidecars,
     staleSidecars,

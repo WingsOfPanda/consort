@@ -83,13 +83,19 @@ function expNum(expId: string): number {
   return Number.isNaN(n) ? Number.POSITIVE_INFINITY : n;
 }
 
-/** Build the full scoreboard.md. OK rows sorted metric-desc / runtime-asc / exp-id;
- *  fail+partial grouped below sorted by exp-id; rank counter continuous; partial -> ~ rank. */
-export function buildScoreboard(rows: ScoreRow[]): string {
+/** Build the full scoreboard.md. OK rows sorted best-metric-first (metric-desc for a
+ *  maximize objective, metric-asc for minimize) / runtime-asc / exp-id; fail+partial grouped
+ *  below sorted by exp-id; rank counter continuous; partial -> ~ rank. `direction` comes from
+ *  metric.md (undefined => maximize, keeping the pre-fix descending sort byte-identical).
+ *  NB: deep-research.sh always sorted `-k1,1rn` (descending) regardless of direction; making the
+ *  sort direction-aware is a deliberate consort divergence (rehearsal research-validity roadmap C0)
+ *  so the Maestro/handoff/teardown read the true leader for minimize objectives. */
+export function buildScoreboard(rows: ScoreRow[], direction?: "maximize" | "minimize"): string {
   const ok = rows.filter((r) => r.status === "ok");
   const fail = rows.filter((r) => r.status !== "ok");
+  const minimize = direction === "minimize";
   ok.sort((a, b) =>
-    (parseFloat(b.metric) - parseFloat(a.metric)) ||
+    (minimize ? parseFloat(a.metric) - parseFloat(b.metric) : parseFloat(b.metric) - parseFloat(a.metric)) ||
     (parseFloat(a.runtime) - parseFloat(b.runtime)) ||
     (expNum(a.expId) - expNum(b.expId)));
   fail.sort((a, b) => expNum(a.expId) - expNum(b.expId));

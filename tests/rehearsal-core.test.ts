@@ -102,6 +102,11 @@ describe("parseMetricMd round-trips formatMetricBlock", () => {
     expect(t.plateauThreshold).toBe(0.01);
     expect(t.tgtOp).toBeUndefined();
   });
+  it("parses Direction (maximize/minimize); undefined when absent", () => {
+    expect(parseMetricMd("**Primary metric:** loss\n**Direction:** minimize\n").direction).toBe("minimize");
+    expect(parseMetricMd("**Primary metric:** accuracy\n**Direction:** maximize\n").direction).toBe("maximize");
+    expect(parseMetricMd("**Primary metric:** f1\n").direction).toBeUndefined();
+  });
 });
 
 describe("formatSotaBlock", () => {
@@ -205,6 +210,20 @@ describe("buildScoreboard", () => {
     const sb = buildScoreboard(rows);
     expect(sb).toContain("<!-- scoreboard schema_version=2 -->");
     expect(sb).toContain("| Rank | Experiment | Instrument | Metric | Status | Runtime | Approach | metric_name |");
+  });
+  it("orders ok rows metric-ASC for a minimize objective (lowest = best = rank 1)", () => {
+    const minRows: ScoreRow[] = [
+      { expId: "exp-001", instrument: "oboe",  metric: "0.50", status: "ok", runtime: "10", approach: "a", metricName: "loss" },
+      { expId: "exp-002", instrument: "viola", metric: "0.20", status: "ok", runtime: "20", approach: "b", metricName: "loss" },
+      { expId: "exp-003", instrument: "oboe",  metric: "0.35", status: "ok", runtime: "5",  approach: "c", metricName: "loss" },
+    ];
+    const lines = buildScoreboard(minRows, "minimize").split("\n").filter((l) => /^\| /.test(l) && !/Rank|---/.test(l));
+    expect(lines[0]).toContain("| 1 | exp-002 | viola |"); // 0.20 lowest = best
+    expect(lines[1]).toContain("| 2 | exp-003 | oboe |");  // 0.35
+    expect(lines[2]).toContain("| 3 | exp-001 | oboe |");  // 0.50 highest = worst
+  });
+  it("treats omitted direction the same as explicit 'maximize' (descending, backward-compatible)", () => {
+    expect(buildScoreboard(rows)).toBe(buildScoreboard(rows, "maximize"));
   });
 });
 
@@ -661,6 +680,24 @@ describe("rehearsalScore", () => {
     expect(row).toBe("exp-001\tviola\tflop\t\tfail\t5\taccuracy");
     // a fail's current_exp_id has a result.json on disk -> phase still cleared (race-guard is result-presence, not status)
     expect(c.phaseClears).toHaveLength(1);
+  });
+
+  it("computeScore threads metric.md Direction: minimize -> lowest metric ranks first", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** loss\n**Direction:** minimize\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/cello/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"base",metric_name:"loss",metric_value:0.40,status:"ok",
+        runtime_s:12,log_paths:[],checkpoint_path:null,notes:"" }),
+      "/a/parts/cello/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"deep",metric_name:"loss",metric_value:0.10,status:"ok",
+        runtime_s:20,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    const okLines = c.scoreboardMd.split("\n").filter((l) => /^\|\s+\d+\s+\|\s+exp-/.test(l));
+    expect(okLines[0]).toContain("| 1 | exp-001 | cello |"); // 0.10 lowest = best
+    expect(okLines[1]).toContain("| 2 | exp-001 | viola |"); // 0.40
   });
 });
 

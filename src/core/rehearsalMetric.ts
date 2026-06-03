@@ -61,6 +61,8 @@ export function formatMetricBlock(fields: Record<string, string>): string {
 
 export interface MetricThresholds {
   primaryMetric: string;
+  /** maximize|minimize from metric.md `**Direction:**`; undefined when absent (treated as maximize). */
+  direction?: "maximize" | "minimize";
   minOp?: string; minVal?: string;
   tgtOp?: string; tgtVal?: string;
   kRequired: number; plateauWindow: number; plateauThreshold: number;
@@ -70,6 +72,7 @@ export interface MetricThresholds {
  *  Unparseable / "(not set)" values leave op/val as-is (a later numeric compare against them simply fails). */
 export function parseMetricMd(text: string): MetricThresholds {
   let primaryMetric = "";
+  let direction: "maximize" | "minimize" | undefined;
   let minOp: string | undefined, minVal: string | undefined;
   let tgtOp: string | undefined, tgtVal: string | undefined;
   let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
@@ -80,13 +83,14 @@ export function parseMetricMd(text: string): MetricThresholds {
   for (const line of text.split("\n")) {
     let m: RegExpMatchArray | null;
     if ((m = line.match(/^\*\*Primary metric:\*\*\s+(.*)$/))) { primaryMetric = m[1].trim(); }
+    else if ((m = line.match(/^\*\*Direction:\*\*\s+(.*)$/))) { const d = m[1].trim(); if (d === "maximize" || d === "minimize") direction = d; }
     else if ((m = line.match(/^\*\*min_acceptable:\*\*\s+(.*)$/))) { [minOp, minVal] = opVal(m[1]); }
     else if ((m = line.match(/^\*\*target:\*\*\s+(.*)$/))) { [tgtOp, tgtVal] = opVal(m[1]); }
     else if ((m = line.match(/^\*\*K_corroboration:\*\*\s+(.*)$/))) { kRequired = parseInt(m[1].trim(), 10) || 1; }
     else if ((m = line.match(/^\*\*plateau_window:\*\*\s+(.*)$/))) { plateauWindow = parseInt(m[1].trim(), 10) || 5; }
     else if ((m = line.match(/^\*\*plateau_threshold:\*\*\s+(.*)$/))) { plateauThreshold = parseFloat(m[1].trim()) || 0.01; }
   }
-  return { primaryMetric, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
 }
 
 export interface SotaInput {
