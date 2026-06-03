@@ -41,7 +41,7 @@ import { run as codaRun } from "./coda.js";
 type PathOpts = { home?: string; cwd?: string };
 
 function usage(): number {
-  log.error("usage: rehearsal <init|metric|sota|spawn-all|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
+  log.error("usage: rehearsal <init|metric|sota|spawn-all|drop-part|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
   return 2;
 }
 
@@ -229,6 +229,41 @@ export async function spawnAllWith(args: string[], deps: SpawnAllDeps, opts?: Pa
   if (rc === 0) log.ok(`rehearsal spawn-all: ${nOk}/${rows.length} codex parts ready`);
   else log.warn(`rehearsal spawn-all: ${nOk}/${rows.length} codex parts ready (rc=${rc})`);
   return rc;
+}
+
+export interface DropPartDeps { killPane(paneId: string): void; }
+const liveDropPartDeps: DropPartDeps = { killPane: (p) => killNow(p) };
+
+// ---- drop-part (Phase-3 degraded proceed) — prune parts.txt + kill the dropped part's preflight pane ----
+// On a partial spawn the directive ships the rest: it drops a failed instrument by name so Phase 4's
+// per-part loop (which iterates parts.txt verbatim) no longer seeds state + a Monitor for a dead pane.
+// Mirrors perform's dropPartRun; rehearsal's parts.txt is 1-col (one instrument per line). Best-effort
+// kills the dropped instrument's preflight pane so it does not linger until final teardown.
+export async function dropPartWith(rest: string[], deps: DropPartDeps, opts?: PathOpts): Promise<number> {
+  const [topic, instrument] = rest;
+  if (!topic || !instrument || rest.length !== 2) { log.error("usage: rehearsal drop-part <topic> <instrument>"); return 2; }
+  const art = rehearsalArtDir(topic, opts);
+  const partsFile = join(art, "parts.txt");
+  if (!existsSync(partsFile)) { log.error(`rehearsal drop-part: parts.txt missing`); return 1; }
+  const kept: string[] = []; let dropped = false;
+  for (const line of readFileSync(partsFile, "utf8").split("\n")) {
+    if (line.length === 0) continue;
+    if (line === instrument) { dropped = true; continue; }
+    kept.push(line);
+  }
+  if (!dropped) { log.error(`rehearsal drop-part: no part for instrument=${instrument}`); return 1; }
+  atomicWrite(partsFile, kept.length ? kept.join("\n") + "\n" : "");
+  // Best-effort: kill the dropped instrument's preflight pane (never fatal).
+  const panesFile = join(art, "preflight-panes.txt");
+  if (existsSync(panesFile)) {
+    try {
+      const pane = parsePanesFile(readFileSync(panesFile, "utf8")).get(instrument);
+      if (pane) deps.killPane(pane);
+    } catch (e) { log.warn(`rehearsal drop-part: preflight pane kill failed (${(e as Error).message})`); }
+  }
+  log.ok(`rehearsal drop-part: dropped ${instrument}, ${kept.length} part(s) remain`);
+  process.stdout.write(`N=${kept.length}\n`);
+  return 0;
 }
 
 // ---- Phase C: experiment-send — dispatch ONE experiment to a persistent codex part ----
@@ -1448,6 +1483,7 @@ export async function run(args: string[]): Promise<number> {
     case "metric": return metricWith(rest);
     case "sota": return sotaWith(rest);
     case "spawn-all": return spawnAllWith(rest, liveSpawnAllDeps);
+    case "drop-part": return dropPartWith(rest, liveDropPartDeps);
     case "experiment-send": return experimentSendWith(applyArgsFile(rest), liveExperimentSendDeps);
     case "score": return scoreWith(rest, liveScoreDeps);
     case "monitor": return monitorRun(rest);

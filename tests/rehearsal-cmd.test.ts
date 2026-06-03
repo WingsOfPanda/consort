@@ -5,6 +5,7 @@ import { freshHome } from "./helpers/tmpHome.js";
 import { initWith, type RehearsalInitDeps } from "../src/commands/rehearsal.js";
 import { metricWith, sotaWith } from "../src/commands/rehearsal.js";
 import { spawnAllWith, type SpawnAllDeps } from "../src/commands/rehearsal.js";
+import { dropPartWith, type DropPartDeps } from "../src/commands/rehearsal.js";
 import { experimentSendWith, type ExperimentSendDeps } from "../src/commands/rehearsal.js";
 import { scoreWith, liveScoreDeps } from "../src/commands/rehearsal.js";
 import { monitorRun } from "../src/commands/rehearsal.js";
@@ -206,6 +207,53 @@ describe("rehearsal spawn-all", () => {
       },
     });
     expect(await spawnAllWith(["s4", "2"], d, { home: h.home, cwd: h.home })).toBe(2);
+  });
+});
+
+describe("rehearsal drop-part", () => {
+  const TOPIC = "dp-topic";
+  const opts = (h: { home: string }) => ({ home: h.home, cwd: process.cwd() });
+  const noKill: DropPartDeps = { killPane: () => {} };
+  it("prunes the named instrument from parts.txt and reports remaining N", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, opts(h));
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "parts.txt"), "rex\nkeeli\ncolt\n");
+    expect(await dropPartWith([TOPIC, "keeli"], noKill, opts(h))).toBe(0);
+    expect(readFileSync(join(art, "parts.txt"), "utf8")).toBe("rex\ncolt\n");
+  });
+  it("writes an empty parts.txt when the last instrument is dropped", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, opts(h));
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "parts.txt"), "rex\n");
+    expect(await dropPartWith([TOPIC, "rex"], noKill, opts(h))).toBe(0);
+    expect(readFileSync(join(art, "parts.txt"), "utf8")).toBe("");
+  });
+  it("rc 1 when parts.txt is missing", async () => {
+    const h = home();
+    expect(await dropPartWith([TOPIC, "rex"], noKill, opts(h))).toBe(1);
+  });
+  it("rc 1 when the instrument is not present", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, opts(h));
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "parts.txt"), "rex\n");
+    expect(await dropPartWith([TOPIC, "ghost"], noKill, opts(h))).toBe(1);
+  });
+  it("rc 2 on bad usage", async () => {
+    const h = home();
+    expect(await dropPartWith([TOPIC], noKill, opts(h))).toBe(2);
+  });
+  it("best-effort kills the dropped instrument's preflight pane", async () => {
+    const h = home();
+    const art = rehearsalArtDir(TOPIC, opts(h));
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "parts.txt"), "rex\nkeeli\n");
+    writeFileSync(join(art, "preflight-panes.txt"), "rex\t%5\nkeeli\t%6\n");
+    const killed: string[] = [];
+    await dropPartWith([TOPIC, "keeli"], { killPane: (p) => killed.push(p) }, opts(h));
+    expect(killed).toEqual(["%6"]);
   });
 });
 
