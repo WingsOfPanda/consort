@@ -20,7 +20,7 @@ import { activeProvidersPath, partDir, repoRoot, topicDir } from "../core/paths.
 import { pickInstruments } from "../core/instruments.js";
 import { outboxOffset, outboxPath, outboxWaitSince, type OutboxEvent } from "../core/ipc.js";
 import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier } from "../core/contracts.js";
-import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState } from "../core/scoreTurn.js";
+import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState, gateState } from "../core/scoreTurn.js";
 import { runForensics, runFlag } from "../core/forensics.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
 import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
@@ -32,7 +32,7 @@ import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 
-function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
@@ -49,6 +49,7 @@ export async function run(args: string[]): Promise<number> {
     case "adjudicate": return adjudicateRun(rest);
     case "synthesize": return synthesizeRun(rest);
     case "walk-state": return walkStateRun(rest);
+    case "wait-gate": return waitGateRun(rest);
     case "detect-multi-repo": return detectMultiRepoRun(rest);
     case "emit-dag": return emitDagRun(rest);
     case "check-dag": return checkDagRun(rest);
@@ -465,6 +466,29 @@ export async function walkStateRun(rest: string[]): Promise<number> {
   const states = walkSectionState(scoreDraftDir(topic), { withStatus: true });
   for (const s of states) process.stdout.write(`${s.name}\t${s.status}\n`);
   return 0;
+}
+
+export async function waitGateRun(rest: string[]): Promise<number> {
+  const [topic, phase] = rest;
+  if (!topic || !phase) { log.error("usage: score wait-gate <topic> <research|verify>"); return 2; }
+  if (phase !== "research" && phase !== "verify") { log.error(`score wait-gate: phase must be research|verify (got ${phase})`); return 2; }
+  const art = scoreArtDir(topic);
+  const rosterPath = join(art, "roster.txt");
+  if (!existsSync(rosterPath)) { log.error(`score wait-gate: roster.txt missing at ${art}`); return 2; }
+  const rows = parseRosterFile(readFileSync(rosterPath, "utf8"));
+  if (rows.length === 0) { log.error("score wait-gate: roster.txt has no parts"); return 2; }
+  const key = phase === "research" ? "FS" : "VS";
+  const parts = rows.map((r) => {
+    const stateFile = join(art, `${phase}-${r.instrument}.txt`);
+    return {
+      instrument: r.instrument,
+      doneExists: existsSync(join(art, `${phase}-${r.instrument}.done`)),
+      stateText: existsSync(stateFile) ? readFileSync(stateFile, "utf8") : null,
+    };
+  });
+  const states = gateState(parts, key);
+  for (const s of states) process.stdout.write(`${s.instrument}\t${s.status}\n`);
+  return states.every((s) => s.status === "terminal") ? 0 : 1;
 }
 
 // ---- Phase E: multi-repo detection + execution-DAG ----
