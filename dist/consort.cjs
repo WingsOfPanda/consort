@@ -492,15 +492,16 @@ function inboxWrite(i2, m, t, task, opts) {
   const from = opts?.from ?? "maestro";
   if (!SENDER_RE.test(from)) throw new Error(`inboxWrite: invalid sender name '${from}' (allowed: [a-zA-Z0-9_-])`);
   const outbox = outboxPath(i2, m, t);
+  const doneInstruction = opts?.noDoneInstruction ? "" : `When done, append a single JSONL line to ${outbox}:
+
+\`{"event":"done","summary":"<one-line summary>","ts":"<iso-timestamp>"}\`
+
+`;
   const body = `From: ${from}
 
 ${task}
 
-When done, append a single JSONL line to ${outbox}:
-
-\`{"event":"done","summary":"<one-line summary>","ts":"<iso-timestamp>"}\`
-
-END_OF_INSTRUCTION
+${doneInstruction}END_OF_INSTRUCTION
 `;
   atomicWrite(inboxPath(i2, m, t), body);
 }
@@ -23005,7 +23006,11 @@ function buildConsensus(latestOk, opts) {
     const v = latestOk[inst2]?.[k];
     return v === void 0 || v === null ? "" : String(v);
   };
-  const numEq = (a2, b) => Math.abs(parseFloat(a2) - parseFloat(b)) <= epsilon;
+  const num = (s) => {
+    const n2 = parseFloat(s);
+    return Number.isNaN(n2) ? 0 : n2;
+  };
+  const numEq = (a2, b) => Math.abs(num(a2) - num(b)) <= epsilon;
   const agreed = [];
   const contested = [];
   const missing = [];
@@ -23087,7 +23092,9 @@ var rehearsal_exports = {};
 __export(rehearsal_exports, {
   abortWith: () => abortWith,
   consensusWith: () => consensusWith,
+  dropPartWith: () => dropPartWith,
   experimentSendWith: () => experimentSendWith,
+  experimentTimeoutDefault: () => experimentTimeoutDefault,
   finalizeWith: () => finalizeWith,
   forensicsRun: () => forensicsRun4,
   freshPartWith: () => freshPartWith,
@@ -23105,7 +23112,7 @@ __export(rehearsal_exports, {
   teardownWith: () => teardownWith
 });
 function usage4() {
-  log.error("usage: rehearsal <init|metric|sota|spawn-all|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
+  log.error("usage: rehearsal <init|metric|sota|spawn-all|drop-part|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
   return 2;
 }
 function parseInitArgs(args) {
@@ -23279,23 +23286,25 @@ async function spawnAllWith2(args, deps, opts) {
     return 2;
   }
   const art = rehearsalArtDir(topic, opts);
+  const staleResults = (0, import_node_path32.join)(art, "spawn-results.tsv");
+  if ((0, import_node_fs35.existsSync)(staleResults)) (0, import_node_fs35.rmSync)(staleResults);
   const instruments = deps.pickInstruments(topic, n2);
   if (instruments.length < 2) {
     log.error(`rehearsal spawn-all: need >= 2 codex parts; picked ${instruments.length}`);
-    return 2;
+    return 3;
   }
   const rows = instruments.map((instrument) => ({ instrument, provider: "codex" }));
   atomicWrite((0, import_node_path32.join)(art, "parts.txt"), instruments.join("\n") + "\n");
   const prc = await deps.preflight([topic, String(rows.length), "--roster", spawnRosterArg(rows), "--art-dir", art]);
   if (prc !== 0) {
     log.error(`rehearsal spawn-all: preflight failed (rc ${prc})`);
-    return 2;
+    return 3;
   }
   const panes = parsePanesFile((0, import_node_fs35.readFileSync)((0, import_node_path32.join)(art, "preflight-panes.txt"), "utf8"));
   const orphans = rows.filter((r) => !panes.has(r.instrument));
   if (orphans.length) {
     log.error(`rehearsal spawn-all: parts missing a preflight pane: ${orphans.map((r) => r.instrument).join(", ")}`);
-    return 2;
+    return 3;
   }
   const cwd = deps.repoRoot();
   const results = await Promise.all(rows.map(async (r) => ({
@@ -23309,6 +23318,47 @@ async function spawnAllWith2(args, deps, opts) {
   if (rc === 0) log.ok(`rehearsal spawn-all: ${nOk}/${rows.length} codex parts ready`);
   else log.warn(`rehearsal spawn-all: ${nOk}/${rows.length} codex parts ready (rc=${rc})`);
   return rc;
+}
+async function dropPartWith(rest, deps, opts) {
+  const [topic, instrument] = rest;
+  if (!topic || !instrument || rest.length !== 2) {
+    log.error("usage: rehearsal drop-part <topic> <instrument>");
+    return 2;
+  }
+  const art = rehearsalArtDir(topic, opts);
+  const partsFile = (0, import_node_path32.join)(art, "parts.txt");
+  if (!(0, import_node_fs35.existsSync)(partsFile)) {
+    log.error(`rehearsal drop-part: parts.txt missing`);
+    return 1;
+  }
+  const kept = [];
+  let dropped = false;
+  for (const line of (0, import_node_fs35.readFileSync)(partsFile, "utf8").split("\n")) {
+    if (line.length === 0) continue;
+    if (line === instrument) {
+      dropped = true;
+      continue;
+    }
+    kept.push(line);
+  }
+  if (!dropped) {
+    log.error(`rehearsal drop-part: no part for instrument=${instrument}`);
+    return 1;
+  }
+  atomicWrite(partsFile, kept.length ? kept.join("\n") + "\n" : "");
+  const panesFile = (0, import_node_path32.join)(art, "preflight-panes.txt");
+  if ((0, import_node_fs35.existsSync)(panesFile)) {
+    try {
+      const pane = parsePanesFile((0, import_node_fs35.readFileSync)(panesFile, "utf8")).get(instrument);
+      if (pane) deps.killPane(pane);
+    } catch (e) {
+      log.warn(`rehearsal drop-part: preflight pane kill failed (${e.message})`);
+    }
+  }
+  log.ok(`rehearsal drop-part: dropped ${instrument}, ${kept.length} part(s) remain`);
+  process.stdout.write(`N=${kept.length}
+`);
+  return 0;
 }
 function parseExperimentSendArgs(args) {
   let inputs, contextFile, smokeTest, timeout;
@@ -23520,7 +23570,7 @@ async function experimentSendWith(args, deps) {
     return 1;
   }
   atomicWrite((0, import_node_path32.join)(branchDir, "prompt.md"), prompt);
-  inboxWrite(instrument, model, topic, prompt, { from: "maestro" });
+  inboxWrite(instrument, model, topic, prompt, { from: "maestro", noDoneInstruction: true });
   atomicWrite(stateTxt, buildDispatchState((0, import_node_fs35.readFileSync)(stateTxt, "utf8"), expId, deps.now()));
   if (!deps.dryRun) {
     const pane = paneMetaRead(instrument, model, topic);
@@ -23534,6 +23584,10 @@ async function experimentSendWith(args, deps) {
   }
   out(`dispatched ${expId} -> ${instrument}`);
   return 0;
+}
+function experimentTimeoutDefault() {
+  const env = process.env.CONSORT_REHEARSAL_EXPERIMENT_TIMEOUT_OVERRIDE;
+  return env && /^[1-9][0-9]*$/.test(env) ? Number(env) : consultTimeout("experiment");
 }
 function liveProbeHardware() {
   try {
@@ -24393,6 +24447,8 @@ async function run13(args) {
       return sotaWith(rest);
     case "spawn-all":
       return spawnAllWith2(rest, liveSpawnAllDeps2);
+    case "drop-part":
+      return dropPartWith(rest, liveDropPartDeps);
     case "experiment-send":
       return experimentSendWith(applyArgsFile(rest), liveExperimentSendDeps);
     case "score":
@@ -24423,7 +24479,7 @@ async function run13(args) {
       return usage4();
   }
 }
-var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps;
+var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveDropPartDeps, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps;
 var init_rehearsal2 = __esm({
   "src/commands/rehearsal.ts"() {
     "use strict";
@@ -24467,11 +24523,12 @@ var init_rehearsal2 = __esm({
       configRoot: () => pluginRoot()
     };
     liveSpawnAllDeps2 = { preflight: run7, spawn: run, repoRoot, pickInstruments };
+    liveDropPartDeps = { killPane: (p) => killNow(p) };
     liveExperimentSendDeps = {
       now: () => isoUtc(),
       probeHardware: liveProbeHardware,
       paneSend,
-      consultTimeout: () => consultTimeout("experiment"),
+      consultTimeout: () => experimentTimeoutDefault(),
       runSmokeTest: (script, cwd, timeoutSec) => {
         try {
           (0, import_node_child_process10.execFileSync)(script, [], { cwd, timeout: timeoutSec * 1e3, encoding: "utf8" });
