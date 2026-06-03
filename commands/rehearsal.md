@@ -12,6 +12,13 @@ single-config **experiments** until a stop condition fires. **Explore-only** —
 source. This directive covers Phases 0-4 (setup + spawn + the adaptive experiment loop) plus the wind-down
 (Phases 5-7: synthesis + teardown + handoff), now shipped.
 
+> **DANGER — read first.** Spawns codex **parts** under
+> `--dangerously-bypass-approvals-and-sandbox`; parts write + execute arbitrary
+> code in your repo. Sandboxing is **honor-system** (parts are told to stay inside
+> their branch dir; not enforced). Net access is **permitted by default**. Do not
+> run on machines with sensitive credentials, production data, or shared state.
+> Use a scratch worktree if uncertain.
+
 Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
 ## Flagging suspicions
@@ -20,6 +27,24 @@ At any point in the run, if something looks weird, surprising, or suspicious —
 alarm — record it: `$CS rehearsal flag <TOPIC> "<what looked off>"`. It writes straight to the playback
 feed (survives teardown and aborts) and costs nothing, so prefer over-recording. Review later with
 `/consort:playback`.
+
+## Task list (TaskCreate × 9 before Phase 0)
+
+Create the task list with `TaskCreate`. Update statuses at the phase boundaries
+below. Per-part rows are intentionally absent (N varies 2 or 3); the loop's
+Step 5 may add a per-dispatch `<instrument> exp-NNN on <approach-label>` sub-row.
+
+| # | subject | activeForm |
+|---|---|---|
+| 0   | `0 Args + init [maestro]`                 | `Staging args` |
+| 1   | `1 Metric discussion [maestro + user]`    | `Locking the metric` |
+| 1.5 | `1.5 SOTA sweep [maestro]`                | `Sweeping SOTA` |
+| 2   | `2 Roster + time budget [maestro + user]` | `Sizing the roster` |
+| 3   | `3 Spawn parts [maestro]`                 | `Spawning parts` |
+| 4   | `4 Research loop [parts]`                 | `Running experiments` |
+| 5   | `5 Synthesis [maestro]`                   | `Writing landscape doc` |
+| 6   | `6 Teardown + archive [maestro]`          | `Tearing down` |
+| 7   | `7 Present [maestro]`                     | `Presenting` |
 
 ## Phase 0 — args-file + init
 1. Mint an args path: `$CS rehearsal --mint-args-file` → prints `<args-path>`.
@@ -53,6 +78,13 @@ Read `primary_metric` + `hard_constraints` from `$ART/metric.md`. Fire ONE **tri
 (WebSearch + Tavily + AnySearch, two query shapes each: `SOTA <metric> <topic>` and `<topic> under
 <constraint>`). Merge (dedup by URL), curate <=7 references — one row per approach family. Write:
 `$CS rehearsal sota <TOPIC> --kv "topic=<topic text>,metric=<primary>,sweep_date=<UTC ISO>,queries=<the queries you fired>,ref_1=<family>|<best>|<fits or over by N>|<url>|<note>,ref_2=..."`. Zero usable refs → omit all `ref_N` (the helper emits the fallback note).
+
+#### Security note
+
+Web access in this phase relies on the Maestro's `WebSearch` / Tavily / AnySearch
+tool availability and on part-side net access (permitted-by-default, honor-system —
+not enforced). For a hard block, restrict at OS / firewall / network-namespace level
+before invoking `/consort:rehearsal`; the command exposes no opt-out flag.
 
 ## Phase 2 — Roster size + time budget
 1. **Pick N silently** (your call, explain in chat): **N=2** (default — single objective + tight
@@ -354,3 +386,10 @@ Show the user:
 - The path to the winning experiment's `code/` directory.
 - The `## Suggested next` line VERBATIM.
 - A one-line outcome summary: outcome + best-metric + delta vs the FIRST experiment.
+
+## Intervention patterns
+
+If you observe a part hanging, producing a garbage `result.json`, or exceeding cost
+without a `cost_blown` status, you can send a clarifying prompt mid-loop via
+`$CS send --from maestro <instrument> <TOPIC> "<prompt>"`. Part panes remain
+attached; the Maestro regains control between every sub-step.
