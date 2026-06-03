@@ -213,6 +213,21 @@ Then, **IF `RAN_SCORE`**: `$CS rehearsal status-brief <TOPIC> --latest-instrumen
 multiple `done` events queued (score per event, but render the brief once with the LAST values). Skip the
 brief entirely when `RAN_SCORE=0` (only heartbeat/question/stale/stuck fired — no new scored state).
 
+3.5. **Verify the landed result (metric-trust gate).** After `score`/`status-brief`, for the
+     experiment that just landed (`<instrument>`/`<exp>`):
+
+     a. `$CS rehearsal verify-plan <TOPIC> <instrument> <exp>` (add `--authorize-rerun` ONLY
+        when this result is a new leader or would change your next-round direction — a `rerun`
+        is costly).
+     b. If it printed `RUN_CMD=...`: run that command yourself via Bash, in the printed
+        `RUN_CWD`, with a timeout, teeing stdout to a temp file `<exp-dir>/verify-stdout.log`.
+     c. `$CS rehearsal verify-check <TOPIC> <instrument> <exp> --stdout-file <exp-dir>/verify-stdout.log`
+        (or `--run-failed` if the command errored / produced no `VERIFY_METRIC=` marker).
+     d. The verdict now annotates the next `status-brief` top-3 (`verified` / `mismatch!` /
+        `unavailable` / `pending`). Treat a `mismatch` as a result you do NOT yet trust — note it
+        in `## Recent decisions`; acting on it (re-dispatch) is a later phase, but never steer the
+        whole roster toward a `mismatch` leader.
+
 ### Step 4 — Completion check + DECISION POLICY
 The `status-brief` you just printed already shows the `**Completion check:**` line (computed by the same
 core the CLI uses: `floor_met` / `target_met` / `K_so_far` / `K_required` / `plateau`). Apply the FROZEN
