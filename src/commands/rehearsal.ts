@@ -831,8 +831,19 @@ export async function statusBriefWith(args: string[], v: VerbOpts & { stdout?: (
     }
   }
 
+  const stsv = join(art, "sanity.tsv");
+  let suspects: Record<string, string[]> | undefined;
+  if (existsSync(stsv)) {
+    suspects = {};
+    for (const line of readFileSync(stsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id\t")) continue;
+      const c = line.split("\t");           // exp_id, instrument, flag, ...
+      if (c[0] && c[1] && c[2]) (suspects[`${c[1]}/${c[0]}`] ??= []).push(c[2]);
+    }
+  }
+
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : undefined;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects }));
   return 0;
 }
 

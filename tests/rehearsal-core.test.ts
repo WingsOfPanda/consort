@@ -1016,3 +1016,26 @@ describe("buildStatusBrief verify annotation", () => {
     expect(out).not.toContain("[");
   });
 });
+
+describe("buildStatusBrief suspect annotation", () => {
+  const sb = [
+    "<!-- scoreboard schema_version=2 -->", "# Scoreboard", "",
+    "| Rank | Experiment | Instrument | Metric | Status | Runtime | Approach | metric_name |",
+    "|---|---|---|---|---|---|---|---|",
+    "| 1 | exp-002 | viola | 0.9600 | ok | 1.00s | b | accuracy |",
+  ].join("\n") + "\n";
+  it("annotates a top row with its suspect flags", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null,
+      suspects: { "viola/exp-002": ["ceiling-exceeded", "under-run"] } });
+    expect(out).toMatch(/exp-002 — 0\.9600 — accuracy \[suspect: ceiling-exceeded,under-run\]/);
+  });
+  it("no suspect annotation when map omitted (back-compat)", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null });
+    expect(out).not.toContain("suspect");
+  });
+  it("verdict and suspect annotations coexist", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null,
+      verdicts: { "viola/exp-002": "verified" }, suspects: { "viola/exp-002": ["ceiling-exceeded"] } });
+    expect(out).toMatch(/\[verified\] \[suspect: ceiling-exceeded\]/);
+  });
+});
