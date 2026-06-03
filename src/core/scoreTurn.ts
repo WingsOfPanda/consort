@@ -109,6 +109,28 @@ export function verifyState(ev: OutboxEvent | null, verifyText: string | null): 
   return "failed";
 }
 
+export type GateStatus = "terminal" | "question" | "pending";
+
+/** Per-part readiness for the research/verify wait gate. `key` is the status-line prefix
+ *  (`FS` for research, `VS` for verify). A part is `terminal` once its `.done` marker exists and
+ *  its LAST `<key>=` line is a non-`question` value; `question` while its last `<key>=` line is
+ *  `question` (transient — awaiting a relay+re-arm); otherwise `pending` (still running). Pure:
+ *  callers pass the pre-read `.done` existence and `.txt` text so this stays IPC-free and testable. */
+export function gateState(
+  parts: Array<{ instrument: string; doneExists: boolean; stateText: string | null }>,
+  key: "FS" | "VS",
+): Array<{ instrument: string; status: GateStatus }> {
+  return parts.map((p) => {
+    const matches = (p.stateText ?? "").split("\n").filter((l) => l.startsWith(`${key}=`));
+    const last = matches.length ? matches[matches.length - 1].slice(key.length + 1).trim() : null;
+    const status: GateStatus =
+      last === "question" ? "question"
+        : p.doneExists && last !== null ? "terminal"
+          : "pending";
+    return { instrument: p.instrument, status };
+  });
+}
+
 /** Verify-phase prompt body (port of config/prompt-templates/consult/verify.md, rebranded).
  *  Numbers the items (nl -ba -w1 -s'. '). No END_OF_INSTRUCTION/done-line — inboxWrite appends them. */
 export function composeVerifyPrompt(itemsText: string, verifyPath: string): string {
