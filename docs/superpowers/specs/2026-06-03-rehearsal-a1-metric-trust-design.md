@@ -97,7 +97,10 @@ existing numeric compare (`numEq`, default `0.01`); `metric.md` may carry an opt
 
 ## 5. Execution flow
 
-### 5.1 `rehearsal verify-plan <topic> <exp-id> [--authorize-rerun]` (pure)
+### 5.1 `rehearsal verify-plan <topic> <instrument> <exp-id> [--authorize-rerun]` (pure)
+
+(The verbs take `<instrument>` as well as `<exp-id>` because exp-ids repeat across parts — an
+experiment is located by `experimentDir(art, instrument, expId)`.)
 
 Reads the experiment's `verify` block and emits a plan:
 - no block / `kind=none` => `VERDICT=unavailable reason=...`.
@@ -114,9 +117,12 @@ the verdict to `verify-check` after the Maestro runs the command. If `verify-man
 absent (the score pass has not run yet) => `VERDICT=unavailable reason=no-manifest`. Both verbs keep
 a pure core (returns the verdict + intended writes) that the verb applies, mirroring `computeScore`.
 
-### 5.2 `rehearsal verify-check <topic> <exp-id> (--recomputed <value> | --run-failed)` (pure)
+### 5.2 `rehearsal verify-check <topic> <instrument> <exp-id> (--stdout-file <path> | --run-failed)` (pure)
 
 Adjudicates and writes the verdict (plan/apply split, mirroring `computeScore`):
+- reads the recomputed metric from the run's captured stdout (`--stdout-file <path>`): the last
+  `VERIFY_METRIC=<n>` marker line, or a JSON file's `metric_value` per `metric_from` — parsed
+  mechanically by the CLI, not hand-passed by the Maestro.
 - `--run-failed` => `mismatch reason=rerun-failed` (a re-run that won't reproduce is a red flag).
 - else `|recomputed - reported| <= epsilon` => `verified`, else `mismatch reason=value:<r>vs<reported>`.
 - writes per-exp `verification.txt` + appends a row to top-level `verification.tsv`
@@ -132,12 +138,12 @@ tampering. (This catches *post-hoc* tampering, not a fake-from-the-start verifie
 
 ### 5.4 The Maestro loop step (`commands/rehearsal.md` Step 3, after `score`/`status-brief`)
 
-1. `$CS rehearsal verify-plan <TOPIC> <exp>` (add `--authorize-rerun` only when the result is a
-   new best / direction-changing).
+1. `$CS rehearsal verify-plan <TOPIC> <instrument> <exp>` (add `--authorize-rerun` only when the
+   result is a new best / direction-changing).
 2. If it printed `RUN_CMD`: the Maestro runs that command via **Bash** in `RUN_CWD`, with a timeout,
-   and reads the metric per `METRIC_FROM`.
-3. `$CS rehearsal verify-check <TOPIC> <exp> --recomputed <value>` (or `--run-failed` if the command
-   errored / emitted no marker).
+   teeing stdout to a temp file.
+3. `$CS rehearsal verify-check <TOPIC> <instrument> <exp> --stdout-file <path>` (or `--run-failed` if
+   the command errored / emitted no marker).
 
 The Maestro running the command via its own Bash tool **is** the independent re-execution. The CLI
 only plans and adjudicates.

@@ -22171,6 +22171,7 @@ function parseMetricMd(text) {
   let minOp, minVal;
   let tgtOp, tgtVal;
   let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
+  let verifyEpsilon;
   const opVal = (s) => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -22192,9 +22193,12 @@ function parseMetricMd(text) {
       plateauWindow = parseInt(m[1].trim(), 10) || 5;
     } else if (m = line.match(/^\*\*plateau_threshold:\*\*\s+(.*)$/)) {
       plateauThreshold = parseFloat(m[1].trim()) || 0.01;
+    } else if (m = line.match(/^\*\*verify_epsilon:\*\*\s+(.*)$/)) {
+      const n2 = parseFloat(m[1].trim());
+      if (!Number.isNaN(n2)) verifyEpsilon = n2;
     }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon };
 }
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
@@ -22431,6 +22435,83 @@ var init_rehearsalState = __esm({
   }
 });
 
+// src/core/rehearsalVerify.ts
+function parseVerifyBlock(result) {
+  const v = result.verify;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const o2 = v;
+  if (o2.kind !== "rescore" && o2.kind !== "rerun" && o2.kind !== "none") return void 0;
+  const block = { kind: o2.kind };
+  if (typeof o2.command === "string") block.command = o2.command;
+  if (Array.isArray(o2.inputs)) block.inputs = o2.inputs.filter((x) => typeof x === "string");
+  if (typeof o2.metric_from === "string") block.metric_from = o2.metric_from;
+  return block;
+}
+function hashContent(content) {
+  return (0, import_node_crypto3.createHash)("sha256").update(content).digest("hex");
+}
+function recomputedFromOutput(stdout, metricFrom, readJson) {
+  if (metricFrom === "marker") {
+    const lines = stdout.split("\n").map((l) => l.trim());
+    for (let i2 = lines.length - 1; i2 >= 0; i2--) {
+      const m = lines[i2].match(MARKER_RE);
+      if (m) return parseFloat(m[1]);
+    }
+    return null;
+  }
+  const raw = readJson(metricFrom);
+  if (raw === null) return null;
+  try {
+    const o2 = JSON.parse(raw);
+    return typeof o2.metric_value === "number" ? o2.metric_value : null;
+  } catch {
+    return null;
+  }
+}
+function checkVerify(opts) {
+  if (opts.runFailed) return { verdict: "mismatch", reason: "rerun-failed" };
+  if (opts.recomputed === null) return { verdict: "mismatch", reason: "no-marker" };
+  if (opts.reported === null) return { verdict: "mismatch", reason: "no-reported" };
+  if (Math.abs(opts.recomputed - opts.reported) <= opts.epsilon) return { verdict: "verified", reason: "" };
+  return { verdict: "mismatch", reason: `value:${opts.recomputed}vs${opts.reported}` };
+}
+function verificationRow(r) {
+  return `${r.expId}	${r.instrument}	${r.verdict}	${r.reason}	${r.recomputed}	${r.ts}
+`;
+}
+function buildManifest(block, readInput) {
+  if (block.kind === "none" || !block.command) return null;
+  const hashes = {};
+  for (const rel of block.inputs ?? []) {
+    const c3 = readInput(rel);
+    if (c3 !== null) hashes[rel] = hashContent(c3);
+  }
+  return { command: block.command, hashes };
+}
+function planVerify(p) {
+  const b = p.block;
+  if (!b || b.kind === "none" || !b.command) {
+    return { run: false, verdict: "unavailable", reason: b ? "part-declined" : "no-contract" };
+  }
+  if (b.kind === "rerun" && !p.authorizeRerun) return { run: false, verdict: "pending", reason: "rerun-deferred" };
+  if (p.manifest === null) return { run: false, verdict: "unavailable", reason: "no-manifest" };
+  for (const rel of b.inputs ?? []) {
+    const c3 = p.readInput(rel);
+    if (c3 === null) return { run: false, verdict: "unavailable", reason: `missing-input:${rel}` };
+    if (hashContent(c3) !== p.manifest.hashes[rel]) return { run: false, verdict: "mismatch", reason: `provenance:${rel}` };
+  }
+  return { run: true, command: b.command, metricFrom: b.metric_from ?? "marker" };
+}
+var import_node_crypto3, MARKER_RE, VERIFICATION_TSV_HEADER;
+var init_rehearsalVerify = __esm({
+  "src/core/rehearsalVerify.ts"() {
+    "use strict";
+    import_node_crypto3 = require("node:crypto");
+    MARKER_RE = /^VERIFY_METRIC=(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$/;
+    VERIFICATION_TSV_HEADER = "exp_id	instrument	verdict	reason	recomputed	ts\n";
+  }
+});
+
 // src/core/rehearsalScore.ts
 function buildResultsTsv(rows) {
   return TSV_HEADER + rows.map((r) => `${r.expId}	${r.instrument}	${r.approach}	${r.metric}	${r.status}	${r.runtime}	${r.metricName}
@@ -22448,6 +22529,7 @@ function computeScore(art, fs, now) {
   const sidecars = [];
   const staleSidecars = [];
   const warnings = [];
+  const manifests = [];
   const parts = fs.listDir(partsDir(art));
   for (const instrument of parts) {
     const exps = fs.listDir(experimentsDir(art, instrument));
@@ -22492,6 +22574,14 @@ function computeScore(art, fs, now) {
         runtime: str(o2.runtime_s),
         metricName: str(o2.metric_name)
       });
+      const vblock = parseVerifyBlock(o2);
+      if (vblock && vblock.kind !== "none" && vblock.command) {
+        const manifestPath = (0, import_node_path31.join)(branchDir, "verify-manifest.json");
+        if (!fs.exists(manifestPath)) {
+          const manifest = buildManifest(vblock, (rel) => fs.read((0, import_node_path31.join)(branchDir, rel)));
+          if (manifest) manifests.push({ path: manifestPath, body: JSON.stringify(manifest) + "\n" });
+        }
+      }
     }
   }
   const phaseClears = [];
@@ -22515,7 +22605,8 @@ function computeScore(art, fs, now) {
     sidecars,
     staleSidecars,
     phaseClears,
-    warnings
+    warnings,
+    manifests
   };
 }
 var import_node_path31, TSV_HEADER;
@@ -22526,6 +22617,7 @@ var init_rehearsalScore = __esm({
     init_rehearsalResult();
     init_rehearsalState();
     init_rehearsalMetric();
+    init_rehearsalVerify();
     init_rehearsal();
     TSV_HEADER = "exp_id	instrument	approach	metric	status	runtime_s	metric_name\n";
   }
@@ -22759,7 +22851,9 @@ function buildStatusBrief(input) {
       sb.push("_(no scored experiments yet)_");
     } else {
       for (const r of rows) {
-        sb.push(`${r.rank}. ${r.instrument}/${r.exp} \u2014 ${r.metric} \u2014 ${r.metricName}`);
+        const v = input.verdicts?.[`${r.instrument}/${r.exp}`];
+        const tag = v ? ` [${v === "mismatch" ? "mismatch!" : v}]` : "";
+        sb.push(`${r.rank}. ${r.instrument}/${r.exp} \u2014 ${r.metric} \u2014 ${r.metricName}${tag}`);
       }
     }
   }
@@ -23114,10 +23208,12 @@ __export(rehearsal_exports, {
   sotaWith: () => sotaWith,
   spawnAllWith: () => spawnAllWith2,
   statusBriefWith: () => statusBriefWith,
-  teardownWith: () => teardownWith
+  teardownWith: () => teardownWith,
+  verifyCheckWith: () => verifyCheckWith,
+  verifyPlanWith: () => verifyPlanWith
 });
 function usage4() {
-  log.error("usage: rehearsal <init|metric|sota|spawn-all|drop-part|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
+  log.error("usage: rehearsal <init|metric|sota|spawn-all|drop-part|verify-plan|verify-check|experiment-send|score|monitor|status-brief|finalize|refine|handoff-extract|teardown|fresh-part|forensics|abort|consensus> ...");
   return 2;
 }
 function parseInitArgs(args) {
@@ -23363,6 +23459,79 @@ async function dropPartWith(rest, deps, opts) {
   log.ok(`rehearsal drop-part: dropped ${instrument}, ${kept.length} part(s) remain`);
   process.stdout.write(`N=${kept.length}
 `);
+  return 0;
+}
+async function verifyPlanWith(args, deps) {
+  const authorize = args.includes("--authorize-rerun");
+  const pos = args.filter((a2) => !a2.startsWith("--"));
+  if (pos.length !== 3) {
+    log.error("rehearsal verify-plan: usage: <topic> <instrument> <exp-id> [--authorize-rerun]");
+    return 2;
+  }
+  const [topic, instrument, expId] = pos;
+  const art = rehearsalArtDir(topic, deps.opts);
+  const result = deps.readResult(art, instrument, expId);
+  if (result === null) {
+    log.error(`rehearsal verify-plan: result.json missing for ${instrument}/${expId}`);
+    return 1;
+  }
+  const block = parseVerifyBlock(result);
+  const manifest = deps.readManifest(art, instrument, expId);
+  const plan = planVerify({ block, manifest, authorizeRerun: authorize, readInput: (rel) => deps.readInput(art, instrument, expId, rel) });
+  const out = deps.stdout ?? ((l) => {
+    process.stdout.write(l + "\n");
+  });
+  if (!plan.run) {
+    deps.writeRow(art, instrument, expId, { expId, instrument, verdict: plan.verdict, reason: plan.reason, recomputed: "", ts: deps.now() });
+    out(`VERDICT=${plan.verdict} reason=${plan.reason}`);
+    return 0;
+  }
+  out(`RUN_CWD=${experimentDir(art, instrument, expId)}`);
+  out(`RUN_CMD=${plan.command}`);
+  out(`METRIC_FROM=${plan.metricFrom}`);
+  return 0;
+}
+async function verifyCheckWith(args, deps) {
+  const runFailed = args.includes("--run-failed");
+  let stdoutFile;
+  const pos = [];
+  for (let i2 = 0; i2 < args.length; i2++) {
+    if (args[i2] === "--stdout-file") {
+      stdoutFile = args[++i2];
+    } else if (args[i2] === "--run-failed") {
+    } else if (!args[i2].startsWith("--")) pos.push(args[i2]);
+  }
+  if (pos.length !== 3) {
+    log.error("rehearsal verify-check: usage: <topic> <instrument> <exp-id> (--stdout-file <path> | --run-failed)");
+    return 2;
+  }
+  if (!runFailed && stdoutFile === void 0) {
+    log.error("rehearsal verify-check: need --stdout-file <path> or --run-failed");
+    return 2;
+  }
+  const [topic, instrument, expId] = pos;
+  const art = rehearsalArtDir(topic, deps.opts);
+  const result = deps.readResult(art, instrument, expId);
+  if (result === null) {
+    log.error(`rehearsal verify-check: result.json missing for ${instrument}/${expId}`);
+    return 1;
+  }
+  const reported = typeof result.metric_value === "number" ? result.metric_value : null;
+  const block = parseVerifyBlock(result);
+  const metricFrom = block?.metric_from ?? "marker";
+  const md = deps.readMetricMd(art);
+  const epsilon = (md ? parseMetricMd(md).verifyEpsilon : void 0) ?? 0.01;
+  let recomputed = null;
+  if (!runFailed) {
+    const stdout = stdoutFile ? deps.readStdout(stdoutFile) : null;
+    recomputed = stdout === null ? null : recomputedFromOutput(stdout, metricFrom, (p) => deps.readJson((0, import_node_path32.join)(experimentDir(art, instrument, expId), p)));
+  }
+  const { verdict, reason } = checkVerify({ recomputed, runFailed, reported, epsilon });
+  deps.writeRow(art, instrument, expId, { expId, instrument, verdict, reason, recomputed: recomputed === null ? "" : String(recomputed), ts: deps.now() });
+  const out = deps.stdout ?? ((l) => {
+    process.stdout.write(l + "\n");
+  });
+  out(`VERDICT=${verdict} reason=${reason}`);
   return 0;
 }
 function parseExperimentSendArgs(args) {
@@ -23630,6 +23799,7 @@ async function scoreWith(args, deps) {
   for (const s of c3.sidecars) deps.writeAtomic(s.path, s.body);
   for (const p of c3.staleSidecars) deps.removeFile(p);
   for (const pc of c3.phaseClears) deps.writeAtomic(pc.statePath, pc.merged);
+  for (const m of c3.manifests) deps.writeAtomic(m.path, m.body);
   for (const w of c3.warnings) log.warn(w);
   return 0;
 }
@@ -23781,8 +23951,18 @@ async function statusBriefWith(args, v = {}) {
     }
   }
   const { scoreboardMd, completion } = gatherCompletion(art);
+  const vtsv = (0, import_node_path32.join)(art, "verification.tsv");
+  let verdicts;
+  if ((0, import_node_fs35.existsSync)(vtsv)) {
+    verdicts = {};
+    for (const line of (0, import_node_fs35.readFileSync)(vtsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id	")) continue;
+      const c3 = line.split("	");
+      if (c3[0] && c3[1] && c3[2]) verdicts[`${c3[1]}/${c3[0]}`] = c3[2];
+    }
+  }
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : void 0;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts }));
   return 0;
 }
 function readOr(path6, fallback = "") {
@@ -24441,6 +24621,16 @@ async function consensusWith(args, deps) {
   log.ok(`[consensus] wrote ${(0, import_node_path32.join)(art, "consensus.md")} (${Object.keys(latestOk).length} parts)`);
   return 0;
 }
+function appendVerificationRow(art, instrument, expId, row) {
+  const tsv = (0, import_node_path32.join)(art, "verification.tsv");
+  const prior = (0, import_node_fs35.existsSync)(tsv) ? (0, import_node_fs35.readFileSync)(tsv, "utf8") : VERIFICATION_TSV_HEADER;
+  atomicWrite(tsv, prior + verificationRow(row));
+  atomicWrite(
+    (0, import_node_path32.join)(experimentDir(art, instrument, expId), "verification.txt"),
+    `${row.verdict} reason=${row.reason} recomputed=${row.recomputed} at ${row.ts}
+`
+  );
+}
 async function run13(args) {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -24454,6 +24644,10 @@ async function run13(args) {
       return spawnAllWith2(rest, liveSpawnAllDeps2);
     case "drop-part":
       return dropPartWith(rest, liveDropPartDeps);
+    case "verify-plan":
+      return verifyPlanWith(rest, liveVerifyPlanDeps);
+    case "verify-check":
+      return verifyCheckWith(rest, liveVerifyCheckDeps);
     case "experiment-send":
       return experimentSendWith(applyArgsFile(rest), liveExperimentSendDeps);
     case "score":
@@ -24484,7 +24678,7 @@ async function run13(args) {
       return usage4();
   }
 }
-var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveDropPartDeps, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps;
+var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveDropPartDeps, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps, liveVerifyPlanDeps, liveVerifyCheckDeps;
 var init_rehearsal2 = __esm({
   "src/commands/rehearsal.ts"() {
     "use strict";
@@ -24510,6 +24704,7 @@ var init_rehearsal2 = __esm({
     init_forensics();
     init_rehearsalHandoff();
     init_rehearsalConsensus();
+    init_rehearsalVerify();
     init_contracts();
     init_ipc();
     init_tmux();
@@ -24596,6 +24791,43 @@ var init_rehearsal2 = __esm({
       now: () => isoUtc()
     };
     liveConsensusDeps = { now: () => isoUtc() };
+    liveVerifyPlanDeps = {
+      readResult: (art, i2, e) => {
+        const p = (0, import_node_path32.join)(experimentDir(art, i2, e), "result.json");
+        if (!(0, import_node_fs35.existsSync)(p)) return null;
+        try {
+          return JSON.parse((0, import_node_fs35.readFileSync)(p, "utf8"));
+        } catch {
+          return null;
+        }
+      },
+      readManifest: (art, i2, e) => {
+        const p = (0, import_node_path32.join)(experimentDir(art, i2, e), "verify-manifest.json");
+        if (!(0, import_node_fs35.existsSync)(p)) return null;
+        try {
+          return JSON.parse((0, import_node_fs35.readFileSync)(p, "utf8"));
+        } catch {
+          return null;
+        }
+      },
+      readInput: (art, i2, e, rel) => {
+        const p = (0, import_node_path32.join)(experimentDir(art, i2, e), rel);
+        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
+      },
+      writeRow: appendVerificationRow,
+      now: () => isoUtc()
+    };
+    liveVerifyCheckDeps = {
+      readResult: liveVerifyPlanDeps.readResult,
+      readMetricMd: (art) => {
+        const p = (0, import_node_path32.join)(art, "metric.md");
+        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
+      },
+      readStdout: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+      readJson: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+      writeRow: appendVerificationRow,
+      now: () => isoUtc()
+    };
   }
 });
 
