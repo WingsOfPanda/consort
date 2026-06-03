@@ -1,7 +1,7 @@
 // /consort:rehearsal CLI verbs (Phase B front half). Ports deep-research-init.sh
 // (slug/codex-gate/flags/scaffolding) + the deep-research.md Phase 0-3 surface.
 // Phase C: experiment-send (dispatch ONE experiment to a persistent codex part).
-import { accessSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, appendFileSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, relative, resolve } from "node:path";
 import { log } from "../core/log.js";
@@ -1085,6 +1085,19 @@ export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps):
   // 8. audit diff: append audit_warn rows for prompt/audit knob mismatches (AFTER size).
   computeAuditWarnings(art, instruments, warningsPath);
 
+  // A3: fold non-audit sanity flags into warnings.txt (audit-knob-drift already covered by audit_warn).
+  const sanityTsv = join(art, "sanity.tsv");
+  if (existsSync(sanityTsv)) {
+    const extra: string[] = [];
+    for (const line of readFileSync(sanityTsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id\t")) continue;
+      const c = line.split("\t");                 // exp_id, instrument, flag, detail, ts
+      if (c[2] === "audit-knob-drift") continue;   // dedupe vs finalize audit_warn
+      if (c[0] && c[1] && c[2]) extra.push(`sanity\t${c[1]}/${c[0]}\t${c[2]}\t${c[3] ?? ""}`);
+    }
+    if (extra.length) appendFileSync(warningsPath, extra.join("\n") + "\n");
+  }
+
   // 9. render session-summary.md (FULL re-render; wholesale atomic replace).
   const statusRows: StatusRow[] = [];
   for (const instrument of instruments) {
@@ -1145,6 +1158,8 @@ export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps):
       warnings.push(`- size_warn: ${f[1]} ${f[2]} GB (${f[3]} files)`);
     } else if (f[0] === "audit_warn") {
       warnings.push(`- audit_warn: ${f[1]} ${f[2]} (${f[3]})`);
+    } else if (f[0] === "sanity") {
+      warnings.push(`- sanity: ${f[1]} ${f[2]} (${f[3]})`);
     }
   }
 
