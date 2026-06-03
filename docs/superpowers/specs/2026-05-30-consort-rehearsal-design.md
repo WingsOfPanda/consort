@@ -325,3 +325,14 @@ rebuild.
   optional/absent for now; the flag is wired but not exercised by the dogfood.
 - Promotion of a winning experiment into real source is **`perform`'s** job, not rehearsal's (explore-only).
 - `prelude` (meditate) remains out of scope until its own brainstorm → spec.
+
+## 13. Intentional divergences from deep-research (do not re-flag)
+
+- **Genericized shared-utility helper.** `config/prompt-templates/rehearsal/experiment.md` advertises a
+  generic `{{ART_DIR}}/lib/` helper directory rather than clone-wars' concrete `arena_color_rotated(...)`
+  signature. `arena.py` is still seeded into `lib/`; the README/docstring is the discovery path. Kept
+  generic on purpose — not every research topic is a board game.
+- **In-flight slug collision → hard error.** clone-wars auto-suffixes `-2..-999` so concurrent same-topic
+  runs coexist; consort `init` hard-errors `rc 2` when the art dir already exists. Kept on purpose —
+  teardown archives the topic dir (sequential reuse works); concurrent same-topic runs should pass an
+  explicit `--slug`.

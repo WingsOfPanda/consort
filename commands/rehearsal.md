@@ -75,8 +75,8 @@ exists** (the user passed `--metric`), SKIP this whole phase. Otherwise the thre
 
 ## Phase 1.5 — SOTA sweep (always runs, write-once)
 Read `primary_metric` + `hard_constraints` from `$ART/metric.md`. Fire ONE **triple-search** round
-(WebSearch + Tavily + AnySearch, two query shapes each: `SOTA <metric> <topic>` and `<topic> under
-<constraint>`). Merge (dedup by URL), curate <=7 references — one row per approach family. Write:
+(WebSearch + Tavily + AnySearch, two query shapes each: `SOTA <metric> <topic>` and (only when
+`metric.md` has a `hard_constraints` value) `<topic> under <constraint>`). Merge (dedup by URL), curate <=7 references — one row per approach family. Write:
 `$CS rehearsal sota <TOPIC> --kv "topic=<topic text>,metric=<primary>,sweep_date=<UTC ISO>,queries=<the queries you fired>,ref_1=<family>|<best>|<fits or over by N>|<url>|<note>,ref_2=..."`. Zero usable refs → omit all `ref_N` (the helper emits the fallback note).
 
 #### Security note
@@ -103,10 +103,16 @@ Spawn N parts in one call: `$CS rehearsal spawn-all <TOPIC> <N>`. It picks N dis
 panes off your pane (main-vertical), batch-spawns them as codex, and writes `$ART/spawn-results.tsv` +
 `$ART/parts.txt`. Branch on rc:
 - **rc 0** → all parts ready. Continue (Phase 4 lands next).
-- **rc 1 or 2, first failure** → teardown the partial set and retry `spawn-all` ONCE (cold-start tolerance).
-- **rc 1 or 2, after retry** → read `$ART/spawn-results.tsv`; if **< 2** parts have rc 0, abort (teardown +
-  archive). Else **AskUserQuestion**: **Proceed degraded (<k>/<N>)** / **Abort** — degraded drops the failed
-  instruments and continues with the rest.
+- **rc 3 (preflight/setup), first failure** → teardown the partial set and retry `spawn-all` ONCE
+  (cold-start tolerance).
+- **rc 3, after retry** → preflight is unrecoverable: teardown + archive + exit. Do **NOT** show a
+  degraded prompt (a pane-allocation failure that survives a retry will not be fixed by dropping parts).
+- **rc 1 or 2 (spawn-class), first failure** → teardown the partial set and retry `spawn-all` ONCE.
+- **rc 1 or 2, after retry** → read the FRESH `$ART/spawn-results.tsv` (`spawn-all` clears any stale one
+  at start). If **< 2** parts have rc 0, abort (teardown + archive). Else **AskUserQuestion**: **Proceed
+  degraded (<k>/<N>)** / **Abort**. On **Proceed degraded**, for EACH instrument whose `spawn-results.tsv`
+  row has rc ≠ 0, run `$CS rehearsal drop-part <TOPIC> <instrument>` (prunes its `parts.txt` row and kills
+  its preflight pane) **before** Phase 4, so Phase 4 seeds state + a Monitor only for live parts.
 
 ## Phase 4 — Initial dispatch (runs ONCE, before the loop)
 
@@ -190,7 +196,7 @@ the budget is `none`):
 Initialize `RAN_SCORE=0`, `LAST_INSTRUMENT=`, `LAST_EXP=`. Route each queued notification by event type:
 - **`done` / `error`** → `$CS rehearsal score <TOPIC>` (re-scores every part, sets each scored part's
   `phase=idle`). On rc 0 set `RAN_SCORE=1` and record `LAST_INSTRUMENT=<instrument>` / `LAST_EXP=<exp-id>`
-  from the event JSON (`instrument` field + the `summary`-derived `exp-NNN`). If the event's part has a
+  from the event JSON (`part` field + the `summary`-derived `exp-NNN`). If the event's part has a
   non-empty `probe_sent_ts` in its `state.txt`, clear it (the part recovered — the pending probe is stale).
 - **`question`** → surface the part's question to the user in chat; set that part's `phase=blocked`. Do
   **NOT** auto-dispatch it — wait for user direction.
@@ -212,7 +218,8 @@ The `status-brief` you just printed already shows the `**Completion check:**` li
 core the CLI uses: `floor_met` / `target_met` / `K_so_far` / `K_required` / `plateau`). Apply the FROZEN
 decision policy below. If the decision is **STOP**, write `$ART/halt.flag` as a structured `key=value`
 file (one entry per line) — required keys `halted_by=maestro`, `halted_at=<UTC ISO>`, `reason=<one line>`,
-plus optional `target_met` / `floor_met` / `k_so_far` / `k_required` / `plateau` — then **jump to Step 2**.
+plus optional `target_met` / `floor_met` / `k_so_far` / `k_required` / `plateau` / `plateau_observed_n` /
+`final_leader` / `final_leader_metric` / `architectures_corroborated` — then **jump to Step 2**.
 
 ```
 Decision policy (apply at Step 4):
@@ -353,7 +360,8 @@ means required inputs were missing — note it and **SKIP Phase 6c** (warn, do n
 ## Phase 6c — Compose score-handoff.md
 
 Read `$ART/handoff-data.kv` (mechanical facts) AND the landscape doc (identified by `landscape_doc=`). As
-Maestro, **Write** `$ART/score-handoff.md` with the Write tool. Six sections IN ORDER:
+Maestro, **Write** `$ART/score-handoff.md` with the Write tool. Begin with a `# <topic>` H1, then a
+`Source: <landscape doc path>` line and a `Generated: <UTC ISO>` line, then six sections IN ORDER:
 
 - `## Recommendation` — 1-3 paragraphs of English prose (no bullets). Names the winner. States what to
   plan for. Past tense for evidence, active voice.
@@ -376,7 +384,8 @@ Maestro, **Write** `$ART/score-handoff.md` with the Write tool. Six sections IN 
 
 **No-winner branch** (`mode=rehearsal-no-winner` in `handoff-data.kv`): `## Recommendation` reads "No
 deployable winner. Research ended without a `status=ok` row in the scoreboard — see Evidence for what was
-tried and why each attempt fell short." **OMIT `## Recipe`** entirely. `## Evidence` shows the partial/fail
+tried and why each attempt fell short." **OMIT `## Recipe`** entirely. `## Open questions` MAY still be
+emitted (conditional, as above) if planning decisions remain. `## Evidence` shows the partial/fail
 rows with their failure modes.
 
 ## Phase 7 — Present
@@ -393,3 +402,9 @@ If you observe a part hanging, producing a garbage `result.json`, or exceeding c
 without a `cost_blown` status, you can send a clarifying prompt mid-loop via
 `$CS send --from maestro <instrument> <TOPIC> "<prompt>"`. Part panes remain
 attached; the Maestro regains control between every sub-step.
+
+## Budget overrides
+
+`CONSORT_REHEARSAL_EXPERIMENT_TIMEOUT_OVERRIDE` (positive integer seconds) overrides the per-experiment
+wall-clock cap that `experiment-send` embeds in the part's prompt. Precedence: the `--timeout` flag >
+this env var > the `contracts.yaml` `experiment` default (1800s).
