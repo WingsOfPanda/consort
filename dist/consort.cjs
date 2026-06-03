@@ -19037,6 +19037,14 @@ function verifyState(ev, verifyText) {
   if (ev.event === "done") return verifyText !== null && verifyText.length > 0 ? "ok" : "missing";
   return "failed";
 }
+function gateState(parts, key) {
+  return parts.map((p) => {
+    const matches = (p.stateText ?? "").split("\n").filter((l) => l.startsWith(`${key}=`));
+    const last = matches.length ? matches[matches.length - 1].slice(key.length + 1).trim() : null;
+    const status = last === "question" ? "question" : p.doneExists && last !== null ? "terminal" : "pending";
+    return { instrument: p.instrument, status };
+  });
+}
 function composeVerifyPrompt(itemsText, verifyPath) {
   const items = itemsText.split("\n").filter((l) => l.length > 0).map((l, i2) => `${i2 + 1}. ${l}`).join("\n");
   return [
@@ -19332,10 +19340,11 @@ __export(score_exports, {
   synthesizeRun: () => synthesizeRun,
   verifySendWith: () => verifySendWith,
   verifyWaitWith: () => verifyWaitWith,
+  waitGateRun: () => waitGateRun,
   walkStateRun: () => walkStateRun
 });
 function usage2() {
-  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ...");
+  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ...");
   return 2;
 }
 async function run10(args) {
@@ -19364,6 +19373,8 @@ async function run10(args) {
       return synthesizeRun(rest);
     case "walk-state":
       return walkStateRun(rest);
+    case "wait-gate":
+      return waitGateRun(rest);
     case "detect-multi-repo":
       return detectMultiRepoRun(rest);
     case "emit-dag":
@@ -19856,6 +19867,41 @@ async function walkStateRun(rest) {
   for (const s of states) process.stdout.write(`${s.name}	${s.status}
 `);
   return 0;
+}
+async function waitGateRun(rest) {
+  const [topic, phase] = rest;
+  if (!topic || !phase) {
+    log.error("usage: score wait-gate <topic> <research|verify>");
+    return 2;
+  }
+  if (phase !== "research" && phase !== "verify") {
+    log.error(`score wait-gate: phase must be research|verify (got ${phase})`);
+    return 2;
+  }
+  const art = scoreArtDir(topic);
+  const rosterPath = (0, import_node_path24.join)(art, "roster.txt");
+  if (!(0, import_node_fs29.existsSync)(rosterPath)) {
+    log.error(`score wait-gate: roster.txt missing at ${art}`);
+    return 2;
+  }
+  const rows = parseRosterFile((0, import_node_fs29.readFileSync)(rosterPath, "utf8"));
+  if (rows.length === 0) {
+    log.error("score wait-gate: roster.txt has no parts");
+    return 2;
+  }
+  const key = phase === "research" ? "FS" : "VS";
+  const parts = rows.map((r) => {
+    const stateFile = (0, import_node_path24.join)(art, `${phase}-${r.instrument}.txt`);
+    return {
+      instrument: r.instrument,
+      doneExists: (0, import_node_fs29.existsSync)((0, import_node_path24.join)(art, `${phase}-${r.instrument}.done`)),
+      stateText: (0, import_node_fs29.existsSync)(stateFile) ? (0, import_node_fs29.readFileSync)(stateFile, "utf8") : null
+    };
+  });
+  const states = gateState(parts, key);
+  for (const s of states) process.stdout.write(`${s.instrument}	${s.status}
+`);
+  return states.every((s) => s.status === "terminal") ? 0 : 1;
 }
 async function detectMultiRepoRun(rest) {
   const topic = rest[0];
