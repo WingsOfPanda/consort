@@ -20,6 +20,8 @@ export interface StatusBriefInput {
   scoreboardMd: string | null; // null = scoreboard.md absent on disk
   completion: CompletionSignals | null; // null = scoreboard.md OR metric.md absent -> can't compute
   latest?: { instrument: string; exp: string };
+  /** instrument/exp -> verdict, joined from verification.tsv; omit for back-compat (no annotation). */
+  verdicts?: Record<string, string>;
 }
 
 interface SbTop { rank: string; exp: string; instrument: string; metric: string; metricName: string; }
@@ -73,7 +75,9 @@ export function buildStatusBrief(input: StatusBriefInput): string {
       sb.push("_(no scored experiments yet)_");
     } else {
       for (const r of rows) {
-        sb.push(`${r.rank}. ${r.instrument}/${r.exp} — ${r.metric} — ${r.metricName}`);
+        const v = input.verdicts?.[`${r.instrument}/${r.exp}`];
+        const tag = v ? ` [${v === "mismatch" ? "mismatch!" : v}]` : "";
+        sb.push(`${r.rank}. ${r.instrument}/${r.exp} — ${r.metric} — ${r.metricName}${tag}`);
       }
     }
   }

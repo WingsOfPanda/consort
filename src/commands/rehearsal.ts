@@ -818,8 +818,19 @@ export async function statusBriefWith(args: string[], v: VerbOpts & { stdout?: (
 
   const { scoreboardMd, completion } = gatherCompletion(art);
 
+  const vtsv = join(art, "verification.tsv");
+  let verdicts: Record<string, string> | undefined;
+  if (existsSync(vtsv)) {
+    verdicts = {};
+    for (const line of readFileSync(vtsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id\t")) continue;
+      const c = line.split("\t");           // exp_id, instrument, verdict, ...
+      if (c[0] && c[1] && c[2]) verdicts[`${c[1]}/${c[0]}`] = c[2];   // last write wins (latest verdict)
+    }
+  }
+
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : undefined;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts }));
   return 0;
 }
 

@@ -947,3 +947,26 @@ describe("rehearsalBrief", () => {
     expect(out.endsWith("\n\n")).toBe(false);
   });
 });
+
+describe("buildStatusBrief verify annotation", () => {
+  const sb = [
+    "<!-- scoreboard schema_version=2 -->", "# Scoreboard", "",
+    "| Rank | Experiment | Instrument | Metric | Status | Runtime | Approach | metric_name |",
+    "|---|---|---|---|---|---|---|---|",
+    "| 1 | exp-002 | viola | 0.9600 | ok | 1.00s | b | accuracy |",
+    "| 2 | exp-001 | oboe | 0.9000 | ok | 1.00s | a | accuracy |",
+  ].join("\n") + "\n";
+  it("annotates each top row with its verdict from the verification map", () => {
+    const out = buildStatusBrief({
+      parts: [], scoreboardMd: sb, completion: null,
+      verdicts: { "viola/exp-002": "verified", "oboe/exp-001": "mismatch" },
+    });
+    expect(out).toMatch(/exp-002 — 0\.9600 — accuracy \[verified\]/);
+    expect(out).toMatch(/exp-001 — 0\.9000 — accuracy \[mismatch!\]/);
+  });
+  it("omits the annotation when no verdicts map is given (back-compat)", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null });
+    expect(out).toContain("exp-002 — 0.9600 — accuracy");
+    expect(out).not.toContain("[");
+  });
+});
