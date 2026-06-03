@@ -166,7 +166,12 @@ the last line is the current outcome). Branch:
      <INST> <PROV>`. (The wait resumes past the question — it never re-sends the research prompt.)
 - **`FS=failed` / `FS=timeout`** — the part produced no usable findings; drop it.
 
-**Proceed only when every part is terminal** (no `FS=question` outstanding). Then build the **diff
+You launched **N** background waits — expect **N** completion notifications, one per part. On each,
+read that part's last `FS=` line and handle it (relaying any `FS=question` via the loop above, which
+re-arms that part). **Do not proceed until `$CS score wait-gate <TOPIC> research` exits 0** — it
+prints `<INST>\t<terminal|question|pending>` for every part and returns 0 only when all are
+`terminal`. rc 1 means at least one part is still `pending` (researching) or `question` (needs a
+relay): keep handling notifications / relay, then re-run the gate. Only on rc 0 proceed. Then build the **diff
 roster** = parts whose `findings.md` exists (`FS` ∈ {ok, empty, malformed}). If **<2** parts have
 findings → abort (run `/consort:coda <instrument> <TOPIC>` for each ready part, tell the user the
 ensemble could not produce 2 sets of findings, stop). If some parts were dropped, **rewrite
@@ -204,7 +209,10 @@ For each part, background `$CS score verify-wait <TOPIC> <INST> <PROV>`. On each
 - **`VS=failed` / `VS=timeout`** — record; the rival's claims this part would have verified surface
   unresolved (N=2: a `## Not-verified` section; N≥3: they fall through the `UNCERTAIN` tier into
   PENDING/Contested) — either way Maestro resolves them in Stage 9.
-Proceed when every part is terminal (no `VS=question` outstanding).
+Expect **N** completion notifications (one per part); handle each, relaying any `VS=question`. **Do
+not proceed until `$CS score wait-gate <TOPIC> verify` exits 0** — it prints
+`<INST>\t<terminal|question|pending>` per part; rc 1 means some part is still `pending`/`question`,
+so keep handling / relay and re-run. Only on rc 0 continue.
 
 ## Stage 9 — adjudicate + resolve PENDING
 
