@@ -25,6 +25,30 @@ describe("args", () => {
   it("applyArgsFile: missing file → silent fallback", () => {
     expect(applyArgsFile(["--args-file", "/nope/x", "extra"])).toEqual(["extra"]);
   });
+  it("applyArgsFile preserves content after the first newline (multi-line $ARGUMENTS)", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "af-")), "args");
+    writeFileSync(f, "enhance debug mode\nENHANCEMENT one\nENHANCEMENT two");
+    expect(applyArgsFile(["--args-file", f])).toEqual([
+      "enhance", "debug", "mode", "ENHANCEMENT", "one", "ENHANCEMENT", "two",
+    ]);
+  });
+  it("applyArgsFile: a flag on line 1 and a multi-line topic body all survive", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "af-")), "args");
+    writeFileSync(f, "--ensemble\nresearch the thing\nwith more detail");
+    expect(applyArgsFile(["--args-file", f])).toEqual([
+      "--ensemble", "research", "the", "thing", "with", "more", "detail",
+    ]);
+  });
+  it("applyArgsFile handles CRLF line endings", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "af-")), "args");
+    writeFileSync(f, "alpha beta\r\ngamma");
+    expect(applyArgsFile(["--args-file", f])).toEqual(["alpha", "beta", "gamma"]);
+  });
+  it("applyArgsFile: consecutive and trailing newlines yield no empty tokens", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "af-")), "args");
+    writeFileSync(f, "one\n\ntwo\n");
+    expect(applyArgsFile(["--args-file", f])).toEqual(["one", "two"]);
+  });
   it("kvParse forms", () => {
     expect(kvParse("--mode=test")).toEqual({ value: "test", shift: 1 });
     expect(kvParse("--mode", "v")).toEqual({ value: "v", shift: 2 });
