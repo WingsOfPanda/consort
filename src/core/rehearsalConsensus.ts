@@ -15,7 +15,8 @@ export function buildConsensus(latestOk: Record<string, Record<string, unknown>>
     const v = latestOk[inst]?.[k];
     return v === undefined || v === null ? "" : String(v);
   };
-  const numEq = (a: string, b: string) => Math.abs(parseFloat(a) - parseFloat(b)) <= epsilon;
+  const num = (s: string): number => { const n = parseFloat(s); return Number.isNaN(n) ? 0 : n; };
+  const numEq = (a: string, b: string) => Math.abs(num(a) - num(b)) <= epsilon;
 
   const agreed: string[] = [];
   const contested: string[] = [];

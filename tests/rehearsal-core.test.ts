@@ -359,6 +359,14 @@ describe("buildConsensus", () => {
     // notes present in oboe, missing in viola -> contested (— for the missing cell), not All-missing.
     expect(md).toMatch(/\| notes \| had a note \| — \|/);
   });
+  it("treats a degenerate numeric token as 0 (awk parity) -> Agreed, not Contested", () => {
+    const out = buildConsensus(
+      { rex: { runtime_s: "-" }, keeli: { runtime_s: "0" } },
+      { topic: "t", nowIso: "2026-06-03T00:00:00Z" },
+    );
+    const agreed = out.slice(out.indexOf("## Agreed"), out.indexOf("## Contested"));
+    expect(agreed).toContain("runtime_s");
+  });
 });
 
 import {
