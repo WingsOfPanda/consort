@@ -16621,16 +16621,21 @@ var init_execa = __esm({
 
 // src/core/tmux.ts
 function splitRightArgs(launch, target, cwd) {
-  const a2 = ["split-window", "-P", "-F", "#{pane_id}", "-h"];
+  const a2 = ["split-window", "-P", "-F", "#{pane_id}", "-h", "-d"];
   if (target) a2.push("-t", target);
   if (cwd) a2.push("-c", cwd);
   a2.push(launch);
   return a2;
 }
 function splitDownArgs(launch, target, cwd) {
-  const a2 = ["split-window", "-P", "-F", "#{pane_id}", "-v", "-t", target];
+  const a2 = ["split-window", "-P", "-F", "#{pane_id}", "-v", "-d", "-t", target];
   if (cwd) a2.push("-c", cwd);
   a2.push(launch);
+  return a2;
+}
+function preflightSplitArgs(flag, prev, cwd) {
+  const a2 = ["split-window", "-P", "-F", "#{pane_id}", flag, "-d", "-t", prev];
+  if (cwd) a2.push("-c", cwd);
   return a2;
 }
 function respawnArgs(pane, launch, cwd) {
@@ -16776,9 +16781,7 @@ async function preflightLayout(topic, roster, opts) {
   try {
     for (const e of roster) {
       const sentinel = sentinelCommand(labelFmt(e.instrument, e.model, topic));
-      const args = ["split-window", "-P", "-F", "#{pane_id}", flag, "-t", prev];
-      if (e.cwd) args.push("-c", e.cwd);
-      args.push(sentinel);
+      const args = [...preflightSplitArgs(flag, prev, e.cwd), sentinel];
       const { stdout } = await execa("tmux", args);
       const pane = stdout.trim();
       created.push(pane);

@@ -2,15 +2,21 @@ import { describe, it, expect } from "vitest";
 import * as T from "../src/core/tmux.js";
 
 describe("tmux arg builders", () => {
-  it("splitRightArgs: -h, capture pane id, cwd, target", () => {
+  it("splitRightArgs: -h -d (detached), capture pane id, cwd, target", () => {
     expect(T.splitRightArgs("LAUNCH", "%1", "/repo")).toEqual(
-      ["split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", "/repo", "LAUNCH"]);
+      ["split-window", "-P", "-F", "#{pane_id}", "-h", "-d", "-t", "%1", "-c", "/repo", "LAUNCH"]);
     expect(T.splitRightArgs("LAUNCH", undefined, "/repo")).toEqual(
-      ["split-window", "-P", "-F", "#{pane_id}", "-h", "-c", "/repo", "LAUNCH"]);
+      ["split-window", "-P", "-F", "#{pane_id}", "-h", "-d", "-c", "/repo", "LAUNCH"]);
   });
-  it("splitDownArgs: -v, requires target", () => {
+  it("splitDownArgs: -v -d (detached), requires target", () => {
     expect(T.splitDownArgs("LAUNCH", "%2", "/repo")).toEqual(
-      ["split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%2", "-c", "/repo", "LAUNCH"]);
+      ["split-window", "-P", "-F", "#{pane_id}", "-v", "-d", "-t", "%2", "-c", "/repo", "LAUNCH"]);
+  });
+  it("preflightSplitArgs: -d detached, direction flag, target, optional cwd", () => {
+    expect(T.preflightSplitArgs("-h", "%0")).toEqual(
+      ["split-window", "-P", "-F", "#{pane_id}", "-h", "-d", "-t", "%0"]);
+    expect(T.preflightSplitArgs("-v", "%1", "/repo")).toEqual(
+      ["split-window", "-P", "-F", "#{pane_id}", "-v", "-d", "-t", "%1", "-c", "/repo"]);
   });
   it("respawnArgs: -k, optional cwd", () => {
     expect(T.respawnArgs("%3", "LAUNCH", "/repo")).toEqual(
