@@ -43,17 +43,17 @@ execution-quality: only an execution-verified negative result may retire an angl
 
 ## Track C — cross-cutting
 
-### C0 · Quick wins & groundwork  (small; ship first)
-- Fix the **scoreboard minimize-direction sort bug**: `buildScoreboard`
-  (`src/core/rehearsalResult.ts:91-94`) always sorts descending by metric value, but `metric.md`
-  carries `direction=maximize|minimize`. For a minimize objective the "top-3" the Maestro steers
-  toward and the handoff winner are the WORST rows. (Real bug, not just a gap.)
-- Wire the **dormant `--smoke-test` / `--context-file`** gates into the Maestro dispatches
-  (`commands/rehearsal.md:158,265` currently pass positional args only), so the implemented
-  pre-dispatch environment validation (`src/commands/rehearsal.ts:378-388`) actually runs.
-- Establish the **additive `result.json` extension convention** that A1+ populate. (May merge into
-  A1's spec rather than ship standalone.)
-- *Cost: trivial. Deps: none.*
+### C0 · Quick wins & groundwork  — SHIPPED in 0.1.12 (commit 7f57ec6)
+- DONE: Fixed the **scoreboard minimize-direction sort bug**. `buildScoreboard`
+  (`src/core/rehearsalResult.ts`) sorted descending unconditionally (faithful port of
+  deep-research.sh `sort -k1,1rn`), so for a minimize objective the "top-3", the handoff winner, and
+  the teardown winner symlink were all the WORST rows. `parseMetricMd` now reads `**Direction:**`,
+  and `buildScoreboard`/`computeScore` sort best-first by direction (maximize stays byte-identical).
+  Documented as a deliberate divergence from deep-research inline at `buildScoreboard`.
+- MOVED to A3: the **`--smoke-test` / `--context-file`** wiring. Wiring it meaningfully needs a
+  generated environment-probe script + a decision on what it asserts (the experiment `code/` dir is
+  empty at the Phase-4 first dispatch), so it is an A3 sanity-gate design question, not a quick win.
+- FOLDED into A1: the **additive `result.json` extension convention**.
 
 ### C1 · Independent re-implementation inspector  (large; expensive; selective — do last)
 - AIRepr-style round-trip: the **Claude Maestro (cross-family)** regenerates the experiment from the
@@ -78,9 +78,14 @@ execution-quality: only an execution-verified negative result may retire an angl
   to-be-true ceiling -> mandatory audit**; **log-content corroboration** (parse `log_paths`, not just
   existence); harden the **audit.json diff** (`src/commands/rehearsal.ts:887-912`) to run
   per-experiment, not only at finalize.
+- **Pre-dispatch environment validation (moved from C0):** wire the dormant `--smoke-test` /
+  `--context-file` gates (`src/commands/rehearsal.ts:378-388`, never passed by the Maestro at
+  `commands/rehearsal.md:158,265`) — including generating the environment-probe script and deciding
+  what it asserts, since the experiment `code/` dir is empty at the first dispatch.
 - *Closes:* gaps "no leakage check", "no under-training/degenerate detection", "no sanity baseline",
-  "audit diff narrow/advisory/late", "log existence != content". *Mechanism:* Kapoor & Narayanan
-  leakage taxonomy; MLE-bench structure validation. *Cost: low. Deps: C0.*
+  "audit diff narrow/advisory/late", "log existence != content", "smoke-test/context-file dormant in
+  the shipped flow". *Mechanism:* Kapoor & Narayanan leakage taxonomy; MLE-bench structure
+  validation. *Cost: low. Deps: C0.*
 
 ### A2 · Valid-vs-invalid execution  (medium; the original concern)
 - **INFEASIBLE vs REFUTED** taxonomy (new optional `validity` field) + a **bounded automatic debug
@@ -96,8 +101,12 @@ execution-quality: only an execution-verified negative result may retire an angl
   correction); **K-corroboration re-runs the SAME config** (today
   `src/core/rehearsalComplete.ts:45-92` counts distinct at-target experiments, so a lucky seed
   satisfies completion); sub-threshold deltas -> "inconclusive", never ranked by raw mean.
-- *Closes:* gap "no reproducibility / seed control". *Mechanism:* Paired Bootstrap Protocol;
-  deep-significance/ASO; seed power analysis. *Cost: high (kx runs). Deps: A1.*
+- **K-streak direction bug (found during C0):** `checkCompletion`'s streak uses
+  `improving = mv > best` (`src/core/rehearsalComplete.ts:73`), assuming higher-is-better regardless
+  of `direction`, so the strictly-improving-at-target streak is wrong for `minimize` objectives. Fix
+  alongside the seed/completion rework.
+- *Closes:* gap "no reproducibility / seed control" + the minimize K-streak bug. *Mechanism:* Paired
+  Bootstrap Protocol; deep-significance/ASO; seed power analysis. *Cost: high (kx runs). Deps: A1.*
 
 ## Track B — idea coverage & direction (Q2)
 
