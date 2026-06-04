@@ -9,12 +9,13 @@ import { dropPartWith, type DropPartDeps } from "../src/commands/rehearsal.js";
 import { experimentSendWith, type ExperimentSendDeps } from "../src/commands/rehearsal.js";
 import { experimentTimeoutDefault } from "../src/commands/rehearsal.js";
 import { consultTimeout } from "../src/core/contracts.js";
-import { scoreWith, liveScoreDeps } from "../src/commands/rehearsal.js";
+import { scoreWith, liveScoreDeps, type RehearsalScoreDeps } from "../src/commands/rehearsal.js";
+import { type ScoreComputation } from "../src/core/rehearsalScore.js";
 import { monitorRun } from "../src/commands/rehearsal.js";
 import { statusBriefWith } from "../src/commands/rehearsal.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { rehearsalArtDir, partStateDir, experimentDir } from "../src/core/rehearsal.js";
+import { rehearsalArtDir, partStateDir, experimentDir, partsDir } from "../src/core/rehearsal.js";
 import { partDir } from "../src/core/paths.js";
 import { inboxPath } from "../src/core/ipc.js";
 
@@ -581,6 +582,30 @@ describe("rehearsal score", () => {
     // NO experiments/ dir under solo -> live listDir must return [] not throw.
     expect(await scoreWith(["topic"], SCORE_OPTS(h))).toBe(0);
   });
+
+  it("writes coverage.tsv from computeScore's coverageRows (B1)", async () => {
+    const h = home();
+    const art = rehearsalArtDir("topic", { home: h.home });
+    mkdirSync(partsDir(art), { recursive: true });   // scoreWith requires parts/ to exist
+    const writes: { path: string; content: string }[] = [];
+    const comp: ScoreComputation = {
+      scoreboardMd: "", resultsTsv: "", sidecars: [], staleSidecars: [], phaseClears: [],
+      warnings: [], manifests: [], sanityRows: [],
+      coverageRows: [{ family: "single-pass", count: 2, best: "0.96", ts: "T" }],
+    };
+    const deps: RehearsalScoreDeps = {
+      computeScore: () => comp,
+      fs: { exists: () => false, read: () => null, listDir: () => [] },
+      writeAtomic: (path, content) => { writes.push({ path, content }); },
+      removeFile: () => {},
+      now: () => "T",
+      opts: { home: h.home },
+    };
+    expect(await scoreWith(["topic"], deps)).toBe(0);
+    const cov = writes.find((w) => w.path === join(art, "coverage.tsv"));
+    expect(cov).toBeDefined();
+    expect(cov!.content).toBe("family\tcount\tbest\tts\nsingle-pass\t2\t0.96\tT\n");
+  });
 });
 
 // ---- Phase C: monitor — per-part liveness scan loop (C7) ----
@@ -774,6 +799,27 @@ describe("rehearsal status-brief", () => {
     const h = home();
     const { rc } = await capture((stdout) => statusBriefWith([], { opts: { home: h.home }, stdout }));
     expect(rc).toBe(2);
+  });
+
+  it("renders the Coverage line by joining coverage.tsv (B1)", async () => {
+    const h = home();
+    const o = { home: h.home };
+    const art = rehearsalArtDir(TOPIC, o);
+    mkdirSync(art, { recursive: true });
+    writeFileSync(join(art, "metric.md"),
+      "# Research goal\n\n**Primary metric:** accuracy\n**Direction:** maximize\n**min_families:** 2\n");
+    writeFileSync(join(art, "scoreboard.md"), [
+      "| Rank | Experiment | Instrument | Metric | Status | Runtime | Approach | metric_name |",
+      "|---|---|---|---|---|---|---|---|",
+      "| 1 | exp-001 | viola | 0.9600 | ok | 10.00s | single-pass | accuracy |",
+    ].join("\n") + "\n");
+    writeFileSync(join(art, "parts.txt"), INST + "\n");
+    writeFileSync(join(art, "coverage.tsv"),
+      "family\tcount\tbest\tts\nsingle-pass\t2\t0.96\tT\ntyped-routing\t1\t0.94\tT\n");
+    const { rc, text } = await capture((stdout) => statusBriefWith([TOPIC], { opts: o, stdout }));
+    expect(rc).toBe(0);
+    expect(text).toContain("**Coverage:** 2 families [single-pass×2, typed-routing×1]");
+    expect(text).toContain("min_families=2 (met)");
   });
 });
 

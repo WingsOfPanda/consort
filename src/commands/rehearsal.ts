@@ -13,6 +13,7 @@ import { extractMetric, formatMetricBlock, formatSotaBlock, parseMetricMd } from
 import { rehearsalArtDir, partsDir, partStateDir, experimentsDir, experimentDir, seedLib } from "../core/rehearsal.js";
 import { computeScore, type ScoreFs, type ScoreComputation } from "../core/rehearsalScore.js";
 import { sanityRow, SANITY_TSV_HEADER } from "../core/rehearsalSanity.js";
+import { coverageRow, COVERAGE_TSV_HEADER, type CoverageRow } from "../core/rehearsalCoverage.js";
 import { parseState, mergeState, reconcileFromOutbox, readHaltFlag } from "../core/rehearsalState.js";
 import { checkCompletion, checkTimeBudget } from "../core/rehearsalComplete.js";
 import { normalizeResult, type ResultJson } from "../core/rehearsalResult.js";
@@ -619,6 +620,7 @@ export async function scoreWith(args: string[], deps: RehearsalScoreDeps): Promi
   for (const pc of c.phaseClears) deps.writeAtomic(pc.statePath, pc.merged);
   for (const m of c.manifests) deps.writeAtomic(m.path, m.body);
   deps.writeAtomic(join(art, "sanity.tsv"), SANITY_TSV_HEADER + c.sanityRows.map(sanityRow).join(""));
+  deps.writeAtomic(join(art, "coverage.tsv"), COVERAGE_TSV_HEADER + c.coverageRows.map(coverageRow).join(""));
   for (const w of c.warnings) log.warn(w);
   return 0;
 }
@@ -842,8 +844,19 @@ export async function statusBriefWith(args: string[], v: VerbOpts & { stdout?: (
     }
   }
 
+  const ctsv = join(art, "coverage.tsv");
+  let coverage: CoverageRow[] | undefined;
+  if (existsSync(ctsv)) {
+    coverage = [];
+    for (const line of readFileSync(ctsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("family\t")) continue;
+      const cells = line.split("\t");           // family, count, best, ts
+      if (cells[0]) coverage.push({ family: cells[0], count: parseInt(cells[1] ?? "0", 10) || 0, best: cells[2] ?? "", ts: cells[3] ?? "" });
+    }
+  }
+
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : undefined;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects, coverage }));
   return 0;
 }
 
