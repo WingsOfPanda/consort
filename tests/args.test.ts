@@ -57,3 +57,48 @@ describe("args", () => {
     expect(() => kvParse("--mode")).toThrow(KvError);
   });
 });
+
+describe("applyArgsFile verbatim-tail (prose mode)", () => {
+  function af(content: string): string {
+    const f = join(mkdtempSync(join(tmpdir(), "afv-")), "args");
+    writeFileSync(f, content);
+    return f;
+  }
+  const opts = (flags: string[]) => ({ valueFlags: new Set(flags) });
+
+  it("preserves apostrophes and quotes in the body (no shell-tokenizing)", () => {
+    expect(applyArgsFile(["--args-file", af('fix the part\'s "UI" today')], opts([])))
+      .toEqual(['fix the part\'s "UI" today']);
+  });
+  it("preserves internal newlines / paragraphs verbatim", () => {
+    expect(applyArgsFile(["--args-file", af("para one\n\npara two\nmore")], opts([])))
+      .toEqual(["para one\n\npara two\nmore"]);
+  });
+  it("peels a leading boolean flag + value flag, body verbatim", () => {
+    expect(applyArgsFile(["--args-file", af("--ensemble --targets a,b design the part's thing")], opts(["--targets"])))
+      .toEqual(["--ensemble", "--targets", "a,b", "design the part's thing"]);
+  });
+  it("a --flag=value token stays whole; body follows", () => {
+    expect(applyArgsFile(["--args-file", af("--targets=a,b the body")], opts(["--targets"])))
+      .toEqual(["--targets=a,b", "the body"]);
+  });
+  it("an internal --word stays inside the verbatim body", () => {
+    expect(applyArgsFile(["--args-file", af("use --force carefully please")], opts([])))
+      .toEqual(["use --force carefully please"]);
+  });
+  it("empty body yields just the flags (no empty token)", () => {
+    expect(applyArgsFile(["--args-file", af("--ensemble")], opts([]))).toEqual(["--ensemble"]);
+  });
+  it("trims a trailing newline the Write tool appends", () => {
+    expect(applyArgsFile(["--args-file", af("body text\n")], opts([]))).toEqual(["body text"]);
+  });
+  it("consumes the args file (like the no-opts path)", () => {
+    const f = af("hello there");
+    applyArgsFile(["--args-file", f], opts([]));
+    expect(existsSync(f)).toBe(false);
+  });
+  it("no-opts path is unchanged (still shell-tokenizes, glues the unterminated quote)", () => {
+    expect(applyArgsFile(["--args-file", af("fix the part's thing")]))
+      .toEqual(["fix", "the", "parts thing"]);
+  });
+});
