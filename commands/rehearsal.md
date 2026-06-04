@@ -70,6 +70,7 @@ exists** (the user passed `--metric`), SKIP this whole phase. Otherwise the thre
    result you'd ship?"), `target` (optional aspirational), `K_corroboration` ("how many at-target experiments
    before done?", default 1), and any `hard_constraints` / `notes`. (Use <=4 options; nest if more.)
 4. Write `metric.md`: `$CS rehearsal metric <TOPIC> --kv "primary_metric=<m>,direction=<maximize|minimize>,min_acceptable=<op val>,target=<op val>,K_corroboration=<n>,hard_constraints=<...>,notes=<...>"` (omit absent keys). rc 2 = bad block; fix and retry.
+   - **Coverage floor (B1):** the plateau stop requires `min_families` distinct approach families before it can fire (default 2; AIRA's healthy band is 3-4). The `metric` verb does NOT emit it; to require broader coverage, add a `**min_families:** N` line to `metric.md` with the Write tool after the verb runs (parse-only, like `verify_epsilon`/`ceiling`/`max_debug_attempts`).
 5. **AskUserQuestion** (Header `Confirm`): "Here's how I'll frame the goal — OK to proceed?" Options:
    **Looks good** / **Revise** / **Cancel**. Revise → re-run step 4. **Cancel → teardown + exit.**
 
@@ -158,7 +159,8 @@ round. This phase runs **once**; its last step ENTERS THE LOOP (do NOT end the t
    $CS rehearsal experiment-send <TOPIC> <instrument> exp-001 "<approach-label>" "<direction>"
    ```
    **Diversity:** assign a different pipeline / approach family per part (e.g. single-pass / typed-routing
-   / hybrid) — identical pipelines produce no triangulation signal. The verb creates
+   / hybrid) — identical pipelines produce no triangulation signal. (B1 now backs this mechanically — see
+   the `Coverage:` line in the status brief and the `min_families` plateau gate.) The verb creates
    `parts/<instrument>/experiments/exp-001/`, writes `prompt.md` from the experiment template, writes the
    inbox, sets `phase=working, current_exp_id=exp-001, exp_counter=1`, and nudges the pane.
 
@@ -217,6 +219,11 @@ brief entirely when `RAN_SCORE=0` (only heartbeat/question/stale/stuck fired —
    `x<rank>` rows are INFEASIBLE (ran but invalid -- excluded from leader/completion/Lane-D);
    `~<rank>`/`<rank>` rows are partial/fail.
 
+   Coverage (B1): the `**Coverage:** N families [fam x count, ...]; min_families=M (met|short by K)`
+   line shows how many distinct approach families have landed ok results. `(short by K)` means
+   exploration is still narrow (fewer than `min_families` families) -- a signal to open a new family
+   on the next dispatch rather than tune the current leader.
+
 3.5. **Verify the landed result (metric-trust gate).** After `score`/`status-brief`, for the
      experiment that just landed (`<instrument>`/`<exp>`):
 
@@ -265,6 +272,9 @@ Decision policy (apply at Step 4):
     suspicious or the user asked to keep exploring.
   - Floor met + plateau detected + target not met -> default stop. Override to pivot
     direction or request user input.
+  - NOTE (B1): `plateau` is approach-aware -- it will NOT fire while fewer than `min_families`
+    distinct families have landed ok results, or while any family is still improving. A reported
+    plateau therefore already means "breadth reached and every explored family has stalled."
   If decision = stop, touch halt.flag with reason text, then jump to Step 2.
 
 NEVER STOP the loop at Step 5. If at least one part has phase=idle and no halt.flag exists,
@@ -296,7 +306,12 @@ For **each** part with `phase=idle` and no `$ART/halt.flag`:
    lane retired: …"). The `phase=idle` filter then excludes it from all future rounds.
 2. **Otherwise dispatch.** Compose a ~50-token direction ("direction, not plan") from
    `$ART/session-summary.md` (Current direction + Recent decisions), the recent `$ART/scoreboard.md` rows,
-   and the topic/metric. Read `exp_counter` from the part's `state.txt`, increment, format `exp-NNN`, then:
+   and the topic/metric.
+   **Coverage steering (B1):** when the `Coverage:` line is `(short by K)` or one family dominates the
+   tally, open a NEW approach family this dispatch (give it a fresh `<approach-label>`) rather than
+   tuning the current leader -- aim for at least `min_families` distinct families (AIRA: <=2 = collapse
+   risk, 3-4 = healthy). You may align the label to one of the SOTA sweep's families.
+   Read `exp_counter` from the part's `state.txt`, increment, format `exp-NNN`, then:
    ```bash
    $CS rehearsal experiment-send <TOPIC> <instrument> exp-NNN "<approach-label>" "<direction>"
    ```
