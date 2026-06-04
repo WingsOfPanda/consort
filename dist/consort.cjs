@@ -22174,6 +22174,7 @@ function parseMetricMd(text) {
   let verifyEpsilon;
   let ceiling;
   let minRuntimeS;
+  let maxDebugAttempts;
   const opVal = (s) => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -22204,9 +22205,12 @@ function parseMetricMd(text) {
     } else if (m = line.match(/^\*\*min_runtime_s:\*\*\s+(.*)$/)) {
       const n2 = parseFloat(m[1].trim());
       if (!Number.isNaN(n2)) minRuntimeS = n2;
+    } else if (m = line.match(/^\*\*max_debug_attempts:\*\*\s+(.*)$/)) {
+      const n2 = parseInt(m[1].trim(), 10);
+      if (!Number.isNaN(n2)) maxDebugAttempts = n2;
     }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts };
 }
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
@@ -22330,10 +22334,12 @@ function expNum(expId) {
   return Number.isNaN(n2) ? Number.POSITIVE_INFINITY : n2;
 }
 function buildScoreboard(rows, direction) {
-  const ok = rows.filter((r) => r.status === "ok");
+  const ranked = rows.filter((r) => r.status === "ok" && !r.infeasibleReason);
+  const infeasible = rows.filter((r) => r.status === "ok" && r.infeasibleReason);
   const fail = rows.filter((r) => r.status !== "ok");
   const minimize = direction === "minimize";
-  ok.sort((a2, b) => (minimize ? parseFloat(a2.metric) - parseFloat(b.metric) : parseFloat(b.metric) - parseFloat(a2.metric)) || parseFloat(a2.runtime) - parseFloat(b.runtime) || expNum(a2.expId) - expNum(b.expId));
+  ranked.sort((a2, b) => (minimize ? parseFloat(a2.metric) - parseFloat(b.metric) : parseFloat(b.metric) - parseFloat(a2.metric)) || parseFloat(a2.runtime) - parseFloat(b.runtime) || expNum(a2.expId) - expNum(b.expId));
+  infeasible.sort((a2, b) => expNum(a2.expId) - expNum(b.expId));
   fail.sort((a2, b) => expNum(a2.expId) - expNum(b.expId));
   const lines = [
     "<!-- scoreboard schema_version=2 -->",
@@ -22343,8 +22349,12 @@ function buildScoreboard(rows, direction) {
     "|---|---|---|---|---|---|---|---|"
   ];
   let rank = 1;
-  for (const r of ok) {
+  for (const r of ranked) {
     lines.push(`| ${rank} | ${r.expId} | ${r.instrument} | ${renderScoreboardRow(r.metric, r.runtime, r.metricName, r.status, r.approach)} |`);
+    rank++;
+  }
+  for (const r of infeasible) {
+    lines.push(`| x${rank} | ${r.expId} | ${r.instrument} | ${renderScoreboardRow(r.metric, r.runtime, r.metricName, `infeasible:${r.infeasibleReason}`, r.approach)} |`);
     rank++;
   }
   for (const r of fail) {
@@ -22577,6 +22587,31 @@ var init_rehearsalSanity = __esm({
   }
 });
 
+// src/core/rehearsalInfeasible.ts
+function classifyInfeasible(verdict, flags) {
+  if (verdict === "mismatch") return "mismatch";
+  for (const f of flags) {
+    if (INFEASIBLE_FLAGS.includes(f)) return f;
+  }
+  return null;
+}
+function parseVerdicts2(tsv) {
+  const out = {};
+  for (const line of tsv.split("\n")) {
+    if (!line || line.startsWith("exp_id	")) continue;
+    const c3 = line.split("	");
+    if (c3[0] && c3[1] && c3[2]) out[`${c3[1]}/${c3[0]}`] = c3[2];
+  }
+  return out;
+}
+var INFEASIBLE_FLAGS;
+var init_rehearsalInfeasible = __esm({
+  "src/core/rehearsalInfeasible.ts"() {
+    "use strict";
+    INFEASIBLE_FLAGS = ["under-run", "log-contradiction", "audit-knob-drift"];
+  }
+});
+
 // src/core/rehearsalFinalize.ts
 function finalizePhase(cur) {
   if (cur === "working" || cur === "stale" || cur === "stuck" || cur === "blocked") return "incomplete";
@@ -22614,6 +22649,7 @@ function str(v) {
 function computeScore(art, fs, now) {
   const metricMd = fs.read((0, import_node_path31.join)(art, "metric.md"));
   const parsed = metricMd ? parseMetricMd(metricMd) : null;
+  const verdicts = parseVerdicts2(fs.read((0, import_node_path31.join)(art, "verification.tsv")) ?? "");
   const expectedMetric = parsed?.primaryMetric || void 0;
   const rows = [];
   const tsvRows = [];
@@ -22648,7 +22684,7 @@ function computeScore(art, fs, now) {
       }
       if (fs.exists(sidecar)) staleSidecars.push(sidecar);
       const o2 = json;
-      rows.push({
+      const scoreRow = {
         expId,
         instrument,
         metric: str(o2.metric_value),
@@ -22656,7 +22692,8 @@ function computeScore(art, fs, now) {
         runtime: str(o2.runtime_s),
         approach: str(o2.approach_label),
         metricName: str(o2.metric_name)
-      });
+      };
+      rows.push(scoreRow);
       tsvRows.push({
         expId,
         instrument,
@@ -22694,6 +22731,8 @@ function computeScore(art, fs, now) {
         audit: auditObj
       });
       for (const f of flags) sanityRows.push({ expId, instrument, flag: f.flag, detail: f.detail, ts: now() });
+      const infReason = classifyInfeasible(verdicts[`${instrument}/${expId}`], flags.map((f) => f.flag));
+      if (infReason) scoreRow.infeasibleReason = infReason;
     }
   }
   const phaseClears = [];
@@ -22732,6 +22771,7 @@ var init_rehearsalScore = __esm({
     init_rehearsalMetric();
     init_rehearsalVerify();
     init_rehearsalSanity();
+    init_rehearsalInfeasible();
     init_rehearsalFinalize();
     init_rehearsal();
     TSV_HEADER = "exp_id	instrument	approach	metric	status	runtime_s	metric_name\n";

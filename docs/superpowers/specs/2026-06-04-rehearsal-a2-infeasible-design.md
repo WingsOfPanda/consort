@@ -60,9 +60,11 @@ wins, mirroring `status-brief`'s existing join). For a just-landed exp whose ver
 classified on the **next** score pass once the verdict exists (a harmless one-iteration lag — the
 Maestro has the verdict + flags in hand at that moment and won't crown a just-flagged result).
 
-### 4.3 `ScoreRow.infeasible` + the scoreboard group
+### 4.3 `ScoreRow.infeasibleReason` + the scoreboard group
 
-`ScoreRow` gains `infeasible?: boolean` (set by `computeScore`). `buildScoreboard` partitions:
+`ScoreRow` gains `infeasibleReason?: string` (the trigger string — `mismatch`/`under-run`/etc.;
+presence ⇒ infeasible; set by `computeScore` so the scoreboard can render *why*). `buildScoreboard`
+partitions:
 - `ok && !infeasible` → ranked group (integer rank `1,2,3…`), sorted as today (direction-aware).
 - `ok && infeasible` → **infeasible group**, rank cell `x<rank>` (continuing the rank counter, like the
   partial `~` prefix), metric/status shown, with the trigger appended (e.g. `… | infeasible:mismatch`
@@ -117,7 +119,7 @@ No new verb; no `experiment-send` change (feedback rides in the approach-brief).
 
 - **New:** `src/core/rehearsalInfeasible.ts` — `classifyInfeasible(verdict, flags)` + `INFEASIBLE_FLAGS`
   + a `parseVerdicts(tsv)` helper (instrument/exp -> verdict).
-- **Modified:** `src/core/rehearsalResult.ts` (`ScoreRow.infeasible` + `buildScoreboard` 3-way
+- **Modified:** `src/core/rehearsalResult.ts` (`ScoreRow.infeasibleReason` + `buildScoreboard` 3-way
   partition + `xN` render), `src/core/rehearsalScore.ts` (read `verification.tsv`, classify, set
   `infeasible`), `src/core/rehearsalMetric.ts` (`maxDebugAttempts`), `commands/rehearsal.md` (A2 loop +
   Lane-D feasible-only), `tests/rehearsal-*.test.ts`, `dist/consort.cjs`, the 3 version manifests.
@@ -130,8 +132,8 @@ No new verb; no `experiment-send` change (feedback rides in the approach-brief).
 - `buildScoreboard`: an `ok && infeasible` row goes to the `xN` group (non-integer rank) below the
   ranked rows; ranked rows keep integer ranks; a regression check that `checkCompletion(buildScoreboard
   (...))` ignores the infeasible row (no checkCompletion change).
-- `computeScore`: a result whose `verification.tsv` verdict is `mismatch` → its `ScoreRow.infeasible` is
-  true and it lands in the `xN` group; a clean result → `infeasible` false, ranked.
+- `computeScore`: a result whose `verification.tsv` verdict is `mismatch` → its
+  `ScoreRow.infeasibleReason` is set and it lands in the `xN` group; a clean result → unset, ranked.
 - `metric.md`: parses `max_debug_attempts`; undefined when absent.
 - No real subprocess/FS in unit tests; stale-token gate green; frozen fields untouched.
 
