@@ -163,6 +163,21 @@ In ONE turn, do all of the following:
        a JSON file `{"metric_value": <n>}` and set metric_from to its path.
      - "inputs" lists every file the command reads; the Maestro hashes them now
        and re-checks before re-running (tamper detection).
+   - Also emit an "integrity" block attesting how you avoided leakage/under-training
+     (recorded now, cross-checked later; an incomplete block is flagged as suspect):
+
+       "integrity": {
+         "split_before_fit": true,
+         "no_train_test_overlap": true,
+         "target_not_in_features": true,
+         "trained_steps": <int>,
+         "seed": <int>
+       }
+
+     - All five keys are required for the attestation to count as complete.
+     - For a task where a key is genuinely N/A (e.g. a generative run with no
+       labels), still set it (e.g. "target_not_in_features": true) and explain in
+       "notes". Be honest — these are cross-checked by a later verification pass.
 
 5. **THIS IS THE TERMINAL STEP.** Immediately after `result.json` is on
    disk (via tmp+rename), emit ONE outbox event and STOP. Do not explore,

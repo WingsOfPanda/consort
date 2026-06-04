@@ -65,6 +65,10 @@ export interface MetricThresholds {
   direction?: "maximize" | "minimize";
   /** optional metric.md `**verify_epsilon:**` for A1 verify-by-re-execution; default 0.01 in callers. */
   verifyEpsilon?: number;
+  /** optional metric.md `**ceiling:**` (plausible bound) for A3 too-good-to-be-true; skip if absent. */
+  ceiling?: number;
+  /** optional metric.md `**min_runtime_s:**` for A3 under-run; caller defaults to 1.0 if absent. */
+  minRuntimeS?: number;
   minOp?: string; minVal?: string;
   tgtOp?: string; tgtVal?: string;
   kRequired: number; plateauWindow: number; plateauThreshold: number;
@@ -79,6 +83,7 @@ export function parseMetricMd(text: string): MetricThresholds {
   let tgtOp: string | undefined, tgtVal: string | undefined;
   let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
   let verifyEpsilon: number | undefined;
+  let ceiling: number | undefined; let minRuntimeS: number | undefined;
   const opVal = (s: string): [string, string] => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -93,8 +98,10 @@ export function parseMetricMd(text: string): MetricThresholds {
     else if ((m = line.match(/^\*\*plateau_window:\*\*\s+(.*)$/))) { plateauWindow = parseInt(m[1].trim(), 10) || 5; }
     else if ((m = line.match(/^\*\*plateau_threshold:\*\*\s+(.*)$/))) { plateauThreshold = parseFloat(m[1].trim()) || 0.01; }
     else if ((m = line.match(/^\*\*verify_epsilon:\*\*\s+(.*)$/))) { const n = parseFloat(m[1].trim()); if (!Number.isNaN(n)) verifyEpsilon = n; }
+    else if ((m = line.match(/^\*\*ceiling:\*\*\s+(.*)$/))) { const n = parseFloat(m[1].trim()); if (!Number.isNaN(n)) ceiling = n; }
+    else if ((m = line.match(/^\*\*min_runtime_s:\*\*\s+(.*)$/))) { const n = parseFloat(m[1].trim()); if (!Number.isNaN(n)) minRuntimeS = n; }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS };
 }
 
 export interface SotaInput {

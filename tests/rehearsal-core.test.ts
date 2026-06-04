@@ -111,6 +111,14 @@ describe("parseMetricMd round-trips formatMetricBlock", () => {
     expect(parseMetricMd("**Primary metric:** acc\n**verify_epsilon:** 0.005\n").verifyEpsilon).toBe(0.005);
     expect(parseMetricMd("**Primary metric:** acc\n").verifyEpsilon).toBeUndefined();
   });
+  it("parses ceiling + min_runtime_s; undefined when absent", () => {
+    const t = parseMetricMd("**Primary metric:** acc\n**ceiling:** 0.98\n**min_runtime_s:** 5\n");
+    expect(t.ceiling).toBe(0.98);
+    expect(t.minRuntimeS).toBe(5);
+    const u = parseMetricMd("**Primary metric:** acc\n");
+    expect(u.ceiling).toBeUndefined();
+    expect(u.minRuntimeS).toBeUndefined();
+  });
 });
 
 describe("formatSotaBlock", () => {
@@ -732,6 +740,44 @@ describe("rehearsalScore", () => {
     };
     expect(computeScore("/a", fakeFs(files), () => "T").manifests).toHaveLength(0);
   });
+  it("computeScore emits sanity rows (ceiling) for a verify-less suspect result", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n**ceiling:** 0.8\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.95,status:"ok",
+        runtime_s:50,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    const ceil = c.sanityRows.find((r) => r.flag === "ceiling-exceeded");
+    expect(ceil).toMatchObject({ expId: "exp-001", instrument: "viola" });
+    expect(c.sanityRows.some((r) => r.flag === "integrity-attestation-incomplete")).toBe(true);
+  });
+  it("computeScore emits no sanity rows for a clean result with complete integrity", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.95,status:"ok",
+        runtime_s:50,log_paths:[],checkpoint_path:null,notes:"",
+        integrity:{ split_before_fit:true, no_train_test_overlap:true, target_not_in_features:true, trained_steps:10, seed:1 } }),
+    };
+    expect(computeScore("/a", fakeFs(files), () => "T").sanityRows).toEqual([]);
+  });
+  it("computeScore emits audit-knob-drift from prompt.md vs audit.json", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.5,status:"ok",
+        runtime_s:50,log_paths:[],checkpoint_path:null,notes:"",
+        integrity:{ split_before_fit:true, no_train_test_overlap:true, target_not_in_features:true, trained_steps:10, seed:1 } }),
+      "/a/parts/viola/experiments/exp-001/prompt.md": "**Hard constraints:**\nmcts_sims = 200\n\n",
+      "/a/parts/viola/experiments/exp-001/audit.json": JSON.stringify({ mcts_sims: 16 }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    expect(c.sanityRows.find((r) => r.flag === "audit-knob-drift")).toMatchObject({ detail: "mcts_sims=16 vs mandated 200" });
+  });
 });
 
 function fakeFs(files: Record<string, string>): ScoreFs {
@@ -968,5 +1014,28 @@ describe("buildStatusBrief verify annotation", () => {
     const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null });
     expect(out).toContain("exp-002 — 0.9600 — accuracy");
     expect(out).not.toContain("[");
+  });
+});
+
+describe("buildStatusBrief suspect annotation", () => {
+  const sb = [
+    "<!-- scoreboard schema_version=2 -->", "# Scoreboard", "",
+    "| Rank | Experiment | Instrument | Metric | Status | Runtime | Approach | metric_name |",
+    "|---|---|---|---|---|---|---|---|",
+    "| 1 | exp-002 | viola | 0.9600 | ok | 1.00s | b | accuracy |",
+  ].join("\n") + "\n";
+  it("annotates a top row with its suspect flags", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null,
+      suspects: { "viola/exp-002": ["ceiling-exceeded", "under-run"] } });
+    expect(out).toMatch(/exp-002 — 0\.9600 — accuracy \[suspect: ceiling-exceeded,under-run\]/);
+  });
+  it("no suspect annotation when map omitted (back-compat)", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null });
+    expect(out).not.toContain("suspect");
+  });
+  it("verdict and suspect annotations coexist", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null,
+      verdicts: { "viola/exp-002": "verified" }, suspects: { "viola/exp-002": ["ceiling-exceeded"] } });
+    expect(out).toMatch(/\[verified\] \[suspect: ceiling-exceeded\]/);
   });
 });

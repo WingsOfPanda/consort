@@ -22172,6 +22172,8 @@ function parseMetricMd(text) {
   let tgtOp, tgtVal;
   let kRequired = 1, plateauWindow = 5, plateauThreshold = 0.01;
   let verifyEpsilon;
+  let ceiling;
+  let minRuntimeS;
   const opVal = (s) => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -22196,9 +22198,15 @@ function parseMetricMd(text) {
     } else if (m = line.match(/^\*\*verify_epsilon:\*\*\s+(.*)$/)) {
       const n2 = parseFloat(m[1].trim());
       if (!Number.isNaN(n2)) verifyEpsilon = n2;
+    } else if (m = line.match(/^\*\*ceiling:\*\*\s+(.*)$/)) {
+      const n2 = parseFloat(m[1].trim());
+      if (!Number.isNaN(n2)) ceiling = n2;
+    } else if (m = line.match(/^\*\*min_runtime_s:\*\*\s+(.*)$/)) {
+      const n2 = parseFloat(m[1].trim());
+      if (!Number.isNaN(n2)) minRuntimeS = n2;
     }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS };
 }
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
@@ -22512,6 +22520,89 @@ var init_rehearsalVerify = __esm({
   }
 });
 
+// src/core/rehearsalSanity.ts
+function sanityRow(r) {
+  return `${r.expId}	${r.instrument}	${r.flag}	${r.detail}	${r.ts}
+`;
+}
+function sanityFlags(inp) {
+  const flags = [];
+  const r = inp.result;
+  const status = String(r.status ?? "");
+  const isOk = status === "ok";
+  const mv = typeof r.metric_value === "number" ? r.metric_value : null;
+  if (isOk && mv !== null && inp.ceiling !== void 0) {
+    const over = inp.direction === "minimize" ? mv < inp.ceiling : mv > inp.ceiling;
+    if (over) flags.push({ flag: "ceiling-exceeded", detail: `metric=${mv} ceiling=${inp.ceiling}` });
+  }
+  if (isOk) {
+    const rt = typeof r.runtime_s === "number" ? r.runtime_s : 0;
+    if (rt < inp.minRuntimeS) flags.push({ flag: "under-run", detail: `runtime=${rt} floor=${inp.minRuntimeS}` });
+  }
+  if (isOk) {
+    const logs = Array.isArray(r.log_paths) ? r.log_paths.filter((x) => typeof x === "string") : [];
+    let found = false;
+    for (const lp of logs) {
+      if (found) break;
+      const txt = inp.readLog(lp);
+      if (txt === null) continue;
+      for (const marker of LOG_MARKERS) {
+        if (txt.includes(marker)) {
+          flags.push({ flag: "log-contradiction", detail: `marker=${marker} file=${lp}` });
+          found = true;
+          break;
+        }
+      }
+    }
+  }
+  const integrity = r.integrity && typeof r.integrity === "object" && !Array.isArray(r.integrity) ? r.integrity : null;
+  const missing = INTEGRITY_KEYS.filter((k) => integrity === null || integrity[k] === void 0 || integrity[k] === null);
+  if (missing.length) flags.push({ flag: "integrity-attestation-incomplete", detail: `missing=${missing.join(",")}` });
+  for (const hc of inp.hardConstraints) {
+    const actual = inp.audit ? inp.audit[hc.key] : void 0;
+    if (actual === void 0 || actual === null) continue;
+    const a2 = parseFloat(String(actual)), v = parseFloat(hc.value);
+    const drift = !Number.isNaN(a2) && !Number.isNaN(v) ? a2 !== v : String(actual) !== hc.value;
+    if (drift) flags.push({ flag: "audit-knob-drift", detail: `${hc.key}=${String(actual)} vs mandated ${hc.value}` });
+  }
+  return flags;
+}
+var SANITY_TSV_HEADER, INTEGRITY_KEYS, LOG_MARKERS;
+var init_rehearsalSanity = __esm({
+  "src/core/rehearsalSanity.ts"() {
+    "use strict";
+    SANITY_TSV_HEADER = "exp_id	instrument	flag	detail	ts\n";
+    INTEGRITY_KEYS = ["split_before_fit", "no_train_test_overlap", "target_not_in_features", "trained_steps", "seed"];
+    LOG_MARKERS = ["Traceback (most recent call last)", "Segmentation fault", "CUDA out of memory"];
+  }
+});
+
+// src/core/rehearsalFinalize.ts
+function finalizePhase(cur) {
+  if (cur === "working" || cur === "stale" || cur === "stuck" || cur === "blocked") return "incomplete";
+  if (cur === "idle" || cur === "complete") return "complete";
+  return null;
+}
+function parseHardConstraints(promptMd) {
+  const lines = promptMd.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "**Hard constraints:**");
+  if (start < 0) return [];
+  const out = [];
+  for (let i2 = start + 1; i2 < lines.length; i2++) {
+    if (lines[i2].trim() === "") break;
+    const m = HC_RE.exec(lines[i2]);
+    if (m) out.push({ key: m[1], value: m[2] });
+  }
+  return out;
+}
+var HC_RE;
+var init_rehearsalFinalize = __esm({
+  "src/core/rehearsalFinalize.ts"() {
+    "use strict";
+    HC_RE = /^\s*([a-z_]+)\s*=\s*([0-9]+(?:\.[0-9]+)?)\b/;
+  }
+});
+
 // src/core/rehearsalScore.ts
 function buildResultsTsv(rows) {
   return TSV_HEADER + rows.map((r) => `${r.expId}	${r.instrument}	${r.approach}	${r.metric}	${r.status}	${r.runtime}	${r.metricName}
@@ -22530,6 +22621,7 @@ function computeScore(art, fs, now) {
   const staleSidecars = [];
   const warnings = [];
   const manifests = [];
+  const sanityRows = [];
   const parts = fs.listDir(partsDir(art));
   for (const instrument of parts) {
     const exps = fs.listDir(experimentsDir(art, instrument));
@@ -22582,6 +22674,26 @@ function computeScore(art, fs, now) {
           if (manifest) manifests.push({ path: manifestPath, body: JSON.stringify(manifest) + "\n" });
         }
       }
+      const promptMd = fs.read((0, import_node_path31.join)(branchDir, "prompt.md"));
+      let auditObj = null;
+      const auditRaw = fs.read((0, import_node_path31.join)(branchDir, "audit.json"));
+      if (auditRaw) {
+        try {
+          auditObj = JSON.parse(auditRaw);
+        } catch {
+          auditObj = null;
+        }
+      }
+      const flags = sanityFlags({
+        result: o2,
+        direction: parsed?.direction,
+        ceiling: parsed?.ceiling,
+        minRuntimeS: parsed?.minRuntimeS ?? 1,
+        readLog: (rel) => fs.read((0, import_node_path31.join)(branchDir, rel)),
+        hardConstraints: promptMd ? parseHardConstraints(promptMd) : [],
+        audit: auditObj
+      });
+      for (const f of flags) sanityRows.push({ expId, instrument, flag: f.flag, detail: f.detail, ts: now() });
     }
   }
   const phaseClears = [];
@@ -22606,7 +22718,8 @@ function computeScore(art, fs, now) {
     staleSidecars,
     phaseClears,
     warnings,
-    manifests
+    manifests,
+    sanityRows
   };
 }
 var import_node_path31, TSV_HEADER;
@@ -22618,6 +22731,8 @@ var init_rehearsalScore = __esm({
     init_rehearsalState();
     init_rehearsalMetric();
     init_rehearsalVerify();
+    init_rehearsalSanity();
+    init_rehearsalFinalize();
     init_rehearsal();
     TSV_HEADER = "exp_id	instrument	approach	metric	status	runtime_s	metric_name\n";
   }
@@ -22788,32 +22903,6 @@ var init_rehearsalSummary = __esm({
   }
 });
 
-// src/core/rehearsalFinalize.ts
-function finalizePhase(cur) {
-  if (cur === "working" || cur === "stale" || cur === "stuck" || cur === "blocked") return "incomplete";
-  if (cur === "idle" || cur === "complete") return "complete";
-  return null;
-}
-function parseHardConstraints(promptMd) {
-  const lines = promptMd.split("\n");
-  const start = lines.findIndex((l) => l.trim() === "**Hard constraints:**");
-  if (start < 0) return [];
-  const out = [];
-  for (let i2 = start + 1; i2 < lines.length; i2++) {
-    if (lines[i2].trim() === "") break;
-    const m = HC_RE.exec(lines[i2]);
-    if (m) out.push({ key: m[1], value: m[2] });
-  }
-  return out;
-}
-var HC_RE;
-var init_rehearsalFinalize = __esm({
-  "src/core/rehearsalFinalize.ts"() {
-    "use strict";
-    HC_RE = /^\s*([a-z_]+)\s*=\s*([0-9]+(?:\.[0-9]+)?)\b/;
-  }
-});
-
 // src/core/rehearsalBrief.ts
 function parseTopRows(scoreboardMd) {
   const out = [];
@@ -22853,7 +22942,9 @@ function buildStatusBrief(input) {
       for (const r of rows) {
         const v = input.verdicts?.[`${r.instrument}/${r.exp}`];
         const tag = v ? ` [${v === "mismatch" ? "mismatch!" : v}]` : "";
-        sb.push(`${r.rank}. ${r.instrument}/${r.exp} \u2014 ${r.metric} \u2014 ${r.metricName}${tag}`);
+        const s = input.suspects?.[`${r.instrument}/${r.exp}`];
+        const stag = s && s.length ? ` [suspect: ${s.join(",")}]` : "";
+        sb.push(`${r.rank}. ${r.instrument}/${r.exp} \u2014 ${r.metric} \u2014 ${r.metricName}${tag}${stag}`);
       }
     }
   }
@@ -23800,6 +23891,7 @@ async function scoreWith(args, deps) {
   for (const p of c3.staleSidecars) deps.removeFile(p);
   for (const pc of c3.phaseClears) deps.writeAtomic(pc.statePath, pc.merged);
   for (const m of c3.manifests) deps.writeAtomic(m.path, m.body);
+  deps.writeAtomic((0, import_node_path32.join)(art, "sanity.tsv"), SANITY_TSV_HEADER + c3.sanityRows.map(sanityRow).join(""));
   for (const w of c3.warnings) log.warn(w);
   return 0;
 }
@@ -23961,8 +24053,18 @@ async function statusBriefWith(args, v = {}) {
       if (c3[0] && c3[1] && c3[2]) verdicts[`${c3[1]}/${c3[0]}`] = c3[2];
     }
   }
+  const stsv = (0, import_node_path32.join)(art, "sanity.tsv");
+  let suspects;
+  if ((0, import_node_fs35.existsSync)(stsv)) {
+    suspects = {};
+    for (const line of (0, import_node_fs35.readFileSync)(stsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id	")) continue;
+      const c3 = line.split("	");
+      if (c3[0] && c3[1] && c3[2]) (suspects[`${c3[1]}/${c3[0]}`] ??= []).push(c3[2]);
+    }
+  }
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : void 0;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects }));
   return 0;
 }
 function readOr(path6, fallback = "") {
@@ -24189,6 +24291,17 @@ async function finalizeWith(args, deps) {
   const warningsPath = (0, import_node_path32.join)(art, "warnings.txt");
   computeSizeWarnings(art, instruments, (deps.sizeWarnGb ?? 2) * GIB);
   computeAuditWarnings(art, instruments, warningsPath);
+  const sanityTsv = (0, import_node_path32.join)(art, "sanity.tsv");
+  if ((0, import_node_fs35.existsSync)(sanityTsv)) {
+    const extra = [];
+    for (const line of (0, import_node_fs35.readFileSync)(sanityTsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id	")) continue;
+      const c3 = line.split("	");
+      if (c3[2] === "audit-knob-drift") continue;
+      if (c3[0] && c3[1] && c3[2]) extra.push(`sanity	${c3[1]}/${c3[0]}	${c3[2]}	${c3[3] ?? ""}`);
+    }
+    if (extra.length) (0, import_node_fs35.appendFileSync)(warningsPath, extra.join("\n") + "\n");
+  }
   const statusRows = [];
   for (const instrument of instruments) {
     const stateTxt = (0, import_node_path32.join)(partStateDir(art, instrument), "state.txt");
@@ -24245,6 +24358,8 @@ async function finalizeWith(args, deps) {
       warnings.push(`- size_warn: ${f[1]} ${f[2]} GB (${f[3]} files)`);
     } else if (f[0] === "audit_warn") {
       warnings.push(`- audit_warn: ${f[1]} ${f[2]} (${f[3]})`);
+    } else if (f[0] === "sanity") {
+      warnings.push(`- sanity: ${f[1]} ${f[2]} (${f[3]})`);
     }
   }
   const haltPath = (0, import_node_path32.join)(art, "halt.flag");
@@ -24693,6 +24808,7 @@ var init_rehearsal2 = __esm({
     init_rehearsalMetric();
     init_rehearsal();
     init_rehearsalScore();
+    init_rehearsalSanity();
     init_rehearsalState();
     init_rehearsalComplete();
     init_rehearsalResult();

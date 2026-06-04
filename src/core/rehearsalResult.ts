@@ -18,6 +18,13 @@ export interface ResultJson {
   self_reported_count?: number;
   self_reported_ratio?: number | null;
   self_reported_notes?: string;
+  integrity?: {
+    split_before_fit?: boolean;
+    no_train_test_overlap?: boolean;
+    target_not_in_features?: boolean;
+    trained_steps?: number;
+    seed?: number;
+  };
 }
 
 const REQUIRED_FIELDS = [

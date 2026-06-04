@@ -877,3 +877,12 @@ describe("experiment template verify contract", () => {
     expect(tpl).toContain("rescore");
   });
 });
+
+describe("experiment template integrity attestation", () => {
+  it("instructs the part to emit an integrity block", () => {
+    const tpl = readFileSync("config/prompt-templates/rehearsal/experiment.md", "utf8");
+    expect(tpl).toContain("\"integrity\"");
+    expect(tpl).toContain("split_before_fit");
+    expect(tpl).toContain("no_train_test_overlap");
+  });
+});

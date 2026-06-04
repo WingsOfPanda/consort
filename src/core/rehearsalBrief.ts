@@ -22,6 +22,8 @@ export interface StatusBriefInput {
   latest?: { instrument: string; exp: string };
   /** instrument/exp -> verdict, joined from verification.tsv; omit for back-compat (no annotation). */
   verdicts?: Record<string, string>;
+  /** instrument/exp -> sanity flags, joined from sanity.tsv; omit for back-compat (no annotation). */
+  suspects?: Record<string, string[]>;
 }
 
 interface SbTop { rank: string; exp: string; instrument: string; metric: string; metricName: string; }
@@ -77,7 +79,9 @@ export function buildStatusBrief(input: StatusBriefInput): string {
       for (const r of rows) {
         const v = input.verdicts?.[`${r.instrument}/${r.exp}`];
         const tag = v ? ` [${v === "mismatch" ? "mismatch!" : v}]` : "";
-        sb.push(`${r.rank}. ${r.instrument}/${r.exp} — ${r.metric} — ${r.metricName}${tag}`);
+        const s = input.suspects?.[`${r.instrument}/${r.exp}`];
+        const stag = s && s.length ? ` [suspect: ${s.join(",")}]` : "";
+        sb.push(`${r.rank}. ${r.instrument}/${r.exp} — ${r.metric} — ${r.metricName}${tag}${stag}`);
       }
     }
   }
