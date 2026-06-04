@@ -71,6 +71,8 @@ export interface MetricThresholds {
   minRuntimeS?: number;
   /** optional metric.md `**max_debug_attempts:**` for A2 bounded re-dispatch; caller defaults to 2. */
   maxDebugAttempts?: number;
+  /** optional metric.md `**min_families:**` for B1 coverage floor; parsed with default 2 (>= 1). */
+  minFamilies: number;
   minOp?: string; minVal?: string;
   tgtOp?: string; tgtVal?: string;
   kRequired: number; plateauWindow: number; plateauThreshold: number;
@@ -87,6 +89,7 @@ export function parseMetricMd(text: string): MetricThresholds {
   let verifyEpsilon: number | undefined;
   let ceiling: number | undefined; let minRuntimeS: number | undefined;
   let maxDebugAttempts: number | undefined;
+  let minFamilies = 2;
   const opVal = (s: string): [string, string] => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -104,8 +107,9 @@ export function parseMetricMd(text: string): MetricThresholds {
     else if ((m = line.match(/^\*\*ceiling:\*\*\s+(.*)$/))) { const n = parseFloat(m[1].trim()); if (!Number.isNaN(n)) ceiling = n; }
     else if ((m = line.match(/^\*\*min_runtime_s:\*\*\s+(.*)$/))) { const n = parseFloat(m[1].trim()); if (!Number.isNaN(n)) minRuntimeS = n; }
     else if ((m = line.match(/^\*\*max_debug_attempts:\*\*\s+(.*)$/))) { const n = parseInt(m[1].trim(), 10); if (!Number.isNaN(n)) maxDebugAttempts = n; }
+    else if ((m = line.match(/^\*\*min_families:\*\*\s+(.*)$/))) { const n = parseInt(m[1].trim(), 10); if (!Number.isNaN(n)) minFamilies = Math.max(1, n); }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts, minFamilies };
 }
 
 export interface SotaInput {

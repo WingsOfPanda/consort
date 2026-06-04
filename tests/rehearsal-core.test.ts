@@ -342,11 +342,12 @@ describe("checkCompletion", () => {
     ]);
     expect(checkCompletion(sb, metricMd).kSoFar).toBe(1);
   });
-  it("flags plateau when the last window of ok metrics is tight", () => {
+  it("flags plateau when the window is tight across >= min_families families", () => {
     const sb = buildScoreboard([
-      row("exp-001", "oboe", "0.951"), row("exp-002", "oboe", "0.952"), row("exp-003", "oboe", "0.953"),
+      frow("exp-001", "oboe", "0.951", "single-pass"),
+      frow("exp-002", "oboe", "0.952", "single-pass"),
+      frow("exp-003", "viola", "0.953", "typed-routing"),
     ]);
-    // 3 ok rows, spread 0.002 < 0.01 -> plateau.
     expect(checkCompletion(sb, metricMd).plateau).toBe(true);
   });
   it("no plateau when fewer than plateau_window ok rows", () => {
@@ -377,6 +378,59 @@ describe("checkCompletion", () => {
     ], "minimize");
     // chains: [0.06] (0.08 worse breaks) then [0.05] -> longest = 1.
     expect(checkCompletion(sb, minMetricMd).kSoFar).toBe(1);
+  });
+
+  // B1: approach-aware plateau. Helper that sets the approach family on a ScoreRow.
+  function frow(expId: string, instrument: string, metric: string, approach: string): ScoreRow {
+    return { expId, instrument, metric, status: "ok", runtime: "1", approach, metricName: "accuracy" };
+  }
+  const covMetric = formatMetricBlock({
+    primary_metric: "accuracy", direction: "maximize",
+    min_acceptable: ">= 0.90", target: ">= 0.95",
+    K_corroboration: "2", plateau_window: "3", plateau_threshold: "0.01",
+  });
+
+  it("does NOT plateau when a single family fills a flat window (the B1 bug fix)", () => {
+    const sb = buildScoreboard([
+      frow("exp-001", "oboe", "0.951", "single-pass"),
+      frow("exp-002", "oboe", "0.952", "single-pass"),
+      frow("exp-003", "oboe", "0.953", "single-pass"),
+    ]);
+    const c = checkCompletion(sb, covMetric);
+    expect(c.plateau).toBe(false);
+    expect(c.familiesActive).toBe(1);
+    expect(c.minFamilies).toBe(2);
+  });
+  it("plateaus when two families are both stalled and the global window is flat", () => {
+    const sb = buildScoreboard([
+      frow("exp-001", "oboe", "0.951", "single-pass"),
+      frow("exp-002", "oboe", "0.952", "single-pass"),
+      frow("exp-003", "viola", "0.953", "typed-routing"),
+      frow("exp-004", "viola", "0.952", "typed-routing"),
+    ]);
+    const c = checkCompletion(sb, covMetric);
+    expect(c.familiesActive).toBe(2);
+    expect(c.familiesImproving).toBe(0);
+    expect(c.plateau).toBe(true);
+  });
+  it("does NOT plateau when one family is still improving", () => {
+    const sb = buildScoreboard([
+      frow("exp-001", "oboe", "0.952", "single-pass"),
+      frow("exp-002", "oboe", "0.952", "single-pass"),
+      frow("exp-003", "viola", "0.951", "typed-routing"),
+      frow("exp-004", "viola", "0.970", "typed-routing"),
+    ]);
+    const c = checkCompletion(sb, covMetric);
+    expect(c.familiesImproving).toBe(1);
+    expect(c.plateau).toBe(false);
+  });
+  it("does NOT plateau when the global window is not flat (additive guard)", () => {
+    const sb = buildScoreboard([
+      frow("exp-001", "oboe", "0.951", "single-pass"),
+      frow("exp-002", "oboe", "0.952", "single-pass"),
+      frow("exp-003", "viola", "0.99", "typed-routing"),
+    ]);
+    expect(checkCompletion(sb, covMetric).plateau).toBe(false);
   });
 });
 
@@ -866,6 +920,56 @@ describe("rehearsalScore", () => {
     expect(c.scoreboardMd).toMatch(/\| 1 \| exp-001 \| viola \|/);
     expect(c.scoreboardMd).not.toMatch(/infeasible/);
   });
+  it("emits per-family coverageRows over ok experiments (B1)", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/parts/oboe/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"single-pass",metric_name:"accuracy",metric_value:0.90,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+      "/a/parts/oboe/experiments/exp-002/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"Single-Pass",metric_name:"accuracy",metric_value:0.96,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+      "/a/parts/viola/experiments/exp-003/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"typed-routing",metric_name:"accuracy",metric_value:0.94,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "2026-06-04T10:00:00Z");
+    expect(c.coverageRows).toEqual([
+      { family: "single-pass", count: 2, best: "0.96", ts: "2026-06-04T10:00:00Z" },
+      { family: "typed-routing", count: 1, best: "0.94", ts: "2026-06-04T10:00:00Z" },
+    ]);
+  });
+
+  it("excludes A2-infeasible (mismatch) experiments from the coverage tally (B1 x A2)", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      // typed-routing/exp-002 has a verify mismatch -> classifyInfeasible -> infeasibleReason set.
+      "/a/verification.tsv": "exp_id\tinstrument\tverdict\treason\trecomputed\tts\nexp-002\tviola\tmismatch\tx\t\tT\n",
+      "/a/parts/oboe/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"single-pass",metric_name:"accuracy",metric_value:0.96,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+      "/a/parts/viola/experiments/exp-002/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"typed-routing",metric_name:"accuracy",metric_value:0.99,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    // typed-routing was infeasible (mismatch) -> excluded; only the feasible single-pass family counts.
+    expect(c.coverageRows).toEqual([{ family: "single-pass", count: 1, best: "0.96", ts: "T" }]);
+  });
+
+  it("re-walks fresh each pass -> coverage counts do not accumulate across score passes (B1)", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/parts/oboe/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"single-pass",metric_name:"accuracy",metric_value:0.90,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const fs = fakeFs(files);
+    const first = computeScore("/a", fs, () => "T").coverageRows;
+    const second = computeScore("/a", fs, () => "T").coverageRows;
+    expect(second).toEqual(first);                                  // identical, not doubled
+    expect(second).toEqual([{ family: "single-pass", count: 1, best: "0.9", ts: "T" }]);
+  });
 });
 
 function fakeFs(files: Record<string, string>): ScoreFs {
@@ -1080,6 +1184,33 @@ describe("rehearsalBrief", () => {
     expect(out.endsWith("\n")).toBe(true);
     expect(out.endsWith("\n\n")).toBe(false);
   });
+
+  it("renders a Coverage line from coverage + completion floor (B1)", () => {
+    const out = buildStatusBrief({
+      parts: [],
+      scoreboardMd: "| Rank | Exp | Instrument | Metric | Status | Runtime | Approach | Metric name |\n",
+      completion: { floorMet: true, targetMet: false, kSoFar: 1, kRequired: 2, plateau: false,
+        familiesActive: 2, familiesImproving: 0, minFamilies: 2 },
+      coverage: [
+        { family: "single-pass", count: 4, best: "0.96", ts: "T" },
+        { family: "typed-routing", count: 3, best: "0.94", ts: "T" },
+      ],
+    });
+    expect(out).toContain("**Coverage:** 2 families [single-pass×4, typed-routing×3]; min_families=2 (met)");
+  });
+  it("marks the floor short when families < min_families", () => {
+    const out = buildStatusBrief({
+      parts: [], scoreboardMd: null,
+      completion: { floorMet: true, targetMet: false, kSoFar: 0, kRequired: 2, plateau: false,
+        familiesActive: 1, familiesImproving: 0, minFamilies: 3 },
+      coverage: [{ family: "single-pass", count: 2, best: "0.96", ts: "T" }],
+    });
+    expect(out).toContain("min_families=3 (short by 2)");
+  });
+  it("omits the Coverage line when no coverage data (back-compat)", () => {
+    const out = buildStatusBrief({ parts: [], scoreboardMd: null, completion: null });
+    expect(out).not.toContain("**Coverage:**");
+  });
 });
 
 describe("buildStatusBrief verify annotation", () => {
@@ -1125,5 +1256,23 @@ describe("buildStatusBrief suspect annotation", () => {
     const out = buildStatusBrief({ parts: [], scoreboardMd: sb, completion: null,
       verdicts: { "viola/exp-002": "verified" }, suspects: { "viola/exp-002": ["ceiling-exceeded"] } });
     expect(out).toMatch(/\[verified\] \[suspect: ceiling-exceeded\]/);
+  });
+});
+
+import { parseMetricMd as parseMetricMdB1, formatMetricBlock as formatMetricBlockB1 } from "../src/core/rehearsalMetric.js";
+
+describe("metric.md min_families (B1)", () => {
+  it("defaults to 2 when absent", () => {
+    expect(parseMetricMdB1("**Primary metric:** accuracy\n").minFamilies).toBe(2);
+  });
+  it("parses an explicit value", () => {
+    expect(parseMetricMdB1("**min_families:** 3\n").minFamilies).toBe(3);
+  });
+  it("clamps values below 1 to 1", () => {
+    expect(parseMetricMdB1("**min_families:** 0\n").minFamilies).toBe(1);
+  });
+  it("is parse-only: formatMetricBlock does NOT emit a min_families line", () => {
+    const md = formatMetricBlockB1({ primary_metric: "accuracy", direction: "maximize" });
+    expect(md).not.toContain("min_families");
   });
 });

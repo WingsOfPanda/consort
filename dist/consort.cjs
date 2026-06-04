@@ -22175,6 +22175,7 @@ function parseMetricMd(text) {
   let ceiling;
   let minRuntimeS;
   let maxDebugAttempts;
+  let minFamilies = 2;
   const opVal = (s) => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -22208,9 +22209,12 @@ function parseMetricMd(text) {
     } else if (m = line.match(/^\*\*max_debug_attempts:\*\*\s+(.*)$/)) {
       const n2 = parseInt(m[1].trim(), 10);
       if (!Number.isNaN(n2)) maxDebugAttempts = n2;
+    } else if (m = line.match(/^\*\*min_families:\*\*\s+(.*)$/)) {
+      const n2 = parseInt(m[1].trim(), 10);
+      if (!Number.isNaN(n2)) minFamilies = Math.max(1, n2);
     }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts, minFamilies };
 }
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
@@ -22587,6 +22591,44 @@ var init_rehearsalSanity = __esm({
   }
 });
 
+// src/core/rehearsalCoverage.ts
+function normalizeFamily(label) {
+  return label.toLowerCase().trim().replace(/\s+/g, " ").replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+}
+function coverageRow(r) {
+  return `${r.family}	${r.count}	${r.best}	${r.ts}
+`;
+}
+function tallyCoverage(rows, direction) {
+  const minimize = direction === "minimize";
+  const acc = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const norm = normalizeFamily(r.approach);
+    const fam = norm === "" ? "(unlabeled)" : norm;
+    const e = acc.get(fam) ?? { count: 0, best: null };
+    e.count += 1;
+    if (NUM.test(r.metric)) {
+      const v = parseFloat(r.metric);
+      e.best = e.best === null ? v : minimize ? Math.min(e.best, v) : Math.max(e.best, v);
+    }
+    acc.set(fam, e);
+  }
+  const out = [];
+  for (const [family, e] of acc) {
+    out.push({ family, count: e.count, best: e.best === null ? "" : String(e.best), ts: "" });
+  }
+  out.sort((a2, b) => b.count - a2.count || (a2.family < b.family ? -1 : a2.family > b.family ? 1 : 0));
+  return out;
+}
+var COVERAGE_TSV_HEADER, NUM;
+var init_rehearsalCoverage = __esm({
+  "src/core/rehearsalCoverage.ts"() {
+    "use strict";
+    COVERAGE_TSV_HEADER = "family	count	best	ts\n";
+    NUM = /^[0-9.]+$/;
+  }
+});
+
 // src/core/rehearsalInfeasible.ts
 function classifyInfeasible(verdict, flags) {
   if (verdict === "mismatch") return "mismatch";
@@ -22735,6 +22777,11 @@ function computeScore(art, fs, now) {
       if (infReason) scoreRow.infeasibleReason = infReason;
     }
   }
+  const coverageTs = now();
+  const coverageRows = tallyCoverage(
+    rows.filter((r) => r.status === "ok" && !r.infeasibleReason),
+    parsed?.direction
+  ).map((r) => ({ ...r, ts: coverageTs }));
   const phaseClears = [];
   for (const instrument of parts) {
     const statePath = (0, import_node_path31.join)(partStateDir(art, instrument), "state.txt");
@@ -22758,7 +22805,8 @@ function computeScore(art, fs, now) {
     phaseClears,
     warnings,
     manifests,
-    sanityRows
+    sanityRows,
+    coverageRows
   };
 }
 var import_node_path31, TSV_HEADER;
@@ -22771,6 +22819,7 @@ var init_rehearsalScore = __esm({
     init_rehearsalMetric();
     init_rehearsalVerify();
     init_rehearsalSanity();
+    init_rehearsalCoverage();
     init_rehearsalInfeasible();
     init_rehearsalFinalize();
     init_rehearsal();
@@ -22803,7 +22852,7 @@ function parseRows(scoreboardMd) {
   for (const line of scoreboardMd.split("\n")) {
     if (!/^\|\s+\d+\s+\|\s+exp-/.test(line)) continue;
     const c3 = line.split("|").map((s) => s.trim());
-    out.push({ exp: c3[2], instrument: c3[3], metric: c3[4], status: c3[5], metricName: c3[8] ?? "" });
+    out.push({ exp: c3[2], instrument: c3[3], metric: c3[4], status: c3[5], metricName: c3[8] ?? "", approach: c3[7] ?? "" });
   }
   return out;
 }
@@ -22811,7 +22860,7 @@ function checkCompletion(scoreboardMd, metricMd) {
   const t = parseMetricMd(metricMd);
   const matchesMetric = (r) => !(t.primaryMetric && r.metricName && r.metricName !== t.primaryMetric);
   const allRows = parseRows(scoreboardMd).filter(matchesMetric);
-  const okRows = allRows.filter((r) => r.status === "ok" && NUM.test(r.metric));
+  const okRows = allRows.filter((r) => r.status === "ok" && NUM2.test(r.metric));
   let floorMet = false, targetMet = false;
   const metrics = [];
   for (const r of okRows) {
@@ -22833,7 +22882,7 @@ function checkCompletion(scoreboardMd, metricMd) {
     const mv = parseFloat(r.metric);
     const atTarget = cmp(r.metric, t.tgtOp, t.tgtVal);
     const improving = best === SEED || (minimize ? mv < best : mv > best);
-    if (r.status === "ok" && NUM.test(r.metric) && atTarget && improving) {
+    if (r.status === "ok" && NUM2.test(r.metric) && atTarget && improving) {
       chain += 1;
       best = mv;
     } else {
@@ -22843,13 +22892,40 @@ function checkCompletion(scoreboardMd, metricMd) {
     }
   }
   if (chain > kSoFar) kSoFar = chain;
-  let plateau = false;
+  let globalFlat = false;
   if (metrics.length >= t.plateauWindow) {
     const lastN = metrics.slice(-t.plateauWindow);
-    if (Math.max(...lastN) - Math.min(...lastN) < t.plateauThreshold) plateau = true;
+    if (Math.max(...lastN) - Math.min(...lastN) < t.plateauThreshold) globalFlat = true;
   }
+  const byFam = /* @__PURE__ */ new Map();
+  for (const r of okRows) {
+    const fam = normalizeFamily(r.approach);
+    (byFam.get(fam) ?? byFam.set(fam, []).get(fam)).push({ exp: r.exp, mv: parseFloat(r.metric) });
+  }
+  const familiesActive = byFam.size;
+  let familiesImproving = 0;
+  for (const series of byFam.values()) {
+    if (series.length < 2) continue;
+    const chron = [...series].sort((a2, b) => a2.exp < b.exp ? -1 : a2.exp > b.exp ? 1 : 0);
+    const latest = chron[chron.length - 1].mv;
+    const prior = chron.slice(0, -1).map((x) => x.mv);
+    const priorBest = minimize ? Math.min(...prior) : Math.max(...prior);
+    const improving = minimize ? latest < priorBest - t.plateauThreshold : latest > priorBest + t.plateauThreshold;
+    if (improving) familiesImproving += 1;
+  }
+  const minFamilies = t.minFamilies;
+  const plateau = globalFlat && familiesActive >= minFamilies && familiesImproving === 0;
   if (kSoFar > t.kRequired) kSoFar = t.kRequired;
-  return { floorMet, targetMet, kSoFar, kRequired: t.kRequired, plateau };
+  return {
+    floorMet,
+    targetMet,
+    kSoFar,
+    kRequired: t.kRequired,
+    plateau,
+    familiesActive,
+    familiesImproving,
+    minFamilies
+  };
 }
 function checkTimeBudget(budget, sessionStartIso, nowEpochS) {
   const b = budget.replace(/\s/g, "");
@@ -22859,12 +22935,13 @@ function checkTimeBudget(budget, sessionStartIso, nowEpochS) {
   if (Number.isNaN(startMs)) throw new Error(`could not parse session-start: '${sessionStartIso}'`);
   return nowEpochS - Math.floor(startMs / 1e3) >= parseInt(b, 10);
 }
-var NUM;
+var NUM2;
 var init_rehearsalComplete = __esm({
   "src/core/rehearsalComplete.ts"() {
     "use strict";
     init_rehearsalMetric();
-    NUM = /^[0-9.]+$/;
+    init_rehearsalCoverage();
+    NUM2 = /^[0-9.]+$/;
   }
 });
 
@@ -22998,6 +23075,16 @@ function buildStatusBrief(input) {
     sections.push(
       `**Completion check:** floor_met=${yn(c3.floorMet)} target_met=${yn(c3.targetMet)} K_so_far=${c3.kSoFar} K_required=${c3.kRequired} plateau=${yn(c3.plateau)}`
     );
+  }
+  if (input.coverage && input.coverage.length) {
+    const cov = input.coverage;
+    const list = cov.map((r) => `${r.family}\xD7${r.count}`).join(", ");
+    let floor = "";
+    if (c3 && c3.minFamilies !== void 0) {
+      const met = cov.length >= c3.minFamilies;
+      floor = `; min_families=${c3.minFamilies} (${met ? "met" : `short by ${c3.minFamilies - cov.length}`})`;
+    }
+    sections.push(`**Coverage:** ${cov.length} families [${list}]${floor}`);
   }
   return sections.join("\n\n") + "\n";
 }
@@ -23934,6 +24021,7 @@ async function scoreWith(args, deps) {
   for (const pc of c3.phaseClears) deps.writeAtomic(pc.statePath, pc.merged);
   for (const m of c3.manifests) deps.writeAtomic(m.path, m.body);
   deps.writeAtomic((0, import_node_path32.join)(art, "sanity.tsv"), SANITY_TSV_HEADER + c3.sanityRows.map(sanityRow).join(""));
+  deps.writeAtomic((0, import_node_path32.join)(art, "coverage.tsv"), COVERAGE_TSV_HEADER + c3.coverageRows.map(coverageRow).join(""));
   for (const w of c3.warnings) log.warn(w);
   return 0;
 }
@@ -24105,8 +24193,18 @@ async function statusBriefWith(args, v = {}) {
       if (c3[0] && c3[1] && c3[2]) (suspects[`${c3[1]}/${c3[0]}`] ??= []).push(c3[2]);
     }
   }
+  const ctsv = (0, import_node_path32.join)(art, "coverage.tsv");
+  let coverage;
+  if ((0, import_node_fs35.existsSync)(ctsv)) {
+    coverage = [];
+    for (const line of (0, import_node_fs35.readFileSync)(ctsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("family	")) continue;
+      const cells = line.split("	");
+      if (cells[0]) coverage.push({ family: cells[0], count: parseInt(cells[1] ?? "0", 10) || 0, best: cells[2] ?? "", ts: cells[3] ?? "" });
+    }
+  }
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : void 0;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects, coverage }));
   return 0;
 }
 function readOr(path6, fallback = "") {
@@ -24851,6 +24949,7 @@ var init_rehearsal2 = __esm({
     init_rehearsal();
     init_rehearsalScore();
     init_rehearsalSanity();
+    init_rehearsalCoverage();
     init_rehearsalState();
     init_rehearsalComplete();
     init_rehearsalResult();

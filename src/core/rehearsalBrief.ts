@@ -6,6 +6,7 @@
 // K_required, single-spaced) rather than the bash's combined "K_so_far=N/Kr" form.
 
 import type { CompletionSignals } from "./rehearsalComplete.js";
+import type { CoverageRow } from "./rehearsalCoverage.js";
 
 export interface PartBrief {
   instrument: string;
@@ -24,6 +25,8 @@ export interface StatusBriefInput {
   verdicts?: Record<string, string>;
   /** instrument/exp -> sanity flags, joined from sanity.tsv; omit for back-compat (no annotation). */
   suspects?: Record<string, string[]>;
+  /** per-family coverage rows joined from coverage.tsv; omit for back-compat (no Coverage line). */
+  coverage?: CoverageRow[];
 }
 
 interface SbTop { rank: string; exp: string; instrument: string; metric: string; metricName: string; }
@@ -98,6 +101,18 @@ export function buildStatusBrief(input: StatusBriefInput): string {
       `**Completion check:** floor_met=${yn(c.floorMet)} target_met=${yn(c.targetMet)} ` +
       `K_so_far=${c.kSoFar} K_required=${c.kRequired} plateau=${yn(c.plateau)}`,
     );
+  }
+
+  // Coverage line (B1). Global signal -> its own section; omit when no coverage data (back-compat).
+  if (input.coverage && input.coverage.length) {
+    const cov = input.coverage;
+    const list = cov.map((r) => `${r.family}×${r.count}`).join(", ");
+    let floor = "";
+    if (c && c.minFamilies !== undefined) {
+      const met = cov.length >= c.minFamilies;
+      floor = `; min_families=${c.minFamilies} (${met ? "met" : `short by ${c.minFamilies - cov.length}`})`;
+    }
+    sections.push(`**Coverage:** ${cov.length} families [${list}]${floor}`);
   }
 
   return sections.join("\n\n") + "\n";

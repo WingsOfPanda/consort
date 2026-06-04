@@ -8,6 +8,7 @@ import { mergeState, parseState } from "./rehearsalState.js";
 import { parseMetricMd } from "./rehearsalMetric.js";
 import { parseVerifyBlock, buildManifest } from "./rehearsalVerify.js";
 import { sanityFlags, type SanityRow } from "./rehearsalSanity.js";
+import { tallyCoverage, type CoverageRow } from "./rehearsalCoverage.js";
 import { classifyInfeasible, parseVerdicts } from "./rehearsalInfeasible.js";
 import { parseHardConstraints } from "./rehearsalFinalize.js";
 import { partsDir, partStateDir, experimentsDir, experimentDir } from "./rehearsal.js";
@@ -40,6 +41,7 @@ export interface ScoreComputation {
   warnings: string[];
   manifests: { path: string; body: string }[];
   sanityRows: SanityRow[];
+  coverageRows: CoverageRow[];
 }
 
 function str(v: unknown): string {
@@ -116,6 +118,16 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
     }
   }
 
+  // Coverage counts only FEASIBLE successes: status ok AND not A2-infeasible. This keeps the
+  // Coverage: tally consistent with the plateau's familiesActive (which excludes x<rank> infeasible
+  // rows via the integer-rank parse) and honors the "diversity-of-successes" intent -- a family
+  // whose every run was botched is not validly explored and must not inflate the coverage signal.
+  const coverageTs = now();
+  const coverageRows: CoverageRow[] = tallyCoverage(
+    rows.filter((r) => r.status === "ok" && !r.infeasibleReason),
+    parsed?.direction,
+  ).map((r) => ({ ...r, ts: coverageTs }));
+
   const phaseClears: { statePath: string; merged: string }[] = [];
   for (const instrument of parts) {
     const statePath = join(partStateDir(art, instrument), "state.txt");
@@ -129,5 +141,5 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
   }
 
   return { scoreboardMd: buildScoreboard(rows, parsed?.direction), resultsTsv: buildResultsTsv(tsvRows),
-    sidecars, staleSidecars, phaseClears, warnings, manifests, sanityRows };
+    sidecars, staleSidecars, phaseClears, warnings, manifests, sanityRows, coverageRows };
 }
