@@ -19934,7 +19934,7 @@ async function waitGateRun(rest) {
     return {
       instrument: r.instrument,
       doneExists: (0, import_node_fs29.existsSync)((0, import_node_path24.join)(art, `${phase}-${r.instrument}.done`)),
-      stateText: (0, import_node_fs29.existsSync)(stateFile) ? (0, import_node_fs29.readFileSync)(stateFile, "utf8") : null
+      stateText: readIfExistsOrNull(stateFile)
     };
   });
   const states = gateState(parts, key);
@@ -20016,16 +20016,8 @@ async function drilldownWith(rest, d, hooks) {
     return 2;
   }
   const [topic, section, ddDir, focus, designDoc, i1, m1] = rest;
-  let i2 = "", m2 = "", subproject = "";
-  if (n2 === 8) subproject = rest[7];
-  else if (n2 === 9) {
-    i2 = rest[7];
-    m2 = rest[8];
-  } else if (n2 === 10) {
-    i2 = rest[7];
-    m2 = rest[8];
-    subproject = rest[9];
-  }
+  const subproject = n2 === 8 || n2 === 10 ? rest[n2 - 1] : "";
+  const [i2, m2] = n2 >= 9 ? [rest[7], rest[8]] : ["", ""];
   if (!(0, import_node_fs29.existsSync)(ddDir)) {
     log.error(`score drilldown: dd-dir not found: ${ddDir}`);
     return 2;
@@ -20047,7 +20039,7 @@ async function drilldownWith(rest, d, hooks) {
     if (rc !== 0) return "missing";
     hooks.writeProbe?.(j.outPath);
     const ev = await d.wait(j.inst, j.model, topic, offset, ["done", "error"], timeout(j.model));
-    const fileText = (0, import_node_fs29.existsSync)(j.outPath) ? (0, import_node_fs29.readFileSync)(j.outPath, "utf8") : null;
+    const fileText = readIfExistsOrNull(j.outPath);
     return drilldownState(ev, fileText);
   }));
   const ok = results.filter((r) => r === "ok").length;
@@ -21640,16 +21632,16 @@ async function waveWaitRun(rest) {
   }
   return waveWaitWith(topic, instrument, provider, Number(dispatchStr), liveWaitDeps, sinceStr !== void 0 ? Number(sinceStr) : void 0);
 }
-async function waveWaitWith(topic, instrument, provider, dispatch, d, since) {
+async function waveWaitWith(topic, instrument, provider, dispatch2, d, since) {
   const art = performArtDir(topic);
   if (!(0, import_node_fs32.existsSync)(art)) {
     log.error(`perform wave-wait: _perform art-dir missing for ${topic}`);
     return 1;
   }
-  const dispatchFile = (0, import_node_path28.join)(art, `wave-${instrument}-${dispatch}.txt`);
+  const dispatchFile = (0, import_node_path28.join)(art, `wave-${instrument}-${dispatch2}.txt`);
   const startOffset = since ?? ((0, import_node_fs32.existsSync)(dispatchFile) ? parseLatestOffset((0, import_node_fs32.readFileSync)(dispatchFile, "utf8")) ?? 0 : 0);
   const timeout = scaledTimeout(PERFORM_WAVE_TIMEOUT(), d.multiplier(provider));
-  log.info(`[wave-wait] ${instrument} dispatch=${dispatch} offset=${startOffset} timeout=${timeout}s`);
+  log.info(`[wave-wait] ${instrument} dispatch=${dispatch2} offset=${startOffset} timeout=${timeout}s`);
   const ev = await d.wait(instrument, provider, topic, startOffset, ["done", "error", "question"], timeout);
   let ts;
   const extra = [];
@@ -21669,7 +21661,7 @@ async function waveWaitWith(topic, instrument, provider, dispatch, d, since) {
     const payload = extractQuestionPayload(ev, d.now());
     if (payload !== null) {
       ts = "question";
-      atomicWrite((0, import_node_path28.join)(art, `question-${instrument}-${dispatch}.txt`), payload);
+      atomicWrite((0, import_node_path28.join)(art, `question-${instrument}-${dispatch2}.txt`), payload);
       const bumped = outboxOffset(outboxPath(instrument, provider, topic));
       const objLine = parseQuestionPayload(payload).route === "objection" ? `OBJECTIONS=${latestObjections(dispatchFile) + 1}
 ` : "";
@@ -23588,13 +23580,14 @@ function parseInitArgs(args) {
     if (a2.startsWith("--")) {
       const eq = a2.indexOf("=");
       const flag = eq > 0 ? a2.slice(0, eq) : a2;
-      const inline = eq > 0 ? a2.slice(eq + 1) : void 0;
-      const val = () => inline ?? args[++i2];
-      if (flag === "--seed-from") seedFrom = val();
-      else if (flag === "--time-budget") timeBudget = val();
-      else if (flag === "--metric") metric = val();
-      else if (flag === "--slug") slug = val();
-      else {
+      if (flag === "--seed-from" || flag === "--time-budget" || flag === "--metric" || flag === "--slug") {
+        const r = kvParse(a2, args[i2 + 1]);
+        i2 += r.shift - 1;
+        if (flag === "--seed-from") seedFrom = r.value;
+        else if (flag === "--time-budget") timeBudget = r.value;
+        else if (flag === "--metric") metric = r.value;
+        else slug = r.value;
+      } else {
         badFlag = a2;
       }
     } else {
@@ -24163,12 +24156,12 @@ async function experimentSendWith(args, deps) {
   }
   const probe = deps.probeHardware();
   const baselinePath = (0, import_node_path32.join)(art, "hardware.txt");
-  const baseline = (0, import_node_fs35.existsSync)(baselinePath) ? (0, import_node_fs35.readFileSync)(baselinePath, "utf8") : null;
+  const baseline = readIfExistsOrNull(baselinePath);
   const hardwareBlock = assembleHardwareBlock(probe, hardwareDiffAlert(baseline, probe));
   const topicTextPath = (0, import_node_path32.join)(art, "topic.txt");
   const topicText = (0, import_node_fs35.existsSync)(topicTextPath) ? (0, import_node_fs35.readFileSync)(topicTextPath, "utf8") : "";
   const sotaPath = (0, import_node_path32.join)(art, "sota.md");
-  const sotaBlock = buildSotaBlock((0, import_node_fs35.existsSync)(sotaPath) ? (0, import_node_fs35.readFileSync)(sotaPath, "utf8") : null);
+  const sotaBlock = buildSotaBlock(readIfExistsOrNull(sotaPath));
   const peersBlock = formatPeersBlock(gatherPeers(art, instrument));
   const timeBudgetS = String(p.timeout ?? deps.consultTimeout());
   const templatePath = (0, import_node_path32.join)(pluginRoot(), "config", "prompt-templates", "rehearsal", "experiment.md");
@@ -24305,8 +24298,8 @@ async function monitorRun(args, opts) {
   let state = initScanState(
     initBuf.length,
     initBuf.toString("utf8"),
-    (0, import_node_fs35.existsSync)(cursorFile) ? (0, import_node_fs35.readFileSync)(cursorFile, "utf8") : null,
-    (0, import_node_fs35.existsSync)(rescanFile) ? (0, import_node_fs35.readFileSync)(rescanFile, "utf8") : null
+    readIfExistsOrNull(cursorFile),
+    readIfExistsOrNull(rescanFile)
   );
   persist(state);
   do {
@@ -24350,7 +24343,7 @@ function readResultCells(resultPath) {
 }
 function gatherCompletion(art) {
   const sbPath = (0, import_node_path32.join)(art, "scoreboard.md");
-  const scoreboardMd = (0, import_node_fs35.existsSync)(sbPath) ? (0, import_node_fs35.readFileSync)(sbPath, "utf8") : null;
+  const scoreboardMd = readIfExistsOrNull(sbPath);
   const metricPath = (0, import_node_path32.join)(art, "metric.md");
   const completion = scoreboardMd !== null && (0, import_node_fs35.existsSync)(metricPath) ? checkCompletion(scoreboardMd, (0, import_node_fs35.readFileSync)(metricPath, "utf8")) : null;
   return { scoreboardMd, completion };
@@ -24766,7 +24759,7 @@ async function finalizeWith(args, deps) {
     }
   }
   const haltPath = (0, import_node_path32.join)(art, "halt.flag");
-  const halt = readHaltFlag((0, import_node_fs35.existsSync)(haltPath) ? (0, import_node_fs35.readFileSync)(haltPath, "utf8") : null);
+  const halt = readHaltFlag(readIfExistsOrNull(haltPath));
   const startedIso = (0, import_node_fs35.existsSync)(startPath) ? (0, import_node_fs35.readFileSync)(startPath, "utf8").trim() : "(unknown)";
   const budget = (0, import_node_fs35.existsSync)(budgetPath) ? (0, import_node_fs35.readFileSync)(budgetPath, "utf8").trim() : "none";
   const summary = renderSessionSummary({
@@ -25220,6 +25213,7 @@ var init_rehearsal2 = __esm({
     init_log();
     init_args();
     init_atomic();
+    init_fsread();
     init_text();
     init_archive();
     init_solo();
@@ -25281,7 +25275,7 @@ var init_rehearsal2 = __esm({
       computeScore,
       fs: {
         exists: import_node_fs35.existsSync,
-        read: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+        read: readIfExistsOrNull,
         listDir: (p) => {
           try {
             return (0, import_node_fs35.readdirSync)(p).sort();
@@ -25349,28 +25343,22 @@ var init_rehearsal2 = __esm({
       },
       readInput: (art, i2, e, rel) => {
         const p = (0, import_node_path32.join)(experimentDir(art, i2, e), rel);
-        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
+        return readIfExistsOrNull(p);
       },
       writeRow: appendVerificationRow,
       now: () => isoUtc()
     };
     liveVerifyCheckDeps = {
       readResult: liveVerifyPlanDeps.readResult,
-      readMetricMd: (art) => {
-        const p = (0, import_node_path32.join)(art, "metric.md");
-        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
-      },
-      readStdout: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
-      readJson: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+      readMetricMd: (art) => readIfExistsOrNull((0, import_node_path32.join)(art, "metric.md")),
+      readStdout: readIfExistsOrNull,
+      readJson: readIfExistsOrNull,
       writeRow: appendVerificationRow,
       now: () => isoUtc()
     };
     liveInspectPlanDeps = {
       readResult: liveVerifyPlanDeps.readResult,
-      readMetricMd: (art) => {
-        const p = (0, import_node_path32.join)(art, "metric.md");
-        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
-      },
+      readMetricMd: (art) => readIfExistsOrNull((0, import_node_path32.join)(art, "metric.md")),
       inspectionCount: (art) => {
         const p = (0, import_node_path32.join)(art, "inspection.tsv");
         if (!(0, import_node_fs35.existsSync)(p)) return 0;
@@ -25382,12 +25370,9 @@ var init_rehearsal2 = __esm({
     };
     liveInspectCheckDeps = {
       readResult: liveVerifyPlanDeps.readResult,
-      readMetricMd: (art) => {
-        const p = (0, import_node_path32.join)(art, "metric.md");
-        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
-      },
-      readStdout: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
-      readJson: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+      readMetricMd: (art) => readIfExistsOrNull((0, import_node_path32.join)(art, "metric.md")),
+      readStdout: readIfExistsOrNull,
+      readJson: readIfExistsOrNull,
       writeRow: appendInspectionRow,
       now: () => isoUtc()
     };
@@ -26157,7 +26142,7 @@ async function preludeWaitGateRun(rest) {
     return {
       instrument: r.instrument,
       doneExists: (0, import_node_fs37.existsSync)((0, import_node_path35.join)(art, `${phase}-${r.instrument}.done`)),
-      stateText: (0, import_node_fs37.existsSync)(stateFile) ? (0, import_node_fs37.readFileSync)(stateFile, "utf8") : null
+      stateText: readIfExistsOrNull(stateFile)
     };
   });
   const states = gateState(parts, key);
@@ -26306,6 +26291,23 @@ var init_prelude2 = __esm({
 init_args();
 init_paths();
 init_colors();
+
+// src/core/dispatch.ts
+init_args();
+async function dispatch(fn, args) {
+  try {
+    return await fn(args);
+  } catch (e) {
+    if (e instanceof KvError) {
+      process.stderr.write(`${e.message}
+`);
+      return e.code;
+    }
+    throw e;
+  }
+}
+
+// src/consort.ts
 async function loadHandlers() {
   const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform, playback, rehearsal, prelude] = await Promise.all([
     Promise.resolve().then(() => (init_spawn(), spawn_exports)),
@@ -26381,7 +26383,7 @@ async function main() {
 `);
     return 2;
   }
-  return fn(resolved);
+  return dispatch(fn, resolved);
 }
 main().then((code) => process.exit(code)).catch((e) => {
   process.stderr.write(`${e?.stack ?? e}
