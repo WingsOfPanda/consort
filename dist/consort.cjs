@@ -22176,6 +22176,8 @@ function parseMetricMd(text) {
   let minRuntimeS;
   let maxDebugAttempts;
   let minFamilies = 2;
+  let c1Epsilon;
+  let c1Budget;
   const opVal = (s) => {
     const parts = s.trim().split(/\s+/);
     return [parts[0] ?? "", parts.slice(1).join(" ")];
@@ -22212,9 +22214,15 @@ function parseMetricMd(text) {
     } else if (m = line.match(/^\*\*min_families:\*\*\s+(.*)$/)) {
       const n2 = parseInt(m[1].trim(), 10);
       if (!Number.isNaN(n2)) minFamilies = Math.max(1, n2);
+    } else if (m = line.match(/^\*\*c1_epsilon:\*\*\s+(.*)$/)) {
+      const n2 = parseFloat(m[1].trim());
+      if (!Number.isNaN(n2)) c1Epsilon = n2;
+    } else if (m = line.match(/^\*\*c1_budget:\*\*\s+(.*)$/)) {
+      const n2 = parseInt(m[1].trim(), 10);
+      if (!Number.isNaN(n2)) c1Budget = n2;
     }
   }
-  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts, minFamilies };
+  return { primaryMetric, direction, minOp, minVal, tgtOp, tgtVal, kRequired, plateauWindow, plateauThreshold, verifyEpsilon, ceiling, minRuntimeS, maxDebugAttempts, minFamilies, c1Epsilon, c1Budget };
 }
 function formatSotaBlock(input) {
   if (!input.topic) throw new Error("missing required key: topic");
@@ -22685,6 +22693,39 @@ var init_rehearsalInfeasible = __esm({
   }
 });
 
+// src/core/rehearsalInspect.ts
+function classifyInspect(opts) {
+  if (opts.integrityRefuted) return { verdict: "not-reproduced", reason: "integrity-refuted" };
+  if (opts.runFailed) return { verdict: "inconclusive", reason: "reimpl-failed" };
+  if (opts.reimplMetric === null) return { verdict: "inconclusive", reason: "no-marker" };
+  if (opts.reported === null) return { verdict: "inconclusive", reason: "no-reported" };
+  if (Math.abs(opts.reimplMetric - opts.reported) <= opts.epsilon) return { verdict: "reproduced", reason: "" };
+  return { verdict: "not-reproduced", reason: `value:${opts.reimplMetric}vs${opts.reported}` };
+}
+function inspectInfeasibleReason(verdict) {
+  return verdict === "not-reproduced" ? "reimpl-mismatch" : null;
+}
+function parseInspections(tsv) {
+  const out = {};
+  for (const line of tsv.split("\n")) {
+    if (!line || line.startsWith("exp_id	")) continue;
+    const c3 = line.split("	");
+    if (c3[0] && c3[1] && c3[2]) out[`${c3[1]}/${c3[0]}`] = c3[2];
+  }
+  return out;
+}
+function inspectionRow(r) {
+  return `${r.expId}	${r.instrument}	${r.verdict}	${r.reason}	${r.reimplMetric}	${r.ts}
+`;
+}
+var INSPECTION_TSV_HEADER;
+var init_rehearsalInspect = __esm({
+  "src/core/rehearsalInspect.ts"() {
+    "use strict";
+    INSPECTION_TSV_HEADER = "exp_id	instrument	verdict	reason	reimpl_metric	ts\n";
+  }
+});
+
 // src/core/rehearsalFinalize.ts
 function finalizePhase(cur) {
   if (cur === "working" || cur === "stale" || cur === "stuck" || cur === "blocked") return "incomplete";
@@ -22723,6 +22764,7 @@ function computeScore(art, fs, now) {
   const metricMd = fs.read((0, import_node_path31.join)(art, "metric.md"));
   const parsed = metricMd ? parseMetricMd(metricMd) : null;
   const verdicts = parseVerdicts2(fs.read((0, import_node_path31.join)(art, "verification.tsv")) ?? "");
+  const inspections = parseInspections(fs.read((0, import_node_path31.join)(art, "inspection.tsv")) ?? "");
   const expectedMetric = parsed?.primaryMetric || void 0;
   const rows = [];
   const tsvRows = [];
@@ -22805,7 +22847,7 @@ function computeScore(art, fs, now) {
         audit: auditObj
       });
       for (const f of flags) sanityRows.push({ expId, instrument, flag: f.flag, detail: f.detail, ts: now() });
-      const infReason = classifyInfeasible(verdicts[`${instrument}/${expId}`], flags.map((f) => f.flag));
+      const infReason = classifyInfeasible(verdicts[`${instrument}/${expId}`], flags.map((f) => f.flag)) ?? inspectInfeasibleReason(inspections[`${instrument}/${expId}`]);
       if (infReason) scoreRow.infeasibleReason = infReason;
       const lineageTxt = fs.read((0, import_node_path31.join)(branchDir, "lineage.txt"));
       const parentId = lineageTxt ? parseState(lineageTxt).parent_id ?? "" : "";
@@ -22878,6 +22920,7 @@ var init_rehearsalScore = __esm({
     init_rehearsalCoverage();
     init_rehearsalLineage();
     init_rehearsalInfeasible();
+    init_rehearsalInspect();
     init_rehearsalFinalize();
     init_rehearsal();
     TSV_HEADER = "exp_id	instrument	approach	metric	status	runtime_s	metric_name\n";
@@ -23121,7 +23164,9 @@ function buildStatusBrief(input) {
         const s = input.suspects?.[`${r.instrument}/${r.exp}`];
         const stag = s && s.length ? ` [suspect: ${s.join(",")}]` : "";
         const mc = input.multiChange?.[`${r.instrument}/${r.exp}`] ? " [multi-change]" : "";
-        sb.push(`${r.rank}. ${r.instrument}/${r.exp} \u2014 ${r.metric} \u2014 ${r.metricName}${tag}${stag}${mc}`);
+        const iv = input.inspections?.[`${r.instrument}/${r.exp}`];
+        const itag = iv === "reproduced" ? " [reimpl-ok]" : iv === "not-reproduced" ? " [reimpl-mismatch!]" : iv === "inconclusive" ? " [reimpl-inconclusive]" : "";
+        sb.push(`${r.rank}. ${r.instrument}/${r.exp} \u2014 ${r.metric} \u2014 ${r.metricName}${tag}${stag}${mc}${itag}`);
       }
     }
   }
@@ -23477,6 +23522,8 @@ __export(rehearsal_exports, {
   freshPartWith: () => freshPartWith,
   handoffExtractWith: () => handoffExtractWith,
   initWith: () => initWith4,
+  inspectCheckWith: () => inspectCheckWith,
+  inspectPlanWith: () => inspectPlanWith,
   liveScoreDeps: () => liveScoreDeps,
   metricWith: () => metricWith,
   monitorRun: () => monitorRun,
@@ -23806,6 +23853,88 @@ async function verifyCheckWith(args, deps) {
   }
   const { verdict, reason } = checkVerify({ recomputed, runFailed, reported, epsilon });
   deps.writeRow(art, instrument, expId, { expId, instrument, verdict, reason, recomputed: recomputed === null ? "" : String(recomputed), ts: deps.now() });
+  const out = deps.stdout ?? ((l) => {
+    process.stdout.write(l + "\n");
+  });
+  out(`VERDICT=${verdict} reason=${reason}`);
+  return 0;
+}
+async function inspectPlanWith(args, deps) {
+  const authorize = args.includes("--authorize-inspect");
+  const pos = args.filter((a2) => !a2.startsWith("--"));
+  if (pos.length !== 3) {
+    log.error("rehearsal inspect-plan: usage: <topic> <instrument> <exp-id> [--authorize-inspect]");
+    return 2;
+  }
+  const [topic, instrument, expId] = pos;
+  const art = rehearsalArtDir(topic, deps.opts);
+  const result = deps.readResult(art, instrument, expId);
+  if (result === null) {
+    log.error(`rehearsal inspect-plan: result.json missing for ${instrument}/${expId}`);
+    return 1;
+  }
+  const out = deps.stdout ?? ((l) => {
+    process.stdout.write(l + "\n");
+  });
+  const term = (verdict, reason) => {
+    deps.writeRow(art, instrument, expId, { expId, instrument, verdict, reason, reimplMetric: "", ts: deps.now() });
+    out(`VERDICT=${verdict} reason=${reason}`);
+    return 0;
+  };
+  if (!authorize) return term("inconclusive", "inspect-deferred");
+  const md = deps.readMetricMd(art);
+  const budget = (md ? parseMetricMd(md).c1Budget : void 0) ?? 2;
+  if (deps.inspectionCount(art) >= budget) return term("inconclusive", "budget-exhausted");
+  if (result.data_spec === void 0 || result.data_spec === null || typeof result.metric_formula !== "string" || result.metric_formula === "") {
+    return term("inconclusive", "run-card-insufficient");
+  }
+  if ((deps.partProvider(art, instrument, topic) ?? "") === "claude") return term("inconclusive", "same-family");
+  out(`INSPECT_CWD=${(0, import_node_path32.join)(experimentDir(art, instrument, expId), "c1")}`);
+  out(`REPORTED_METRIC=${typeof result.metric_value === "number" ? result.metric_value : ""}`);
+  out(`METRIC_NAME=${String(result.metric_name ?? "")}`);
+  out(`METRIC_FORMULA=${String(result.metric_formula ?? "")}`);
+  out(`DATA_SPEC=${JSON.stringify(result.data_spec)}`);
+  out(`APPROACH=${String(result.approach_label ?? "")}`);
+  out(`INTEGRITY=${JSON.stringify(result.integrity ?? {})}`);
+  return 0;
+}
+async function inspectCheckWith(args, deps) {
+  const runFailed = args.includes("--run-failed");
+  const integrityRefuted = args.includes("--integrity-refuted");
+  let stdoutFile;
+  const pos = [];
+  for (let i2 = 0; i2 < args.length; i2++) {
+    if (args[i2] === "--stdout-file") {
+      stdoutFile = args[++i2];
+    } else if (args[i2] === "--run-failed" || args[i2] === "--integrity-refuted") {
+    } else if (!args[i2].startsWith("--")) pos.push(args[i2]);
+  }
+  if (pos.length !== 3) {
+    log.error("rehearsal inspect-check: usage: <topic> <instrument> <exp-id> (--stdout-file <path> | --run-failed) [--integrity-refuted]");
+    return 2;
+  }
+  if (!runFailed && !integrityRefuted && stdoutFile === void 0) {
+    log.error("rehearsal inspect-check: need --stdout-file <path> or --run-failed or --integrity-refuted");
+    return 2;
+  }
+  const [topic, instrument, expId] = pos;
+  const art = rehearsalArtDir(topic, deps.opts);
+  const result = deps.readResult(art, instrument, expId);
+  if (result === null) {
+    log.error(`rehearsal inspect-check: result.json missing for ${instrument}/${expId}`);
+    return 1;
+  }
+  const reported = typeof result.metric_value === "number" ? result.metric_value : null;
+  const md = deps.readMetricMd(art);
+  const t = md ? parseMetricMd(md) : null;
+  const epsilon = t?.c1Epsilon ?? 2 * (t?.verifyEpsilon ?? 0.01);
+  let reimplMetric = null;
+  if (!runFailed && !integrityRefuted) {
+    const stdout = stdoutFile ? deps.readStdout(stdoutFile) : null;
+    reimplMetric = stdout === null ? null : recomputedFromOutput(stdout, "marker", (p) => deps.readJson((0, import_node_path32.join)(experimentDir(art, instrument, expId), p)));
+  }
+  const { verdict, reason } = classifyInspect({ reimplMetric, runFailed, reported, epsilon, integrityRefuted });
+  deps.writeRow(art, instrument, expId, { expId, instrument, verdict, reason, reimplMetric: reimplMetric === null ? "" : String(reimplMetric), ts: deps.now() });
   const out = deps.stdout ?? ((l) => {
     process.stdout.write(l + "\n");
   });
@@ -24288,8 +24417,18 @@ async function statusBriefWith(args, v = {}) {
       if (cells[0] && cells[1] && cells[4] === "improve-multi") multiChange[`${cells[1]}/${cells[0]}`] = true;
     }
   }
+  const itsv = (0, import_node_path32.join)(art, "inspection.tsv");
+  let inspections;
+  if ((0, import_node_fs35.existsSync)(itsv)) {
+    inspections = {};
+    for (const line of (0, import_node_fs35.readFileSync)(itsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id	")) continue;
+      const cells = line.split("	");
+      if (cells[0] && cells[1] && cells[2]) inspections[`${cells[1]}/${cells[0]}`] = cells[2];
+    }
+  }
   const latest = p.latestInstrument && p.latestExp ? { instrument: p.latestInstrument, exp: p.latestExp } : void 0;
-  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects, coverage, multiChange }));
+  out(buildStatusBrief({ parts, scoreboardMd, completion, latest, verdicts, suspects, coverage, multiChange, inspections }));
   return 0;
 }
 function readOr(path6, fallback = "") {
@@ -24538,6 +24677,17 @@ async function finalizeWith(args, deps) {
     }
     if (extra.length) (0, import_node_fs35.appendFileSync)(warningsPath, extra.join("\n") + "\n");
   }
+  const inspectionTsv = (0, import_node_path32.join)(art, "inspection.tsv");
+  if ((0, import_node_fs35.existsSync)(inspectionTsv)) {
+    const extra = [];
+    for (const line of (0, import_node_fs35.readFileSync)(inspectionTsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id	")) continue;
+      const c3 = line.split("	");
+      if (c3[2] !== "not-reproduced") continue;
+      if (c3[0] && c3[1]) extra.push(`reimpl	${c3[1]}/${c3[0]}	not-reproduced	${c3[3] ?? ""}`);
+    }
+    if (extra.length) (0, import_node_fs35.appendFileSync)(warningsPath, extra.join("\n") + "\n");
+  }
   const statusRows = [];
   for (const instrument of instruments) {
     const stateTxt = (0, import_node_path32.join)(partStateDir(art, instrument), "state.txt");
@@ -24598,6 +24748,8 @@ async function finalizeWith(args, deps) {
       warnings.push(`- sanity: ${f[1]} ${f[2]} (${f[3]})`);
     } else if (f[0] === "lineage") {
       warnings.push(`- lineage: ${f[1]} ${f[2]} (${f[3]})`);
+    } else if (f[0] === "reimpl") {
+      warnings.push(`- reimpl: ${f[1]} ${f[2]} (${f[3]})`);
     }
   }
   const haltPath = (0, import_node_path32.join)(art, "halt.flag");
@@ -24984,6 +25136,16 @@ function appendVerificationRow(art, instrument, expId, row) {
 `
   );
 }
+function appendInspectionRow(art, instrument, expId, row) {
+  const tsv = (0, import_node_path32.join)(art, "inspection.tsv");
+  const prior = (0, import_node_fs35.existsSync)(tsv) ? (0, import_node_fs35.readFileSync)(tsv, "utf8") : INSPECTION_TSV_HEADER;
+  atomicWrite(tsv, prior + inspectionRow(row));
+  atomicWrite(
+    (0, import_node_path32.join)(experimentDir(art, instrument, expId), "inspection.txt"),
+    `${row.verdict} reason=${row.reason} reimpl_metric=${row.reimplMetric} at ${row.ts}
+`
+  );
+}
 async function run13(args) {
   const [verb, ...rest] = args;
   switch (verb) {
@@ -25001,6 +25163,10 @@ async function run13(args) {
       return verifyPlanWith(rest, liveVerifyPlanDeps);
     case "verify-check":
       return verifyCheckWith(rest, liveVerifyCheckDeps);
+    case "inspect-plan":
+      return inspectPlanWith(rest, liveInspectPlanDeps);
+    case "inspect-check":
+      return inspectCheckWith(rest, liveInspectCheckDeps);
     case "experiment-send":
       return experimentSendWith(applyArgsFile(rest), liveExperimentSendDeps);
     case "score":
@@ -25031,7 +25197,7 @@ async function run13(args) {
       return usage4();
   }
 }
-var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveDropPartDeps, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps, liveVerifyPlanDeps, liveVerifyCheckDeps;
+var import_node_fs35, import_node_child_process10, import_node_path32, liveInitDeps4, liveSpawnAllDeps2, liveDropPartDeps, liveExperimentSendDeps, liveScoreDeps, sleep4, GIB, liveFinalizeDeps, liveRefineDeps, liveHandoffDeps, liveTeardownDeps, liveFreshPartDeps, liveAbortDeps, liveConsensusDeps, liveVerifyPlanDeps, liveVerifyCheckDeps, liveInspectPlanDeps, liveInspectCheckDeps;
 var init_rehearsal2 = __esm({
   "src/commands/rehearsal.ts"() {
     "use strict";
@@ -25061,6 +25227,7 @@ var init_rehearsal2 = __esm({
     init_rehearsalHandoff();
     init_rehearsalConsensus();
     init_rehearsalVerify();
+    init_rehearsalInspect();
     init_contracts();
     init_ipc();
     init_tmux();
@@ -25182,6 +25349,32 @@ var init_rehearsal2 = __esm({
       readStdout: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
       readJson: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
       writeRow: appendVerificationRow,
+      now: () => isoUtc()
+    };
+    liveInspectPlanDeps = {
+      readResult: liveVerifyPlanDeps.readResult,
+      readMetricMd: (art) => {
+        const p = (0, import_node_path32.join)(art, "metric.md");
+        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
+      },
+      inspectionCount: (art) => {
+        const p = (0, import_node_path32.join)(art, "inspection.tsv");
+        if (!(0, import_node_fs35.existsSync)(p)) return 0;
+        return (0, import_node_fs35.readFileSync)(p, "utf8").split("\n").filter((l) => l && !l.startsWith("exp_id	")).length;
+      },
+      partProvider: (_art, i2, topic) => resolveModel(i2, topic),
+      writeRow: appendInspectionRow,
+      now: () => isoUtc()
+    };
+    liveInspectCheckDeps = {
+      readResult: liveVerifyPlanDeps.readResult,
+      readMetricMd: (art) => {
+        const p = (0, import_node_path32.join)(art, "metric.md");
+        return (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null;
+      },
+      readStdout: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+      readJson: (p) => (0, import_node_fs35.existsSync)(p) ? (0, import_node_fs35.readFileSync)(p, "utf8") : null,
+      writeRow: appendInspectionRow,
       now: () => isoUtc()
     };
   }
