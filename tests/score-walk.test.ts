@@ -13,8 +13,6 @@ describe("auditIssueToSection", () => {
     expect(auditIssueToSection("no_success_section")).toBe("success-criteria");
     expect(auditIssueToSection("tbd_marker")).toBe("ASK");
     expect(auditIssueToSection("todo_marker")).toBe("ASK");
-    expect(auditIssueToSection("target_subproject_when_invalid")).toBe("header");
-    expect(auditIssueToSection("execution_dag_not_parseable")).toBe("execution-dag");
     expect(auditIssueToSection("unresolved_placeholder")).toBe("architecture");
     expect(auditIssueToSection("something_unknown")).toBe("");
   });

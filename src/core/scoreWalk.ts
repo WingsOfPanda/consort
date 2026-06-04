@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Port of consult_audit_issue_to_section (lib/consult-walk.sh:18-33). Section name | "ASK" | "header" | "" (unknown). */
+/** Port of consult_audit_issue_to_section (lib/consult-walk.sh:18-33). Section name | "ASK" | "" (unknown). */
 export function auditIssueToSection(key: string): string {
   switch (key) {
     case "no_goal_section": return "goal";
@@ -10,8 +10,6 @@ export function auditIssueToSection(key: string): string {
     case "no_testing_section": return "testing";
     case "no_success_section": return "success-criteria";
     case "tbd_marker": case "todo_marker": case "fill_in_later_marker": case "to_be_determined_marker": return "ASK";
-    case "target_subproject_when_invalid": return "header";
-    case "execution_dag_not_parseable": return "execution-dag";
     case "unresolved_placeholder": return "architecture";
     default: return "";
   }
