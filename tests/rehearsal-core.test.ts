@@ -920,6 +920,25 @@ describe("rehearsalScore", () => {
     expect(c.scoreboardMd).toMatch(/\| 1 \| exp-001 \| viola \|/);
     expect(c.scoreboardMd).not.toMatch(/infeasible/);
   });
+  it("emits per-family coverageRows over ok experiments (B1)", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/parts/oboe/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"single-pass",metric_name:"accuracy",metric_value:0.90,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+      "/a/parts/oboe/experiments/exp-002/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"Single-Pass",metric_name:"accuracy",metric_value:0.96,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+      "/a/parts/viola/experiments/exp-003/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"typed-routing",metric_name:"accuracy",metric_value:0.94,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "2026-06-04T10:00:00Z");
+    expect(c.coverageRows).toEqual([
+      { family: "single-pass", count: 2, best: "0.96", ts: "2026-06-04T10:00:00Z" },
+      { family: "typed-routing", count: 1, best: "0.94", ts: "2026-06-04T10:00:00Z" },
+    ]);
+  });
 });
 
 function fakeFs(files: Record<string, string>): ScoreFs {
