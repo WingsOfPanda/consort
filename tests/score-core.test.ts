@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync as rf } from "node:fs";
 import { tmpdir } from "node:os";
-import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, parseMultiRepoMode, verifyScopeFiles, lastTag, writeTargetsTsv, resolveDrilldownPath, scoreExportDocPath, exportDocTo } from "../src/core/score.js";
+import { scoreArtDir, scoreDraftDir, parseScoreArgs, scoreDocPath, formatRosterFile, parseRosterFile, verifyScopeFiles, lastTag, resolveDrilldownPath, scoreExportDocPath, exportDocTo } from "../src/core/score.js";
 
 describe("score paths", () => {
   it("scoreArtDir / scoreDraftDir hang off the topic dir under _score", () => {
@@ -15,8 +15,8 @@ describe("score paths", () => {
 });
 
 describe("parseScoreArgs", () => {
-  it("plain topic → no ensemble, no targets", () => {
-    expect(parseScoreArgs(["compare", "LRU", "vs", "LFU"])).toEqual({ topicText: "compare LRU vs LFU", ensemble: false, targets: [] });
+  it("plain topic → no ensemble", () => {
+    expect(parseScoreArgs(["compare", "LRU", "vs", "LFU"])).toEqual({ topicText: "compare LRU vs LFU", ensemble: false });
   });
   it("--ensemble is a token-exact boolean flag, stripped from the topic", () => {
     const r = parseScoreArgs(["--ensemble", "design", "auth"]);
@@ -27,14 +27,6 @@ describe("parseScoreArgs", () => {
     const r = parseScoreArgs(["--ensemble-please", "x"]);
     expect(r.ensemble).toBe(false);
     expect(r.topicText).toBe("--ensemble-please x");
-  });
-  it("--targets a,b,c parses a list and strips the flag", () => {
-    const r = parseScoreArgs(["--targets", "api,web", "refactor"]);
-    expect(r.targets).toEqual(["api", "web"]);
-    expect(r.topicText).toBe("refactor");
-  });
-  it("--targets=a,b inline form", () => {
-    expect(parseScoreArgs(["--targets=api,web", "x"]).targets).toEqual(["api", "web"]);
   });
 });
 
@@ -57,15 +49,6 @@ describe("roster file", () => {
   });
 });
 
-describe("parseMultiRepoMode", () => {
-  it("trims and validates; unknown/empty → single", () => {
-    expect(parseMultiRepoMode("multi\n")).toBe("multi");
-    expect(parseMultiRepoMode(" single-sub ")).toBe("single-sub");
-    expect(parseMultiRepoMode("garbage")).toBe("single");
-    expect(parseMultiRepoMode("")).toBe("single");
-  });
-});
-
 describe("verifyScopeFiles", () => {
   it("N=2: only the other instrument's _only_items.txt", () => {
     expect(verifyScopeFiles("viola", ["viola", "cello"])).toEqual(["cello_only_items.txt"]);
@@ -85,17 +68,8 @@ describe("lastTag", () => {
   });
 });
 
-describe("writeTargetsTsv", () => {
-  it("emits a comment header + TSV rows; empty hits → just the header", () => {
-    const tsv = writeTargetsTsv([{ slug: "api", marker: "/r/api/CLAUDE.md" }, { slug: "web", marker: "/r/web/AGENTS.md" }], "2026-05-29T00:00:00Z");
-    expect(tsv).toContain("# generated 2026-05-29T00:00:00Z by /consort:score");
-    expect(tsv.trim().split("\n").filter((l) => !l.startsWith("#"))).toEqual(["api\t/r/api/CLAUDE.md", "web\t/r/web/AGENTS.md"]);
-    expect(writeTargetsTsv([], "2026-05-29T00:00:00Z")).toBe("# generated 2026-05-29T00:00:00Z by /consort:score\n");
-  });
-});
-
 describe("drilldown paths", () => {
-  it("resolveDrilldownPath: plain, then -2/-3 collisions (no compounding), subproject infix", () => {
+  it("resolveDrilldownPath: plain, then -2/-3 collisions (no compounding)", () => {
     const sc = mkdtempSync(join(tmpdir(), "dd-")); mkdirSync(sc, { recursive: true });
     const p1 = resolveDrilldownPath(sc, "the section", "viola");
     expect(p1.endsWith(join(sc, "drilldown-the-section-viola.md").slice(-40)) || p1.endsWith("drilldown-the-section-viola.md")).toBe(true);
@@ -103,7 +77,6 @@ describe("drilldown paths", () => {
     const p2 = resolveDrilldownPath(sc, "the section", "viola"); expect(p2.endsWith("drilldown-the-section-viola-2.md")).toBe(true);
     writeFileSync(p2, "x");
     const p3 = resolveDrilldownPath(sc, "the section", "viola"); expect(p3.endsWith("drilldown-the-section-viola-3.md")).toBe(true);
-    expect(resolveDrilldownPath(sc, "arch", "cello", "api").endsWith("drilldown-arch-api-cello.md")).toBe(true);
   });
 });
 

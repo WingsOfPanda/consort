@@ -10,13 +10,9 @@ let prev: string | undefined;
 beforeEach(() => { prev = process.env.CONSORT_HOME; process.env.CONSORT_HOME = mkdtempSync(join(tmpdir(), "si-")); });
 afterEach(() => { if (prev === undefined) delete process.env.CONSORT_HOME; else process.env.CONSORT_HOME = prev; });
 
-function deps(
-  providers: string[], picks: string[],
-  targetVal?: (slugs: string[]) => { ok: { slug: string; marker: string }[]; errors: string[] },
-): ScoreInitDeps {
+function deps(providers: string[], picks: string[]): ScoreInitDeps {
   return {
     activeProviders: () => providers, isValidated: () => true, pickInstruments: () => picks,
-    validateTargets: targetVal ?? ((slugs) => ({ ok: slugs.map((s) => ({ slug: s, marker: `/r/${s}/CLAUDE.md` })), errors: [] })),
   };
 }
 
@@ -43,18 +39,6 @@ describe("score init", () => {
     await initWith(["big"], deps(["codex", "claude", "agy", "opencode"], ["a", "b", "c"]));
     const roster = readFileSync(join(scoreArtDir("big"), "roster.txt"), "utf8");
     expect(roster.trim().split("\n").filter((l) => !l.startsWith("#"))).toHaveLength(3);
-  });
-  it("--targets a,b → validates, writes TSV targets.txt + multi-repo.txt=multi", async () => {
-    await initWith(["--targets", "api,web", "refactor"], deps(["codex", "claude"], ["viola", "cello"]));
-    const art = scoreArtDir("refactor");
-    expect(readFileSync(join(art, "multi-repo.txt"), "utf8").trim()).toBe("multi");
-    expect(readFileSync(join(art, "targets.txt"), "utf8")).toContain("api\t/r/api/CLAUDE.md"); // TSV, not plain slug
-  });
-  it("--targets with an invalid slug → rc 1, no scaffold", async () => {
-    const rc = await initWith(["--targets", "ghost", "x"],
-      deps(["codex", "claude"], ["viola", "cello"], () => ({ ok: [], errors: ["target 'ghost' is not a sibling dir ..."] })));
-    expect(rc).toBe(1);
-    expect(existsSync(scoreArtDir("x"))).toBe(false);
   });
   it("in-flight (art dir exists) → rc 2", async () => {
     const d = deps(["codex", "claude"], ["viola", "cello"]);

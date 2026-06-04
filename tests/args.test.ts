@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tokenizeArgsLine, applyArgsFile, kvParse, ArgsFileError, KvError } from "../src/args.js";
-import { parseScoreArgs } from "../src/core/score.js";
 
 describe("args", () => {
   it("tokenize preserves quoted phrases + literal metachars", () => {
@@ -75,14 +74,6 @@ describe("applyArgsFile verbatim-tail (prose mode)", () => {
     expect(applyArgsFile(["--args-file", af("para one\n\npara two\nmore")], opts([])))
       .toEqual(["para one\n\npara two\nmore"]);
   });
-  it("peels a leading boolean flag + value flag, body verbatim", () => {
-    expect(applyArgsFile(["--args-file", af("--ensemble --targets a,b design the part's thing")], opts(["--targets"])))
-      .toEqual(["--ensemble", "--targets", "a,b", "design the part's thing"]);
-  });
-  it("a --flag=value token stays whole; body follows", () => {
-    expect(applyArgsFile(["--args-file", af("--targets=a,b the body")], opts(["--targets"])))
-      .toEqual(["--targets=a,b", "the body"]);
-  });
   it("an internal --word stays inside the verbatim body", () => {
     expect(applyArgsFile(["--args-file", af("use --force carefully please")], opts([])))
       .toEqual(["use --force carefully please"]);
@@ -104,19 +95,5 @@ describe("applyArgsFile verbatim-tail (prose mode)", () => {
   });
   it("a value-flag with no following value pushes only the flag (no empty token)", () => {
     expect(applyArgsFile(["--args-file", af("--targets")], opts(["--targets"]))).toEqual(["--targets"]);
-  });
-});
-
-describe("verbatim-tail end-to-end into a command parser", () => {
-  function af(content: string): string {
-    const f = join(mkdtempSync(join(tmpdir(), "afe-")), "args");
-    writeFileSync(f, content);
-    return f;
-  }
-  it("score init: --targets parses and the apostrophe survives into topicText", () => {
-    const tokens = applyArgsFile(["--args-file", af("--targets a,b redesign the part's status line")], { valueFlags: new Set(["--targets"]) });
-    const parsed = parseScoreArgs(tokens);
-    expect(parsed.targets).toEqual(["a", "b"]);
-    expect(parsed.topicText).toBe("redesign the part's status line");
   });
 });

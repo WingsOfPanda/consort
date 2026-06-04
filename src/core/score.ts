@@ -3,9 +3,7 @@ import { join } from "node:path";
 import { existsSync, readdirSync, mkdirSync, readFileSync } from "node:fs";
 import { atomicWrite } from "./atomic.js";
 import { topicDir } from "./paths.js";
-import { kvParse } from "../args.js";
 import { splitNonCommentLines } from "./text.js";
-import type { DocMode } from "./scoreDoc.js";
 export { deriveSlug } from "./solo.js"; // identical to consult's slug rule; reused, not duplicated
 
 /** `_score` art dir for a topic. */
@@ -17,27 +15,18 @@ export function scoreDraftDir(topic: string, opts?: { home?: string; cwd?: strin
   return join(scoreArtDir(topic, opts), "design-doc", ".draft");
 }
 
-export interface ScoreArgs { topicText: string; ensemble: boolean; targets: string[]; }
+export interface ScoreArgs { topicText: string; ensemble: boolean; }
 
-/** Pull the `--ensemble` boolean flag (token-exact) and `--targets a,b,c` out of the glued $ARGUMENTS.
- *  `--targets` is only split/trimmed/empty-filtered here; slug validation (regex, dir+marker
- *  existence, dedup) is deferred to the command layer (`score init`). */
+/** Pull the `--ensemble` boolean flag (token-exact) out of the glued $ARGUMENTS. */
 export function parseScoreArgs(tokens: string[]): ScoreArgs {
   let ensemble = false;
-  let targets: string[] = [];
   const rest: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t === "--ensemble") { ensemble = true; continue; }
-    if (t === "--targets" || t.startsWith("--targets=")) {
-      const { value, shift } = kvParse(t, tokens[i + 1]);
-      targets = value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-      if (shift === 2) i++;
-      continue;
-    }
     rest.push(t);
   }
-  return { topicText: rest.join(" "), ensemble, targets };
+  return { topicText: rest.join(" "), ensemble };
 }
 
 /** Canonical design-doc path: `_score/design-doc/<YYYY-MM-DD>-<topic>-design.md`. */
@@ -64,12 +53,6 @@ export function parseRosterFile(text: string): RosterRow[] {
   return nonCommentLines(text)
     .map((l) => { const [provider, instrument] = l.split("\t"); return { provider, instrument }; })
     .filter((r) => r.provider && r.instrument) as RosterRow[];
-}
-
-/** multi-repo.txt value, whitespace-stripped; anything not single-sub/multi → "single". */
-export function parseMultiRepoMode(text: string): DocMode {
-  const v = text.replace(/\s/g, "");
-  return v === "multi" ? "multi" : v === "single-sub" ? "single-sub" : "single";
 }
 
 /** Preflight --roster arg from roster rows: "<instrument>:<provider>,..." (model = provider). */
@@ -129,17 +112,6 @@ export function verifyScopeFiles(target: string, instruments: string[]): string[
   return out;
 }
 
-/** targets.txt as TSV: a generated-comment header + one `<slug>\t<abs-marker>` row per hit. The
- *  consumer parseRosterTargets reads col 0 and tolerates the comment header. */
-export function writeTargetsTsv(hits: { slug: string; marker: string }[], isoStamp: string): string {
-  return `# generated ${isoStamp} by /consort:score\n` + (hits.length ? hits.map((h) => `${h.slug}\t${h.marker}`).join("\n") + "\n" : "");
-}
-
-/** targets.txt may be a plain slug-per-line list (init) or a TSV (multi-repo detect, Phase E). */
-export function parseRosterTargets(text: string): string[] {
-  return nonCommentLines(text).map((l) => l.split("\t")[0]).filter(Boolean);
-}
-
 /** Last `^<tag>=<value>$` value in a KV state file's text; null if absent. */
 export function lastTag(text: string, tag: string): string | null {
   const re = new RegExp(`^${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(.*)$`, "gm");
@@ -159,9 +131,9 @@ export function cascadeTargets(phase: ResetPhase, keepFindings: boolean): { part
 
 /** Collision-resolved drill output path (port of consult-drilldown.sh resolve_out_path). Strips any
  *  prior `-N` before re-appending `-2..-99`, so re-runs don't compound; throws past 99. */
-export function resolveDrilldownPath(scratchDir: string, section: string, instrument: string, subproject?: string): string {
+export function resolveDrilldownPath(scratchDir: string, section: string, instrument: string): string {
   const slug = section.toLowerCase().replace(/ /g, "-");
-  const base = `drilldown-${slug}${subproject ? `-${subproject}` : ""}-${instrument}`;
+  const base = `drilldown-${slug}-${instrument}`;
   let cand = base;
   let n = 2;
   while (existsSync(join(scratchDir, `${cand}.md`))) {

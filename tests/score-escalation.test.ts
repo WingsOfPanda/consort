@@ -1,13 +1,12 @@
 // tests/score-escalation.test.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { freshHome } from "./helpers/tmpHome.js";
 import { scoreArtDir } from "../src/core/score.js";
 import { partDir } from "../src/core/paths.js";
 import { outboxPath } from "../src/core/ipc.js";
-import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun, emitDagRun, checkDagRun, drilldownWith, forensicsRun, archiveRun } from "../src/commands/score.js";
+import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun, drilldownWith, forensicsRun, archiveRun } from "../src/commands/score.js";
 
 let env: { home: string; cleanup: () => void };
 beforeEach(() => { env = freshHome(); });
@@ -330,18 +329,12 @@ describe("score walk-state", () => {
 });
 
 describe("score detect-multi-repo", () => {
-  it("emits TSV hits for sibling dirs whose slug substring-matches the corpus", async () => {
-    const art = scoreArtDir("t"); mkdirSync(art, { recursive: true });
-    writeFileSync(join(art, "adjudicated.md"), "## Cross-verified\n- [x] touches api and web modules\n");
-    const hub = mkdtempSync(join(tmpdir(), "hub-"));
-    for (const s of ["api", "web"]) { mkdirSync(join(hub, s)); writeFileSync(join(hub, s, "CLAUDE.md"), "x\n"); }
-    mkdirSync(join(hub, "zzz")); writeFileSync(join(hub, "zzz", "CLAUDE.md"), "x\n");
+  it("multi-repo retired: always zero hits (stub), prints nothing, rc 0", async () => {
     let out = ""; const orig = process.stdout.write.bind(process.stdout);
     (process.stdout as any).write = (s: string) => { out += s; return true; };
-    try { await detectMultiRepoRun(["t", "--cwd", hub]); } finally { (process.stdout as any).write = orig; }
-    expect(out).toContain("api\t");
-    expect(out).toContain("web\t");
-    expect(out).not.toContain("zzz\t"); // slug not in corpus
+    let rc = 1; try { rc = await detectMultiRepoRun(["t"]); } finally { (process.stdout as any).write = orig; }
+    expect(rc).toBe(0);
+    expect(out).toBe("");
   });
 });
 
@@ -370,37 +363,6 @@ describe("score drilldown", () => {
     expect(rc).toBe(1); // no file written
     expect(await drilldownWith(["t", "Arch"], { offsetFor: () => 0, send: async () => 0, wait: async () => null, multiplier: () => "1.0" }, {})).toBe(2);
   });
-  it("n=8 (subproject only) → K=1, subproject flows into the resolved path", async () => {
-    const art = scoreArtDir("t"); const dd = join(art, "drilldowns"); mkdirSync(join(dd, "_scratch"), { recursive: true });
-    writeFileSync(join(art, "doc.md"), "# doc\n"); mkdirSync(partDir("viola", "codex", "t"), { recursive: true });
-    const sends: string[][] = [];
-    const rc = await drilldownWith(
-      ["t", "Architecture", dd, "", join(art, "doc.md"), "viola", "codex", "apisub"],
-      { offsetFor: () => 0, send: async (a) => { sends.push(a); return 0; },
-        wait: async () => ({ event: "done" }), multiplier: () => "1.0" },
-      { writeProbe: (p: string) => writeFileSync(p, "notes\n") },
-    );
-    expect(rc).toBe(0);
-    expect(sends.length).toBe(1); // subproject is rest[7], NOT a second part
-    expect(existsSync(join(dd, "_scratch", "drilldown-architecture-apisub-viola.md"))).toBe(true);
-  });
-  it("n=10 (i2 m2 subproject) → K=2 parts, both files carry the subproject", async () => {
-    const art = scoreArtDir("t"); const dd = join(art, "drilldowns"); mkdirSync(join(dd, "_scratch"), { recursive: true });
-    writeFileSync(join(art, "doc.md"), "# doc\n");
-    mkdirSync(partDir("viola", "codex", "t"), { recursive: true });
-    mkdirSync(partDir("cello", "gemini", "t"), { recursive: true });
-    const sends: string[][] = [];
-    const rc = await drilldownWith(
-      ["t", "Architecture", dd, "", join(art, "doc.md"), "viola", "codex", "cello", "gemini", "apisub"],
-      { offsetFor: () => 0, send: async (a) => { sends.push(a); return 0; },
-        wait: async () => ({ event: "done" }), multiplier: () => "1.0" },
-      { writeProbe: (p: string) => writeFileSync(p, "notes\n") },
-    );
-    expect(rc).toBe(0);
-    expect(sends.length).toBe(2); // i2=cello parsed as a second part
-    expect(existsSync(join(dd, "_scratch", "drilldown-architecture-apisub-viola.md"))).toBe(true);
-    expect(existsSync(join(dd, "_scratch", "drilldown-architecture-apisub-cello.md"))).toBe(true);
-  });
 });
 
 describe("score forensics + archive", () => {
@@ -418,27 +380,5 @@ describe("score forensics + archive", () => {
     writeFileSync(join(art, "topic.txt"), "t");
     expect(await archiveRun(["t"])).toBe(0);
     expect(existsSync(art)).toBe(false); // moved to archive
-  });
-});
-
-describe("score emit-dag + check-dag", () => {
-  it("emit-dag renders dag-rows.tsv to the execution-dag draft; check-dag passes it", async () => {
-    const art = scoreArtDir("t"); mkdirSync(join(art, "design-doc", ".draft"), { recursive: true });
-    writeFileSync(join(art, "dag-rows.tsv"), "1\tapi\tbuild the API\tnone\n2\tweb\tship the web app\t1\n");
-    expect(await emitDagRun(["t"])).toBe(0);
-    const draft = readFileSync(join(art, "design-doc", ".draft", "execution-dag.md"), "utf8");
-    expect(draft).toMatch(/^## Execution DAG\n/);
-    expect(draft).toContain("1. api — build the API");
-    expect(draft).toContain("2. web — ship the web app (depends on 1)");
-    expect(await checkDagRun(["t"])).toBe(0); // conformant
-  });
-  it("check-dag rc 1 + malformed line when the draft uses a hyphen", async () => {
-    const art = scoreArtDir("t"); mkdirSync(join(art, "design-doc", ".draft"), { recursive: true });
-    writeFileSync(join(art, "design-doc", ".draft", "execution-dag.md"), "## Execution DAG\n\n1. api - bad dash\n");
-    const errs: string[] = []; const s = process.stderr.write.bind(process.stderr);
-    (process.stderr as any).write = (x: string) => { errs.push(String(x)); return true; };
-    let rc = 0; try { rc = await checkDagRun(["t"]); } finally { (process.stderr as any).write = s; }
-    expect(rc).toBe(1);
-    expect(errs.join("")).toContain("1. api - bad dash");
   });
 });

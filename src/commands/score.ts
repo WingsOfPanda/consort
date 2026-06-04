@@ -7,13 +7,12 @@ import { atomicWrite } from "../core/atomic.js";
 import { isoUtc, archiveTopic } from "../core/archive.js";
 import {
   deriveSlug, parseScoreArgs, scoreArtDir, scoreDraftDir,
-  formatRosterFile, scoreDocPath, parseMultiRepoMode, parseRosterFile,
-  spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag, writeTargetsTsv,
-  parseRosterTargets, resolveDrilldownPath, cascadeTargets, exportDocTo,
+  formatRosterFile, scoreDocPath, parseRosterFile,
+  spawnRosterArg, spawnResultsTsv, spawnTally, parsePanesFile, verifyScopeFiles, lastTag,
+  resolveDrilldownPath, cascadeTargets, exportDocTo,
   type RosterRow, type SpawnResult, type ResetPhase,
 } from "../core/score.js";
-import { detectMultiRepo, validateTargets, type RepoHit } from "../core/multirepo.js";
-import { assembleDoc, SECTIONS_SINGLE, SECTIONS_MULTI, synthesizeSeeds, type DocMode } from "../core/scoreDoc.js";
+import { assembleDoc, SECTIONS_SINGLE, synthesizeSeeds } from "../core/scoreDoc.js";
 import { auditDoc } from "../core/audit.js";
 import { readProviderList } from "../core/providers.js";
 import { activeProvidersPath, partDir, repoRoot, topicDir } from "../core/paths.js";
@@ -23,7 +22,6 @@ import { instrumentConsultValidated, consultTimeout, instrumentTimeoutMultiplier
 import { composeResearchPrompt, researchState, parseLatestOffset, scaledTimeout, composeVerifyPrompt, verifyState, composeDrilldownPrompt, drilldownState, gateState } from "../core/scoreTurn.js";
 import { runForensics, runFlag } from "../core/forensics.js";
 import { diffFindings, type DiffPart } from "../core/scoreDiff.js";
-import { emitSoftDag, checkDagSection, dagMalformedLines, type SoftDagRow } from "../core/dag.js";
 import { adjudicate, type AdjudicateInput } from "../core/scoreAdjudicate.js";
 import { classifyTopic, skillHintAppend } from "../core/scoreSkill.js";
 import { readIfExists as readIf, readIfExistsOrNull } from "../core/fsread.js";
@@ -32,13 +30,13 @@ import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 
-function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|emit-dag|check-dag|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
   const rest = args.slice(1);
   switch (verb) {
-    case "init": return initRun(applyArgsFile(rest, { valueFlags: new Set(["--targets"]) }));
+    case "init": return initRun(applyArgsFile(rest, { valueFlags: new Set() }));
     case "assemble": return assembleRun(rest);
     case "spawn-all": return spawnAllRun(rest);
     case "research-send": return researchSendRun(rest);
@@ -51,8 +49,6 @@ export async function run(args: string[]): Promise<number> {
     case "walk-state": return walkStateRun(rest);
     case "wait-gate": return waitGateRun(rest);
     case "detect-multi-repo": return detectMultiRepoRun(rest);
-    case "emit-dag": return emitDagRun(rest);
-    case "check-dag": return checkDagRun(rest);
     case "drilldown": return drilldownRun(rest);
     case "offset-reset": return offsetResetRun(rest);
     case "forensics": return forensicsRun(rest);
@@ -67,19 +63,17 @@ export interface ScoreInitDeps {
   activeProviders(): string[];
   isValidated(provider: string): boolean;
   pickInstruments(topic: string, n: number): string[];
-  validateTargets(slugs: string[]): { ok: RepoHit[]; errors: string[] };
 }
 const liveInitDeps: ScoreInitDeps = {
   activeProviders: () => readProviderList(activeProvidersPath()),
   isValidated: instrumentConsultValidated,
   pickInstruments,
-  validateTargets: (slugs) => validateTargets(repoRoot(), slugs),
 };
 
 async function initRun(tokens: string[]): Promise<number> { return initWith(tokens, liveInitDeps); }
 
 export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<number> {
-  const { topicText, ensemble, targets } = parseScoreArgs(tokens);
+  const { topicText, ensemble } = parseScoreArgs(tokens);
   if (!topicText) { log.error("score init: topic text is empty"); return 1; }
   const topic = deriveSlug(topicText);
   if (!topic) { log.error("score init: topic produced an empty slug; provide alphanumerics"); return 1; }
@@ -95,14 +89,6 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   const art = scoreArtDir(topic);
   if (existsSync(art)) { log.error(`score init: topic already in flight: ${art}`); log.error("  run /consort:coda or pick a different topic"); return 2; }
 
-  // Validate --targets BEFORE scaffolding so a bad slug leaves no art dir behind.
-  let targetHits: RepoHit[] = [];
-  if (targets.length > 0) {
-    const v = d.validateTargets(targets);
-    if (v.errors.length) { for (const e of v.errors) log.error(`score init: ${e}`); return 1; }
-    targetHits = v.ok;
-  }
-
   const instruments = d.pickInstruments(topic, roster.length);
   if (instruments.length < roster.length) { log.error(`score init: instrument pool exhausted (need ${roster.length}, got ${instruments.length})`); return 1; }
   const rows: RosterRow[] = roster.map((provider, i) => ({ provider, instrument: instruments[i] }));
@@ -112,9 +98,9 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   atomicWrite(join(art, "skill.txt"), classifyTopic(topicText));
   // Full roster written even on a fast-path run; the ensemble path (Phase C) reads roster.txt back.
   atomicWrite(join(art, "roster.txt"), formatRosterFile(rows, isoUtc()));
-  const mode = targetHits.length >= 2 ? "multi" : targetHits.length === 1 ? "single-sub" : "single";
+  // multi-repo retired: always single-repo. multi-repo.txt is kept as a compat shim.
+  const mode = "single";
   atomicWrite(join(art, "multi-repo.txt"), mode + "\n");
-  if (targetHits.length > 0) atomicWrite(join(art, "targets.txt"), writeTargetsTsv(targetHits, isoUtc()));
 
   log.ok(`score init: topic=${topic} N=${rows.length} ensemble=${ensemble ? "yes" : "no"} mode=${mode}`);
   process.stdout.write(
@@ -132,16 +118,14 @@ async function assembleRun(rest: string[]): Promise<number> {
   if (!existsSync(draftDir)) { log.error(`score assemble: no draft dir at ${draftDir} (run score init + draft sections)`); return 2; }
 
   const title = (readIf(join(art, "topic.txt")).split("\n")[0] || topic).trim();
-  const mode: DocMode = parseMultiRepoMode(readIf(join(art, "multi-repo.txt")));
-  const targets = mode === "single" ? [] : parseRosterTargets(readIf(join(art, "targets.txt")));
-  const keys = mode === "multi" ? SECTIONS_MULTI : SECTIONS_SINGLE;
+  const keys = SECTIONS_SINGLE;
   const drafts = new Map<string, string>();
   // One trailing newline per section → a blank line between them (matches the behavioral source's
   // `cat draft; printf '\n'` and assembleDoc's missing-draft branch which emits a blank line).
   for (const k of keys) { const f = join(draftDir, `${k}.md`); if (existsSync(f)) drafts.set(k, readFileSync(f, "utf8").replace(/\n+$/, "") + "\n"); }
 
   const date = isoUtc().slice(0, 10);
-  const doc = assembleDoc({ title, mode, date, targets, drafts });
+  const doc = assembleDoc({ title, drafts });
   const out = scoreDocPath(topic, date);
   mkdirSync(join(art, "design-doc"), { recursive: true });
   atomicWrite(out, doc);
@@ -491,52 +475,13 @@ export async function waitGateRun(rest: string[]): Promise<number> {
   return states.every((s) => s.status === "terminal") ? 0 : 1;
 }
 
-// ---- Phase E: multi-repo detection + execution-DAG ----
+// ---- detect-multi-repo (retired stub) ----
 
-export async function detectMultiRepoRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: score detect-multi-repo <topic> [--cwd <abs>]"); return 2; }
-  let cwd = process.cwd();
-  const ci = rest.indexOf("--cwd");
-  if (ci >= 0 && rest[ci + 1]) cwd = rest[ci + 1];
-  const art = scoreArtDir(topic);
-  const adj = join(art, "adjudicated.md");
-  const corpus = existsSync(adj) ? readFileSync(adj, "utf8")
-    : existsSync(join(art, "topic.txt")) ? readFileSync(join(art, "topic.txt"), "utf8") : "";
-  if (!corpus) log.warn(`score detect-multi-repo: no adjudicated.md/topic.txt corpus at ${art}; scanning anyway`);
-  const hits = detectMultiRepo(cwd, corpus);
-  for (const h of hits) process.stdout.write(`${h.slug}\t${h.marker}\n`);
-  log.ok(`score detect-multi-repo: ${hits.length} hit(s) under ${cwd}`);
+// multi-repo retired: always zero hits (single-repo). Kept as a stub so the
+// score.md Stage 10 "0 hits -> single" branch keeps working until the docs
+// follow-up removes the call. See 2026-06-04-multi-repo-retirement spec.
+export async function detectMultiRepoRun(_rest: string[]): Promise<number> {
   return 0;
-}
-
-export async function emitDagRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: score emit-dag <topic>"); return 2; }
-  const art = scoreArtDir(topic);
-  const rowsPath = join(art, "dag-rows.tsv");
-  if (!existsSync(rowsPath)) { log.error(`score emit-dag: ${rowsPath} missing (the directive writes step\\trepo\\tdesc\\tdeps rows)`); return 1; }
-  const rows: SoftDagRow[] = readFileSync(rowsPath, "utf8").split("\n")
-    .map((l) => l.replace(/\r$/, "")).filter((l) => l.length > 0 && !l.startsWith("#"))
-    .map((l) => { const [step, repo, desc, deps] = l.split("\t"); return { step, repo, desc, deps: deps ?? "none" }; })
-    .filter((r) => r.step && r.repo);
-  const draftDir = scoreDraftDir(topic);
-  mkdirSync(draftDir, { recursive: true });
-  atomicWrite(join(draftDir, "execution-dag.md"), `## Execution DAG\n\n${emitSoftDag(rows)}\n`);
-  log.ok(`score emit-dag: wrote execution-dag.md (${rows.length} steps)`);
-  return 0;
-}
-
-export async function checkDagRun(rest: string[]): Promise<number> {
-  const topic = rest[0];
-  if (!topic) { log.error("usage: score check-dag <topic>"); return 2; }
-  const draft = join(scoreDraftDir(topic), "execution-dag.md");
-  if (!existsSync(draft)) { log.error(`score check-dag: ${draft} missing (run score emit-dag first / draft the section)`); return 1; }
-  const text = readFileSync(draft, "utf8");
-  if (checkDagSection(text)) { log.ok("score check-dag: Execution DAG parses"); return 0; }
-  for (const l of dagMalformedLines(text)) process.stderr.write(l + "\n");
-  log.error("score check-dag: Execution DAG has malformed numbered lines (see above)");
-  return 1;
 }
 
 // ---- Phase F: drilldown (optional, parts still live) ----
@@ -553,11 +498,10 @@ async function drilldownRun(rest: string[]): Promise<number> {
 }
 
 export async function drilldownWith(rest: string[], d: DrilldownDeps, hooks: DrilldownTestHooks): Promise<number> {
-  // positional: topic section ddDir focus designDoc i1 m1 [i2 m2] [subproject]
+  // positional: topic section ddDir focus designDoc i1 m1 [i2 m2]
   const n = rest.length;
-  if (![7, 8, 9, 10].includes(n)) { log.error("usage: score drilldown <topic> <section> <dd-dir> <focus> <design-doc> <i1> <m1> [<i2> <m2>] [<subproject>]"); return 2; }
+  if (![7, 9].includes(n)) { log.error("usage: score drilldown <topic> <section> <dd-dir> <focus> <design-doc> <i1> <m1> [<i2> <m2>]"); return 2; }
   const [topic, section, ddDir, focus, designDoc, i1, m1] = rest;
-  const subproject = (n === 8 || n === 10) ? rest[n - 1] : "";
   const [i2, m2] = n >= 9 ? [rest[7], rest[8]] : ["", ""];
   if (!existsSync(ddDir)) { log.error(`score drilldown: dd-dir not found: ${ddDir}`); return 2; }
   if (!existsSync(designDoc)) { log.error(`score drilldown: design-doc not found: ${designDoc}`); return 2; }
@@ -568,7 +512,7 @@ export async function drilldownWith(rest: string[], d: DrilldownDeps, hooks: Dri
 
   // Resolve all out-paths BEFORE dispatch so parallel parts (distinct by instrument in the filename)
   // never target the same file.
-  const jobs = parts.map((p) => ({ ...p, outPath: resolveDrilldownPath(scratch, section, p.inst, subproject || undefined) }));
+  const jobs = parts.map((p) => ({ ...p, outPath: resolveDrilldownPath(scratch, section, p.inst) }));
   const timeout = (provider: string): number => scaledTimeout(DRILLDOWN_TIMEOUT(), d.multiplier(provider));
 
   const results = await Promise.all(jobs.map(async (j) => {
