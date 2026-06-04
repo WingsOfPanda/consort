@@ -230,7 +230,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - `tests/score-core.test.ts`: delete the `parseScoreArgs` `--targets` cases, the `parseMultiRepoMode` describe, and the `writeTargetsTsv` describe. KEEP `parseRosterFile`/`verifyScopeFiles` (instrument), roster, `lastTag`, and the drilldown-collision cases. Where a drilldown case passes a `subproject` arg, drop that argument.
 - `tests/score-init.test.ts`: delete the two `--targets` cases (valid → TSV `targets.txt`/`multi-repo.txt=multi`, and invalid slug → rc 1) and the `validateTargets` stub in `deps()`.
 - `tests/score-assemble.test.ts`: keep the single-repo assemble end-to-end; ensure the scaffold writes `multi-repo.txt` === `"single\n"` (the compat-shim constant the collapsed `assembleRun` no longer reads — leave the seed line or drop it, but the assertion on the produced doc must stay byte-identical).
-- `tests/score-escalation.test.ts`: delete the `describe("score detect-multi-repo", ...)` block, the `emit-dag`/`check-dag` cases (incl. the `^## Execution DAG` draft assertion and malformed-DAG case), and the drilldown `<subproject>` positional cases. KEEP the rest.
+- `tests/score-escalation.test.ts`: **adjust** the `describe("score detect-multi-repo", ...)` block — replace the sibling-detection assertions with a single stub assertion (the verb now always prints nothing and returns rc 0; see Step 6 / Task 1 verdict). Delete the `emit-dag`/`check-dag` cases (incl. the `^## Execution DAG` draft assertion and malformed-DAG case) and the drilldown `<subproject>` positional cases. KEEP the rest.
 - `tests/score-doc.test.ts`: delete the `SECTIONS_MULTI` assertion, the `sectionTitle("execution-dag")` assertion, the `single-sub` assemble case, and the `multi` assemble case (Date + plural Target header + Execution DAG + Cross-Repo Notes). KEEP the `SECTIONS_SINGLE` assertion, the single header-less assemble case, and all `synthesizeSeeds` cases. Update any surviving `assembleDoc({ ... })` call to the collapsed `{ title, drafts }` signature.
 - `tests/args.test.ts`: delete the `--targets` value-flag cases (the apostrophe-survival + value-flag parsing for `--targets`). KEEP the unrelated multi-LINE `$ARGUMENTS` cases.
 
@@ -265,9 +265,20 @@ Delete `parseMultiRepoMode`, `writeTargetsTsv`, and `parseRosterTargets`. Remove
 - Remove the `if (targetHits.length > 0) atomicWrite(... "targets.txt" ...)` line.
 - Keep the `MODE=single` stdout line and all other output.
 
-- [ ] **Step 6: Delete the three score multi verbs (`src/commands/score.ts`)**
+- [ ] **Step 6: Stub `detect-multi-repo`; delete `emit-dag`/`check-dag` (`src/commands/score.ts`)**
 
-Delete `detectMultiRepoRun`, `emitDagRun`, `checkDagRun`, their `case` lines in `run()`, their `usage()` tokens, and the now-dead imports from `./core/dag.js` (`emitSoftDag`, `checkDagSection`, `dagMalformedLines`, `SoftDagRow`) and `./core/multirepo.js`. In `drilldownWith`, drop the `subproject` parameter handling (the `n === 8`/`n === 10` arity branch) so drilldown takes fixed arg counts; pass no `subproject` to `resolveDrilldownPath`.
+**Task 1 verdict (directive-path safety):** the `score.md` Stage 10 directive calls `$CS score detect-multi-repo` on the escalate + no-`--targets` path (a single-repo escalated flow whose "0 hits → single" branch is live). Deleting the verb would break that flow before the docs follow-up, so per the spec's hard acceptance criterion it is **kept as a thin zero-hits stub** (the single-repo outcome — a single-repo env always yielded 0 hits anyway):
+
+```ts
+// multi-repo retired: always zero hits (single-repo). Kept as a stub so the
+// score.md Stage 10 "0 hits -> single" branch keeps working until the docs
+// follow-up removes the call. See 2026-06-04-multi-repo-retirement spec.
+async function detectMultiRepoRun(_rest: string[]): Promise<number> {
+  return 0;
+}
+```
+
+Keep the `detect-multi-repo` `case` in `run()` and its `usage()` token. Delete `emitDagRun`, `checkDagRun`, their `case` lines, their `usage()` tokens, and the now-dead imports from `./core/dag.js` (`emitSoftDag`, `checkDagSection`, `dagMalformedLines`, `SoftDagRow`). Remove the `./core/multirepo.js` import (the stub no longer calls `detectMultiRepo`). In `drilldownWith`, drop the `subproject` parameter handling (the `n === 8`/`n === 10` arity branch) so drilldown takes fixed arg counts; pass no `subproject` to `resolveDrilldownPath`.
 
 - [ ] **Step 7a: Collapse `assembleRun` (`src/commands/score.ts`)**
 
@@ -402,10 +413,10 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ```bash
 cd /home/liupan/CC/consort
-grep -rnE "detectMultiRepo|validateTargets|RepoHit|TargetValidation|SECTIONS_MULTI|parseMultiRepoMode|writeTargetsTsv|parseRosterTargets|extractTarget|resolveTarget|resolveHub|PerformResolveError|composeDagUnitPrompt|DocMode|from \"./dag.js\"|from \"../core/dag.js\"|from \"./multirepo.js\"|from \"../core/multirepo.js\"|performSibling" src/
+grep -rnE "validateTargets|RepoHit|TargetValidation|SECTIONS_MULTI|parseMultiRepoMode|writeTargetsTsv|parseRosterTargets|extractTarget|resolveTarget|resolveHub|PerformResolveError|composeDagUnitPrompt|DocMode|detectMultiRepo\(|from \"./dag.js\"|from \"../core/dag.js\"|from \"./multirepo.js\"|from \"../core/multirepo.js\"|performSibling" src/
 ```
 
-Expected: NO output (all references gone). Any hit means a dangling reference — fix it in the owning task before proceeding.
+Expected: NO output (all references gone). Note: the kept `detectMultiRepoRun` stub is intentionally NOT matched (we grep `detectMultiRepo\(` — a *call* to the deleted `multirepo.ts` export — not the surviving stub's name). Any hit means a dangling reference — fix it in the owning task before proceeding.
 
 - [ ] **Step 2: Confirm the instrument-ensemble code is untouched**
 
