@@ -78,6 +78,34 @@ function loadArgsFile(path6) {
   const raw = (0, import_node_fs.readFileSync)(path6, "utf8").replace(/\r?\n/g, " ");
   return tokenizeArgsLine(raw);
 }
+function loadArgsFileVerbatim(path6, valueFlags) {
+  if (!(0, import_node_fs.existsSync)(path6)) return [];
+  const raw = (0, import_node_fs.readFileSync)(path6, "utf8");
+  const isWs = (c3) => c3 === " " || c3 === "	" || c3 === "\n" || c3 === "\r";
+  const flags = [];
+  let i2 = 0;
+  for (; ; ) {
+    while (i2 < raw.length && isWs(raw[i2])) i2++;
+    if (i2 >= raw.length) break;
+    if (!(raw[i2] === "-" && raw[i2 + 1] === "-")) break;
+    let j = i2;
+    while (j < raw.length && !isWs(raw[j])) j++;
+    const flag = raw.slice(i2, j);
+    flags.push(flag);
+    i2 = j;
+    if (valueFlags.has(flag) && !flag.includes("=")) {
+      while (i2 < raw.length && isWs(raw[i2])) i2++;
+      let k = i2;
+      while (k < raw.length && !isWs(raw[k])) k++;
+      if (k > i2) {
+        flags.push(raw.slice(i2, k));
+        i2 = k;
+      }
+    }
+  }
+  const body = raw.slice(i2).trim();
+  return body ? [...flags, body] : flags;
+}
 function consumeArgsFile(path6) {
   if (!path6) return;
   try {
@@ -85,11 +113,11 @@ function consumeArgsFile(path6) {
   } catch {
   }
 }
-function applyArgsFile(argv) {
+function applyArgsFile(argv, opts) {
   if (argv[0] !== "--args-file") return [...argv];
   const path6 = argv[1];
   if (!path6) throw new ArgsFileError("--args-file requires a path");
-  const tokens = loadArgsFile(path6);
+  const tokens = opts ? loadArgsFileVerbatim(path6, opts.valueFlags) : loadArgsFile(path6);
   consumeArgsFile(path6);
   return [...tokens, ...argv.slice(2)];
 }
@@ -18115,10 +18143,6 @@ function classifyTurn(ev) {
   if (ev.event === "question") return "question";
   return "failed";
 }
-function parseOffset(stateText) {
-  const m = stateText.match(/^OFFSET=(\d+)\s*$/m);
-  return m ? Number(m[1]) : null;
-}
 function composeFixPrompt(issuesText, round) {
   return [
     `You are entering ROUND ${round} of /consort:solo (fix loop), still on the same branch.`,
@@ -18144,699 +18168,6 @@ var init_turn = __esm({
     "use strict";
     BRANCH_DISCIPLINE = 'BRANCH DISCIPLINE (hard rule):\n- You are already on the correct branch. Do NOT run `git checkout`, `git switch`,\n  or `git branch`, and do NOT create new branches.\n- If the work genuinely needs a different branch, do NOT switch; instead emit\n  {"event":"error","reason":"branch-discipline: needed a different branch"} and stop.\n';
     BLOCKERS = 'IF YOU ARE BLOCKED:\n- If a path, file, command, or assumption is wrong or missing, do NOT guess or invent a\n  workaround. Append a question event to your outbox and stop:\n  {"event":"question","message":"<what you need and why>","ts":"<iso>"}\n  The conductor will reply via your inbox, then re-engage you.\n';
-  }
-});
-
-// src/core/fsread.ts
-function readIfExists(path6) {
-  return (0, import_node_fs24.existsSync)(path6) ? (0, import_node_fs24.readFileSync)(path6, "utf8") : "";
-}
-function readIfExistsOrNull(path6) {
-  return (0, import_node_fs24.existsSync)(path6) ? (0, import_node_fs24.readFileSync)(path6, "utf8") : null;
-}
-var import_node_fs24;
-var init_fsread = __esm({
-  "src/core/fsread.ts"() {
-    "use strict";
-    import_node_fs24 = require("node:fs");
-  }
-});
-
-// src/commands/solo.ts
-var solo_exports = {};
-__export(solo_exports, {
-  branchWith: () => branchWith,
-  finishWith: () => finishWith,
-  forensicsRun: () => forensicsRun,
-  initWith: () => initWith,
-  run: () => run9,
-  turnSendWith: () => turnSendWith,
-  turnWaitWith: () => turnWaitWith
-});
-function usage() {
-  log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|forensics|summary> ...");
-  return 2;
-}
-async function run9(args) {
-  const verb = args[0];
-  const rest = args.slice(1);
-  switch (verb) {
-    case "init":
-      return initRun(applyArgsFile(rest));
-    case "branch":
-      return branchRun(rest);
-    case "turn-send":
-      return turnSendRun(rest);
-    case "turn-wait":
-      return turnWaitRun(rest);
-    case "detect-test":
-      return detectTestRun(rest);
-    case "finish":
-      return finishRun(rest);
-    case "forensics":
-      return forensicsRun(rest);
-    case "flag":
-      return runFlag("solo", rest[0], rest.slice(1).join(" "));
-    case "summary":
-      return summaryRun(rest);
-    default:
-      return usage();
-  }
-}
-async function forensicsRun(rest) {
-  return runForensics("solo", soloArtDir, rest[0]);
-}
-async function initRun(tokens) {
-  return initWith(tokens, liveInitDeps);
-}
-async function initWith(tokens, d) {
-  const { topicText, provider: provArg, finish } = parseSoloArgs(tokens);
-  if (!topicText) {
-    log.error("solo init: topic text is empty");
-    return 1;
-  }
-  const slug = deriveSlug(topicText);
-  if (!slug) {
-    log.error("solo init: topic produced an empty slug; provide alphanumerics");
-    return 1;
-  }
-  const provider = provArg ?? "codex";
-  const binary = d.instrumentBinary(provider);
-  if (!binary) {
-    log.error(`solo init: provider '${provider}' has no entry in contracts.yaml`);
-    return 3;
-  }
-  if (!d.haveCmd(binary)) {
-    log.error(`solo init: ${provider}'s binary '${binary}' is not on PATH`);
-    return 3;
-  }
-  const art = soloArtDir(slug);
-  if ((0, import_node_fs25.existsSync)(art)) {
-    log.error(`solo init: topic already in flight: ${art}`);
-    log.error("  run /consort:coda or pick a different topic");
-    return 2;
-  }
-  const instrument = d.pickRandomInstrument(slug);
-  if (!instrument) {
-    log.error(`solo init: no available instrument in the pool for '${slug}'`);
-    return 1;
-  }
-  const exec = soloExecDir(slug);
-  (0, import_node_fs25.mkdirSync)(exec, { recursive: true });
-  atomicWrite((0, import_node_path20.join)(art, "topic.txt"), slug + "\n");
-  atomicWrite((0, import_node_path20.join)(art, "topic-text.txt"), topicText);
-  atomicWrite((0, import_node_path20.join)(art, "selected-provider.txt"), provider + "\n");
-  atomicWrite((0, import_node_path20.join)(art, "instrument.txt"), instrument + "\n");
-  atomicWrite((0, import_node_path20.join)(art, "timing.txt"), `started=${isoUtc()}
-`);
-  atomicWrite((0, import_node_path20.join)(exec, "provider.txt"), provider + "\n");
-  atomicWrite((0, import_node_path20.join)(exec, "finish.txt"), (finish ? "yes" : "no") + "\n");
-  const target = repoRoot();
-  log.ok(`solo init: topic=${slug} instrument=${instrument} provider=${provider} finish=${finish ? "yes" : "no"}`);
-  process.stdout.write(`SLUG=${slug}
-INSTRUMENT=${instrument}
-PROVIDER=${provider}
-FINISH=${finish ? "yes" : "no"}
-TARGET=${target}
-`);
-  return 0;
-}
-async function branchRun(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: solo branch <topic>");
-    return 2;
-  }
-  const target = repoRoot();
-  return branchWith(topic, target, runnerAt(target));
-}
-async function branchWith(topic, target, r) {
-  const snap = preSnapshot(r, "solo", topic);
-  if (snap.state === "not-git") {
-    log.error(`solo branch: ${target} is not a git repository`);
-    return 1;
-  }
-  const branch = `feat/solo-${topic}`;
-  const onBranch = createOrResumeBranch(r, branch);
-  const exec = soloExecDir(topic);
-  atomicWrite((0, import_node_path20.join)(exec, "target_cwd.txt"), target + "\n");
-  atomicWrite((0, import_node_path20.join)(exec, "start-branch.txt"), snap.branch + "\n");
-  atomicWrite((0, import_node_path20.join)(exec, "branch-base.sha"), snap.baseSha + "\n");
-  atomicWrite((0, import_node_path20.join)(exec, "branch.txt"), branch + "\n");
-  if (!onBranch) {
-    log.warn(`solo branch: checkout ${branch} failed; staying on ${snap.branch}`);
-  }
-  log.ok(`solo branch: ${branch} (snapshot=${snap.state}, base=${snap.baseSha.slice(0, 8)})`);
-  return 0;
-}
-async function turnSendRun(rest) {
-  const [topic, roundStr] = rest;
-  const round = Number(roundStr);
-  if (!topic || !Number.isInteger(round) || round < 1) {
-    log.error("usage: solo turn-send <topic> <round>=1..");
-    return 2;
-  }
-  return turnSendWith(topic, round, {
-    offsetFor: (i2, m, t) => outboxOffset(outboxPath(i2, m, t)),
-    send: (args) => run2(args)
-  });
-}
-async function turnSendWith(topic, round, d) {
-  const art = soloArtDir(topic);
-  const exec = soloExecDir(topic);
-  const instrument = readField((0, import_node_path20.join)(art, "instrument.txt"));
-  const provider = readField((0, import_node_path20.join)(art, "selected-provider.txt"));
-  if (!instrument || !provider) {
-    log.error("solo turn-send: missing instrument.txt/selected-provider.txt (run solo init)");
-    return 1;
-  }
-  const outbox = outboxPath(instrument, provider, topic);
-  if (!(0, import_node_fs25.existsSync)(outbox)) {
-    log.error(`solo turn-send: outbox not found at ${outbox} \u2014 was ${instrument} spawned?`);
-    return 1;
-  }
-  const sp = statusPath(instrument, provider, topic);
-  if ((0, import_node_fs25.existsSync)(sp)) {
-    const m = (0, import_node_fs25.readFileSync)(sp, "utf8").match(/"state":"([^"]*)"/);
-    if (m && m[1] && m[1] !== "idle") {
-      log.error(`solo turn-send: part not idle (state=${m[1]}); previous turn still in flight`);
-      return 1;
-    }
-  }
-  const stateFile = (0, import_node_path20.join)(exec, `turn-${round}.txt`);
-  if ((0, import_node_fs25.existsSync)(stateFile)) {
-    log.error(`solo turn-send: ${stateFile} already exists; rm to retry`);
-    return 1;
-  }
-  let prompt;
-  if (round === 1) {
-    const brief = (0, import_node_fs25.existsSync)((0, import_node_path20.join)(art, "task-brief.md")) ? (0, import_node_fs25.readFileSync)((0, import_node_path20.join)(art, "task-brief.md"), "utf8") : "";
-    const branch = readField((0, import_node_path20.join)(exec, "branch.txt")) || `feat/solo-${topic}`;
-    prompt = composeRound1Prompt(brief, branch);
-  } else {
-    const bundle = (0, import_node_path20.join)(exec, `fix-prompt-${round}.md`);
-    if (!(0, import_node_fs25.existsSync)(bundle)) {
-      log.error(`solo turn-send: fix bundle missing: ${bundle} (the directive must write it first)`);
-      return 1;
-    }
-    prompt = composeFixPrompt((0, import_node_fs25.readFileSync)(bundle, "utf8"), round);
-  }
-  const promptFile = (0, import_node_path20.join)(exec, `turn-prompt-${round}.md`);
-  atomicWrite(promptFile, prompt);
-  const offset = d.offsetFor(instrument, provider, topic);
-  atomicWrite(stateFile, `OFFSET=${offset}
-`);
-  const rc = await d.send([instrument, topic, `@${promptFile}`]);
-  if (rc !== 0) {
-    log.error(`solo turn-send: send failed (rc=${rc}); ${stateFile} kept for retry`);
-    return 1;
-  }
-  log.ok(`solo turn-send: round=${round} offset=${offset}`);
-  return 0;
-}
-function readField(path6) {
-  return readIfExists(path6).split("\n")[0].trim();
-}
-async function turnWaitRun(rest) {
-  const [topic, roundStr] = rest;
-  const round = Number(roundStr);
-  if (!topic || !Number.isInteger(round) || round < 1) {
-    log.error("usage: solo turn-wait <topic> <round>=1..");
-    return 2;
-  }
-  return turnWaitWith(topic, round, {
-    wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to)
-  });
-}
-async function turnWaitWith(topic, round, d) {
-  const art = soloArtDir(topic);
-  const exec = soloExecDir(topic);
-  const instrument = readField((0, import_node_path20.join)(art, "instrument.txt"));
-  const provider = readField((0, import_node_path20.join)(art, "selected-provider.txt"));
-  if (!instrument || !provider) {
-    log.error("solo turn-wait: missing instrument.txt/selected-provider.txt");
-    return 1;
-  }
-  const stateFile = (0, import_node_path20.join)(exec, `turn-${round}.txt`);
-  if (!(0, import_node_fs25.existsSync)(stateFile)) {
-    log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`);
-    return 1;
-  }
-  const offset = parseOffset((0, import_node_fs25.readFileSync)(stateFile, "utf8"));
-  if (offset === null) {
-    log.error(`solo turn-wait: OFFSET not set in ${stateFile}`);
-    return 1;
-  }
-  log.info(`solo turn-wait: round=${round} offset=${offset} timeout=${SOLO_TURN_TIMEOUT}s`);
-  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], SOLO_TURN_TIMEOUT);
-  const ts = classifyTurn(ev);
-  if (ts === "question" && ev) atomicWrite((0, import_node_path20.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
-  (0, import_node_fs25.appendFileSync)(stateFile, `TS=${ts}
-`);
-  log.ok(`solo turn-wait: round=${round} TS=${ts}`);
-  return 0;
-}
-async function detectTestRun(rest) {
-  const cwd = rest[0] || repoRoot();
-  process.stdout.write(detectTestCommand(cwd) + "\n");
-  return 0;
-}
-async function finishRun(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: solo finish <topic>");
-    return 2;
-  }
-  const target = readField((0, import_node_path20.join)(soloExecDir(topic), "target_cwd.txt")) || repoRoot();
-  return finishWith(topic, runnerAt(target), haveCmd("gh"));
-}
-async function finishWith(topic, r, hasGh) {
-  const exec = soloExecDir(topic);
-  const branch = readField((0, import_node_path20.join)(exec, "branch.txt"));
-  const startBranch = readField((0, import_node_path20.join)(exec, "start-branch.txt")) || "main";
-  const doFinish = readField((0, import_node_path20.join)(exec, "finish.txt")) === "yes";
-  if (!doFinish) {
-    r.run("git", ["checkout", "-q", startBranch]);
-    atomicWrite((0, import_node_path20.join)(exec, "finish-result.txt"), `none	branch-only (kept ${branch})
-`);
-    log.ok(`solo finish: branch-only \u2014 kept ${branch}, restored ${startBranch}`);
-    return 0;
-  }
-  const brief = (0, import_node_fs25.existsSync)((0, import_node_path20.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs25.readFileSync)((0, import_node_path20.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
-  const verify = readField((0, import_node_path20.join)(exec, "verify-result.txt"));
-  const res = finishBranch(r, {
-    branch,
-    startBranch,
-    hasGh,
-    title: `solo: ${branch}`,
-    body: `${brief}
-
-Verify: ${verify}
-
-(Automated solo branch \u2014 review and merge into ${startBranch}.)`
-  });
-  atomicWrite((0, import_node_path20.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
-`);
-  log.ok(`solo finish: ${res.action} \u2192 ${res.outcome}`);
-  return 0;
-}
-async function summaryRun(rest) {
-  const topic = rest[0];
-  if (!topic) {
-    log.error("usage: solo summary <topic> [--aborted <phase> <gate> <reason...>]");
-    return 2;
-  }
-  const art = soloArtDir(topic);
-  const exec = soloExecDir(topic);
-  const started = kvField((0, import_node_path20.join)(art, "timing.txt"), "started") || "unknown";
-  let ended;
-  let duration;
-  const i2 = rest.indexOf("--aborted");
-  const aborted2 = i2 >= 0;
-  if (!aborted2) {
-    ended = isoUtc();
-    const s = Date.parse(started), e = Date.parse(ended);
-    duration = Number.isFinite(s) && Number.isFinite(e) ? Math.round((e - s) / 1e3) : 0;
-    atomicWrite((0, import_node_path20.join)(art, "timing.txt"), `started=${started}
-ended=${ended}
-duration=${duration}
-`);
-  }
-  const facts = {
-    topic,
-    status: aborted2 ? "aborted" : "ok",
-    started,
-    ended,
-    duration,
-    provider: readField((0, import_node_path20.join)(art, "selected-provider.txt")) || "unknown",
-    instrument: readField((0, import_node_path20.join)(art, "instrument.txt")) || "unknown",
-    branch: readField((0, import_node_path20.join)(exec, "branch.txt")) || "unknown",
-    verify: readField((0, import_node_path20.join)(exec, "verify-result.txt")) || "unknown",
-    diffStats: readField((0, import_node_path20.join)(exec, "diff-stats.txt")) || "unknown",
-    archived: readField((0, import_node_path20.join)(art, "archived-path.txt")) || "(not archived)",
-    targetCwd: readField((0, import_node_path20.join)(exec, "target_cwd.txt")) || "<target>",
-    branchBase: readField((0, import_node_path20.join)(exec, "branch-base.sha")) || "<base>",
-    abortedPhase: aborted2 ? rest[i2 + 1] : void 0,
-    abortedGate: aborted2 ? rest[i2 + 2] : void 0,
-    abortedReason: aborted2 ? rest.slice(i2 + 3).join(" ") || "unknown" : void 0
-  };
-  atomicWrite((0, import_node_path20.join)(art, "SUMMARY.md"), renderSummary(facts));
-  if (aborted2) {
-    atomicWrite((0, import_node_path20.join)(art, "RESUME.md"), renderResume({
-      topic,
-      branch: facts.branch,
-      artDir: art,
-      phase: facts.abortedPhase ?? "unknown",
-      gate: facts.abortedGate ?? "unknown"
-    }));
-  }
-  log.ok(`solo summary: wrote ${(0, import_node_path20.join)(art, "SUMMARY.md")}`);
-  return 0;
-}
-function kvField(path6, key) {
-  if (!(0, import_node_fs25.existsSync)(path6)) return "";
-  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = (0, import_node_fs25.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
-  return m ? m[1].trim() : "";
-}
-var import_node_fs25, import_node_path20, liveInitDeps, SOLO_TURN_TIMEOUT;
-var init_solo2 = __esm({
-  "src/commands/solo.ts"() {
-    "use strict";
-    import_node_fs25 = require("node:fs");
-    import_node_path20 = require("node:path");
-    init_log();
-    init_args();
-    init_atomic();
-    init_archive();
-    init_paths();
-    init_solo();
-    init_forensics();
-    init_contracts();
-    init_deps();
-    init_instruments();
-    init_gitwork();
-    init_ipc();
-    init_turn();
-    init_send2();
-    init_fsread();
-    liveInitDeps = { haveCmd, instrumentBinary, pickRandomInstrument };
-    SOLO_TURN_TIMEOUT = Number(process.env.CONSORT_SOLO_TURN_TIMEOUT) || 14400;
-  }
-});
-
-// src/core/dag.ts
-function parseDagLine(line) {
-  const m = LINE_RE.exec(line);
-  if (!m) return null;
-  const step = m[1], repo = m[2], path6 = m[3] ?? "none", rest = m[4];
-  const d = DEPS_RE.exec(rest);
-  if (d) return { step, repo, path: path6, desc: d[1], deps: d[2].replace(/ /g, "") };
-  return { step, repo, path: path6, desc: rest, deps: "none" };
-}
-function dagSectionBody(docText) {
-  const body = [];
-  let inDag = false;
-  for (const l of docText.split("\n")) {
-    if (/^## Execution DAG[ \t]*$/.test(l)) {
-      inDag = true;
-      continue;
-    }
-    if (/^## /.test(l)) {
-      inDag = false;
-      continue;
-    }
-    if (inDag) body.push(l);
-  }
-  return body;
-}
-function checkDagSection(docText) {
-  for (const l of dagSectionBody(docText)) {
-    if (!/^[ \t]*\d+\./.test(l)) continue;
-    if (parseDagLine(l) === null) return false;
-  }
-  return true;
-}
-function dagMalformedLines(docText) {
-  return dagSectionBody(docText).filter((l) => /^[ \t]*\d+\./.test(l) && parseDagLine(l) === null);
-}
-function emitSoftDag(rows) {
-  return rows.filter((r) => r.step.length > 0).map(
-    (r) => r.deps === "none" || r.deps === "" ? `${r.step}. ${r.repo} \u2014 ${r.desc}` : `${r.step}. ${r.repo} \u2014 ${r.desc} (depends on ${r.deps.replace(/,/g, ", ")})`
-  ).join("\n");
-}
-function dagTopological(edges, nodes) {
-  const indegree = /* @__PURE__ */ new Map();
-  const children = /* @__PURE__ */ new Map();
-  for (const n2 of nodes) {
-    indegree.set(n2, 0);
-    children.set(n2, []);
-  }
-  for (const [from, to] of edges) {
-    if (!from || !to) continue;
-    const cur = indegree.get(to);
-    indegree.set(to, (typeof cur === "number" ? cur : 0) + 1);
-    const kids = children.get(from) ?? [];
-    kids.push(to);
-    children.set(from, kids);
-  }
-  const out = [];
-  let wave = 1;
-  let emitted = 0;
-  const total = nodes.length;
-  while (emitted < total) {
-    const currentWave = [];
-    for (const [n2, deg] of indegree) {
-      if (deg !== 0) continue;
-      currentWave.push(n2);
-    }
-    if (currentWave.length === 0) {
-      process.stderr.write(
-        `dagTopological: cycle detected (no zero-indegree nodes left, ${emitted}/${total} processed)
-`
-      );
-      return null;
-    }
-    const sorted = [...currentWave].sort((a2, b) => Number(a2) - Number(b));
-    for (const n2 of sorted) {
-      out.push(`${wave}	${n2}`);
-      indegree.set(n2, "DONE");
-      emitted += 1;
-      for (const c3 of children.get(n2) ?? []) {
-        const cd = indegree.get(c3);
-        if (cd === void 0 || cd === "DONE") continue;
-        indegree.set(c3, cd - 1);
-      }
-    }
-    wave += 1;
-  }
-  return out;
-}
-function dagFanInRepos(edgesText, wavesText) {
-  const indegree = /* @__PURE__ */ new Map();
-  for (const line of edgesText.split("\n")) {
-    if (line === "") continue;
-    const [, to] = line.split("	");
-    if (!to) continue;
-    indegree.set(to, (indegree.get(to) ?? 0) + 1);
-  }
-  const out = [];
-  for (const line of wavesText.split("\n")) {
-    const cols = line.split("	");
-    const step = cols[1];
-    const repo = cols[2];
-    if (!step) continue;
-    if ((indegree.get(step) ?? 0) >= 2) out.push(repo ?? "");
-  }
-  return out;
-}
-var LINE_RE, DEPS_RE;
-var init_dag = __esm({
-  "src/core/dag.ts"() {
-    "use strict";
-    LINE_RE = /^(\d+)\.[ \t]+([A-Za-z0-9_-]+)(?:[ \t]+\((\/[^)]+)\))?[ \t]+—[ \t]+(.+)$/;
-    DEPS_RE = /^(.+?)[ \t]+\(depends[ \t]+on[ \t]+([0-9, ]+)\)[ \t]*$/;
-  }
-});
-
-// src/core/audit.ts
-function extractTarget(docText) {
-  const matches = docText.match(TARGET_HEADER);
-  if (!matches || matches.length === 0) return { present: false };
-  if (matches.length > 1) return { present: true, valid: false };
-  const line = docText.split("\n").find((l) => /^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+/.test(l)) ?? "";
-  const slug = line.replace(/^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+([^ \t]+).*$/, "$1");
-  return SLUG_REGEX.test(slug) ? { present: true, valid: true, slug } : { present: true, valid: false };
-}
-function auditDoc(docText) {
-  const issues = [];
-  if (!/^##\s+Goal\b/m.test(docText)) issues.push("no_goal_section");
-  if (!/^##\s+(Architecture|Approach)\b/m.test(docText)) issues.push("no_arch_section");
-  if (!/^##\s+.*[Tt]est/m.test(docText)) issues.push("no_testing_section");
-  if (!/^##\s+.*[Ss]uccess/m.test(docText)) issues.push("no_success_section");
-  if (/<(archive|previous-[a-z][a-z0-9_-]*|archived-[a-z][a-z0-9_-]*|source-[a-z][a-z0-9_-]*)>/.test(docText)) issues.push("unresolved_placeholder");
-  if (/\bTBD\b/.test(docText)) issues.push("tbd_marker");
-  if (/\bTODO\b/.test(docText)) issues.push("todo_marker");
-  if (/fill in later/i.test(docText)) issues.push("fill_in_later_marker");
-  if (/to be determined/i.test(docText)) issues.push("to_be_determined_marker");
-  const t = extractTarget(docText);
-  if (t.present && !t.valid) issues.push("target_subproject_when_invalid");
-  if (/^## Execution DAG[ \t]*$/m.test(docText) && !checkDagSection(docText)) issues.push("execution_dag_not_parseable");
-  return issues.length === 0 ? { verdict: "PASS", issues } : { verdict: "FAIL", issues };
-}
-var SLUG_REGEX, TARGET_HEADER;
-var init_audit = __esm({
-  "src/core/audit.ts"() {
-    "use strict";
-    init_dag();
-    SLUG_REGEX = /^[A-Za-z0-9._-]+$/;
-    TARGET_HEADER = /^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+/gm;
-  }
-});
-
-// src/core/multirepo.ts
-function resolveMarker(dir) {
-  const marker = (0, import_node_fs26.existsSync)((0, import_node_path21.join)(dir, "CLAUDE.md")) ? (0, import_node_path21.join)(dir, "CLAUDE.md") : (0, import_node_fs26.existsSync)((0, import_node_path21.join)(dir, "AGENTS.md")) ? (0, import_node_path21.join)(dir, "AGENTS.md") : null;
-  if (!marker) return null;
-  try {
-    return (0, import_node_path21.join)((0, import_node_fs26.realpathSync)(dir), marker.slice(dir.length + 1));
-  } catch {
-    return marker;
-  }
-}
-function validateTargets(cwd, slugs) {
-  const ok = [];
-  const errors = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const slug of slugs) {
-    if (!SLUG_REGEX.test(slug)) {
-      errors.push(`invalid target slug (must match ${SLUG_REGEX.source}): ${slug}`);
-      continue;
-    }
-    if (seen.has(slug)) {
-      errors.push(`duplicate target slug: ${slug}`);
-      continue;
-    }
-    seen.add(slug);
-    const dir = (0, import_node_path21.join)(cwd, slug);
-    const marker = resolveMarker(dir);
-    if (!marker) {
-      errors.push(`target '${slug}' is not a sibling dir with CLAUDE.md/AGENTS.md under ${cwd}`);
-      continue;
-    }
-    ok.push({ slug, marker });
-  }
-  return { ok, errors };
-}
-function detectMultiRepo(cwd, corpus) {
-  const corpusLower = corpus.toLowerCase();
-  const hits = [];
-  let entries;
-  try {
-    entries = (0, import_node_fs26.readdirSync)(cwd, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return hits;
-  }
-  for (const slug of entries) {
-    if (slug.startsWith(".")) continue;
-    const dir = (0, import_node_path21.join)(cwd, slug);
-    const marker = resolveMarker(dir);
-    if (!marker) continue;
-    if (!corpusLower.includes(slug.toLowerCase())) continue;
-    hits.push({ slug, marker });
-  }
-  return hits;
-}
-var import_node_fs26, import_node_path21;
-var init_multirepo = __esm({
-  "src/core/multirepo.ts"() {
-    "use strict";
-    import_node_fs26 = require("node:fs");
-    import_node_path21 = require("node:path");
-    init_audit();
-  }
-});
-
-// src/core/scoreDoc.ts
-function sectionTitle(key) {
-  return TITLES[key] ?? key;
-}
-function assembleDoc(input) {
-  const sections = input.mode === "multi" ? SECTIONS_MULTI : SECTIONS_SINGLE;
-  let out = `# ${input.title}
-
-`;
-  if (input.mode === "multi") {
-    out += `**Date:** ${input.date}
-`;
-    out += `**Target Sub-Project(s):** ${input.targets.join(", ")}
-
-`;
-  } else if (input.mode === "single-sub") {
-    out += `**Date:** ${input.date}
-`;
-    out += `**Target Sub-Project:** ${input.targets[0] ?? ""}
-
-`;
-  }
-  for (const key of sections) {
-    const draft = input.drafts.get(key);
-    if (draft != null) out += `${draft}
-`;
-    else out += `## ${sectionTitle(key)}
-
-_(missing draft)_
-
-`;
-  }
-  return out;
-}
-function synthesizeSeeds(adjText) {
-  const lines = adjText.split("\n");
-  return SEED_SPECS.map((spec) => {
-    const matched = lines.filter(spec.match);
-    const body = `${spec.heading}
-
-${spec.comment}
-` + (matched.length ? matched.join("\n") + "\n" : SEED_PLACEHOLDER + "\n");
-    return { section: spec.section, body };
-  });
-}
-var SECTIONS_SINGLE, SECTIONS_MULTI, TITLES, SEED_SPECS, SEED_PLACEHOLDER;
-var init_scoreDoc = __esm({
-  "src/core/scoreDoc.ts"() {
-    "use strict";
-    SECTIONS_SINGLE = ["problem", "goal", "architecture", "components", "testing", "success-criteria"];
-    SECTIONS_MULTI = ["problem", "goal", "architecture", "components", "execution-dag", "cross-repo-notes", "testing", "success-criteria"];
-    TITLES = {
-      problem: "Problem",
-      goal: "Goal",
-      architecture: "Architecture",
-      components: "Components",
-      "execution-dag": "Execution DAG",
-      "cross-repo-notes": "Cross-Repo Notes",
-      testing: "Testing",
-      "success-criteria": "Success Criteria"
-    };
-    SEED_SPECS = [
-      {
-        section: "problem",
-        heading: "## Problem",
-        comment: "<!-- seed: cross-verified facts about the current state -->",
-        match: (l) => /^- \[/.test(l)
-      },
-      {
-        section: "goal",
-        heading: "## Goal",
-        comment: "<!-- seed: claims tagged [Goal] -->",
-        match: (l) => /^- \[Goal/i.test(l)
-      },
-      {
-        section: "architecture",
-        heading: "## Architecture",
-        comment: "<!-- seed: claims tagged [Architecture] -->",
-        match: (l) => /^- \[Architecture/i.test(l)
-      },
-      {
-        section: "components",
-        heading: "## Components",
-        comment: "<!-- seed: claims tagged [Components] -->",
-        match: (l) => /^- \[Components/i.test(l)
-      },
-      {
-        section: "testing",
-        heading: "## Testing",
-        comment: '<!-- seed: claims tagged [Testing] or containing "test" -->',
-        match: (l) => /^- \[Testing/i.test(l) || /^- .*\btest/i.test(l)
-      },
-      {
-        section: "success-criteria",
-        heading: "## Success Criteria",
-        comment: "<!-- seed: claims tagged [Success Criteria] -->",
-        match: (l) => /^- \[Success/i.test(l)
-      }
-    ];
-    SEED_PLACEHOLDER = "_(no seed content matched; Maestro drafts from scratch in the design walk)_";
   }
 });
 
@@ -19104,6 +18435,701 @@ var init_scoreTurn = __esm({
   }
 });
 
+// src/core/fsread.ts
+function readIfExists(path6) {
+  return (0, import_node_fs24.existsSync)(path6) ? (0, import_node_fs24.readFileSync)(path6, "utf8") : "";
+}
+function readIfExistsOrNull(path6) {
+  return (0, import_node_fs24.existsSync)(path6) ? (0, import_node_fs24.readFileSync)(path6, "utf8") : null;
+}
+var import_node_fs24;
+var init_fsread = __esm({
+  "src/core/fsread.ts"() {
+    "use strict";
+    import_node_fs24 = require("node:fs");
+  }
+});
+
+// src/commands/solo.ts
+var solo_exports = {};
+__export(solo_exports, {
+  branchWith: () => branchWith,
+  finishWith: () => finishWith,
+  forensicsRun: () => forensicsRun,
+  initWith: () => initWith,
+  run: () => run9,
+  turnSendWith: () => turnSendWith,
+  turnWaitWith: () => turnWaitWith
+});
+function usage() {
+  log.error("usage: solo <init|branch|turn-send|turn-wait|detect-test|finish|forensics|summary> ...");
+  return 2;
+}
+async function run9(args) {
+  const verb = args[0];
+  const rest = args.slice(1);
+  switch (verb) {
+    case "init":
+      return initRun(applyArgsFile(rest, { valueFlags: /* @__PURE__ */ new Set(["--provider"]) }));
+    case "branch":
+      return branchRun(rest);
+    case "turn-send":
+      return turnSendRun(rest);
+    case "turn-wait":
+      return turnWaitRun(rest);
+    case "detect-test":
+      return detectTestRun(rest);
+    case "finish":
+      return finishRun(rest);
+    case "forensics":
+      return forensicsRun(rest);
+    case "flag":
+      return runFlag("solo", rest[0], rest.slice(1).join(" "));
+    case "summary":
+      return summaryRun(rest);
+    default:
+      return usage();
+  }
+}
+async function forensicsRun(rest) {
+  return runForensics("solo", soloArtDir, rest[0]);
+}
+async function initRun(tokens) {
+  return initWith(tokens, liveInitDeps);
+}
+async function initWith(tokens, d) {
+  const { topicText, provider: provArg, finish } = parseSoloArgs(tokens);
+  if (!topicText) {
+    log.error("solo init: topic text is empty");
+    return 1;
+  }
+  const slug = deriveSlug(topicText);
+  if (!slug) {
+    log.error("solo init: topic produced an empty slug; provide alphanumerics");
+    return 1;
+  }
+  const provider = provArg ?? "codex";
+  const binary = d.instrumentBinary(provider);
+  if (!binary) {
+    log.error(`solo init: provider '${provider}' has no entry in contracts.yaml`);
+    return 3;
+  }
+  if (!d.haveCmd(binary)) {
+    log.error(`solo init: ${provider}'s binary '${binary}' is not on PATH`);
+    return 3;
+  }
+  const art = soloArtDir(slug);
+  if ((0, import_node_fs25.existsSync)(art)) {
+    log.error(`solo init: topic already in flight: ${art}`);
+    log.error("  run /consort:coda or pick a different topic");
+    return 2;
+  }
+  const instrument = d.pickRandomInstrument(slug);
+  if (!instrument) {
+    log.error(`solo init: no available instrument in the pool for '${slug}'`);
+    return 1;
+  }
+  const exec = soloExecDir(slug);
+  (0, import_node_fs25.mkdirSync)(exec, { recursive: true });
+  atomicWrite((0, import_node_path20.join)(art, "topic.txt"), slug + "\n");
+  atomicWrite((0, import_node_path20.join)(art, "topic-text.txt"), topicText);
+  atomicWrite((0, import_node_path20.join)(art, "selected-provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path20.join)(art, "instrument.txt"), instrument + "\n");
+  atomicWrite((0, import_node_path20.join)(art, "timing.txt"), `started=${isoUtc()}
+`);
+  atomicWrite((0, import_node_path20.join)(exec, "provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "finish.txt"), (finish ? "yes" : "no") + "\n");
+  const target = repoRoot();
+  log.ok(`solo init: topic=${slug} instrument=${instrument} provider=${provider} finish=${finish ? "yes" : "no"}`);
+  process.stdout.write(`SLUG=${slug}
+INSTRUMENT=${instrument}
+PROVIDER=${provider}
+FINISH=${finish ? "yes" : "no"}
+TARGET=${target}
+`);
+  return 0;
+}
+async function branchRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo branch <topic>");
+    return 2;
+  }
+  const target = repoRoot();
+  return branchWith(topic, target, runnerAt(target));
+}
+async function branchWith(topic, target, r) {
+  const snap = preSnapshot(r, "solo", topic);
+  if (snap.state === "not-git") {
+    log.error(`solo branch: ${target} is not a git repository`);
+    return 1;
+  }
+  const branch = `feat/solo-${topic}`;
+  const onBranch = createOrResumeBranch(r, branch);
+  const exec = soloExecDir(topic);
+  atomicWrite((0, import_node_path20.join)(exec, "target_cwd.txt"), target + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "start-branch.txt"), snap.branch + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "branch-base.sha"), snap.baseSha + "\n");
+  atomicWrite((0, import_node_path20.join)(exec, "branch.txt"), branch + "\n");
+  if (!onBranch) {
+    log.warn(`solo branch: checkout ${branch} failed; staying on ${snap.branch}`);
+  }
+  log.ok(`solo branch: ${branch} (snapshot=${snap.state}, base=${snap.baseSha.slice(0, 8)})`);
+  return 0;
+}
+async function turnSendRun(rest) {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) {
+    log.error("usage: solo turn-send <topic> <round>=1..");
+    return 2;
+  }
+  return turnSendWith(topic, round, {
+    offsetFor: (i2, m, t) => outboxOffset(outboxPath(i2, m, t)),
+    send: (args) => run2(args)
+  });
+}
+async function turnSendWith(topic, round, d) {
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const instrument = readField((0, import_node_path20.join)(art, "instrument.txt"));
+  const provider = readField((0, import_node_path20.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("solo turn-send: missing instrument.txt/selected-provider.txt (run solo init)");
+    return 1;
+  }
+  const outbox = outboxPath(instrument, provider, topic);
+  if (!(0, import_node_fs25.existsSync)(outbox)) {
+    log.error(`solo turn-send: outbox not found at ${outbox} \u2014 was ${instrument} spawned?`);
+    return 1;
+  }
+  const sp = statusPath(instrument, provider, topic);
+  if ((0, import_node_fs25.existsSync)(sp)) {
+    const m = (0, import_node_fs25.readFileSync)(sp, "utf8").match(/"state":"([^"]*)"/);
+    if (m && m[1] && m[1] !== "idle") {
+      log.error(`solo turn-send: part not idle (state=${m[1]}); previous turn still in flight`);
+      return 1;
+    }
+  }
+  const stateFile = (0, import_node_path20.join)(exec, `turn-${round}.txt`);
+  if ((0, import_node_fs25.existsSync)(stateFile)) {
+    log.error(`solo turn-send: ${stateFile} already exists; rm to retry`);
+    return 1;
+  }
+  let prompt;
+  if (round === 1) {
+    const brief = (0, import_node_fs25.existsSync)((0, import_node_path20.join)(art, "task-brief.md")) ? (0, import_node_fs25.readFileSync)((0, import_node_path20.join)(art, "task-brief.md"), "utf8") : "";
+    const branch = readField((0, import_node_path20.join)(exec, "branch.txt")) || `feat/solo-${topic}`;
+    prompt = composeRound1Prompt(brief, branch);
+  } else {
+    const bundle = (0, import_node_path20.join)(exec, `fix-prompt-${round}.md`);
+    if (!(0, import_node_fs25.existsSync)(bundle)) {
+      log.error(`solo turn-send: fix bundle missing: ${bundle} (the directive must write it first)`);
+      return 1;
+    }
+    prompt = composeFixPrompt((0, import_node_fs25.readFileSync)(bundle, "utf8"), round);
+  }
+  const promptFile = (0, import_node_path20.join)(exec, `turn-prompt-${round}.md`);
+  atomicWrite(promptFile, prompt);
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}
+`);
+  const rc = await d.send([instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) {
+    log.error(`solo turn-send: send failed (rc=${rc}); ${stateFile} kept for retry`);
+    return 1;
+  }
+  log.ok(`solo turn-send: round=${round} offset=${offset}`);
+  return 0;
+}
+function readField(path6) {
+  return readIfExists(path6).split("\n")[0].trim();
+}
+async function turnWaitRun(rest) {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) {
+    log.error("usage: solo turn-wait <topic> <round>=1..");
+    return 2;
+  }
+  return turnWaitWith(topic, round, {
+    wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to)
+  });
+}
+async function turnWaitWith(topic, round, d) {
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const instrument = readField((0, import_node_path20.join)(art, "instrument.txt"));
+  const provider = readField((0, import_node_path20.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("solo turn-wait: missing instrument.txt/selected-provider.txt");
+    return 1;
+  }
+  const stateFile = (0, import_node_path20.join)(exec, `turn-${round}.txt`);
+  if (!(0, import_node_fs25.existsSync)(stateFile)) {
+    log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`);
+    return 1;
+  }
+  const offset = parseLatestOffset((0, import_node_fs25.readFileSync)(stateFile, "utf8"));
+  if (offset === null) {
+    log.error(`solo turn-wait: OFFSET not set in ${stateFile}`);
+    return 1;
+  }
+  log.info(`solo turn-wait: round=${round} offset=${offset} timeout=${SOLO_TURN_TIMEOUT}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], SOLO_TURN_TIMEOUT);
+  const ts = classifyTurn(ev);
+  if (ts === "question" && ev) {
+    atomicWrite((0, import_node_path20.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    (0, import_node_fs25.appendFileSync)(stateFile, `OFFSET=${bumped}
+TS=question
+`);
+  } else {
+    (0, import_node_fs25.appendFileSync)(stateFile, `TS=${ts}
+`);
+  }
+  log.ok(`solo turn-wait: round=${round} TS=${ts}`);
+  return 0;
+}
+async function detectTestRun(rest) {
+  const cwd = rest[0] || repoRoot();
+  process.stdout.write(detectTestCommand(cwd) + "\n");
+  return 0;
+}
+async function finishRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo finish <topic>");
+    return 2;
+  }
+  const target = readField((0, import_node_path20.join)(soloExecDir(topic), "target_cwd.txt")) || repoRoot();
+  return finishWith(topic, runnerAt(target), haveCmd("gh"));
+}
+async function finishWith(topic, r, hasGh) {
+  const exec = soloExecDir(topic);
+  const branch = readField((0, import_node_path20.join)(exec, "branch.txt"));
+  const startBranch = readField((0, import_node_path20.join)(exec, "start-branch.txt")) || "main";
+  const doFinish = readField((0, import_node_path20.join)(exec, "finish.txt")) === "yes";
+  if (!doFinish) {
+    r.run("git", ["checkout", "-q", startBranch]);
+    atomicWrite((0, import_node_path20.join)(exec, "finish-result.txt"), `none	branch-only (kept ${branch})
+`);
+    log.ok(`solo finish: branch-only \u2014 kept ${branch}, restored ${startBranch}`);
+    return 0;
+  }
+  const brief = (0, import_node_fs25.existsSync)((0, import_node_path20.join)(soloArtDir(topic), "task-brief.md")) ? (0, import_node_fs25.readFileSync)((0, import_node_path20.join)(soloArtDir(topic), "task-brief.md"), "utf8") : "";
+  const verify = readField((0, import_node_path20.join)(exec, "verify-result.txt"));
+  const res = finishBranch(r, {
+    branch,
+    startBranch,
+    hasGh,
+    title: `solo: ${branch}`,
+    body: `${brief}
+
+Verify: ${verify}
+
+(Automated solo branch \u2014 review and merge into ${startBranch}.)`
+  });
+  atomicWrite((0, import_node_path20.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
+`);
+  log.ok(`solo finish: ${res.action} \u2192 ${res.outcome}`);
+  return 0;
+}
+async function summaryRun(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: solo summary <topic> [--aborted <phase> <gate> <reason...>]");
+    return 2;
+  }
+  const art = soloArtDir(topic);
+  const exec = soloExecDir(topic);
+  const started = kvField((0, import_node_path20.join)(art, "timing.txt"), "started") || "unknown";
+  let ended;
+  let duration;
+  const i2 = rest.indexOf("--aborted");
+  const aborted2 = i2 >= 0;
+  if (!aborted2) {
+    ended = isoUtc();
+    const s = Date.parse(started), e = Date.parse(ended);
+    duration = Number.isFinite(s) && Number.isFinite(e) ? Math.round((e - s) / 1e3) : 0;
+    atomicWrite((0, import_node_path20.join)(art, "timing.txt"), `started=${started}
+ended=${ended}
+duration=${duration}
+`);
+  }
+  const facts = {
+    topic,
+    status: aborted2 ? "aborted" : "ok",
+    started,
+    ended,
+    duration,
+    provider: readField((0, import_node_path20.join)(art, "selected-provider.txt")) || "unknown",
+    instrument: readField((0, import_node_path20.join)(art, "instrument.txt")) || "unknown",
+    branch: readField((0, import_node_path20.join)(exec, "branch.txt")) || "unknown",
+    verify: readField((0, import_node_path20.join)(exec, "verify-result.txt")) || "unknown",
+    diffStats: readField((0, import_node_path20.join)(exec, "diff-stats.txt")) || "unknown",
+    archived: readField((0, import_node_path20.join)(art, "archived-path.txt")) || "(not archived)",
+    targetCwd: readField((0, import_node_path20.join)(exec, "target_cwd.txt")) || "<target>",
+    branchBase: readField((0, import_node_path20.join)(exec, "branch-base.sha")) || "<base>",
+    abortedPhase: aborted2 ? rest[i2 + 1] : void 0,
+    abortedGate: aborted2 ? rest[i2 + 2] : void 0,
+    abortedReason: aborted2 ? rest.slice(i2 + 3).join(" ") || "unknown" : void 0
+  };
+  atomicWrite((0, import_node_path20.join)(art, "SUMMARY.md"), renderSummary(facts));
+  if (aborted2) {
+    atomicWrite((0, import_node_path20.join)(art, "RESUME.md"), renderResume({
+      topic,
+      branch: facts.branch,
+      artDir: art,
+      phase: facts.abortedPhase ?? "unknown",
+      gate: facts.abortedGate ?? "unknown"
+    }));
+  }
+  log.ok(`solo summary: wrote ${(0, import_node_path20.join)(art, "SUMMARY.md")}`);
+  return 0;
+}
+function kvField(path6, key) {
+  if (!(0, import_node_fs25.existsSync)(path6)) return "";
+  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = (0, import_node_fs25.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
+  return m ? m[1].trim() : "";
+}
+var import_node_fs25, import_node_path20, liveInitDeps, SOLO_TURN_TIMEOUT;
+var init_solo2 = __esm({
+  "src/commands/solo.ts"() {
+    "use strict";
+    import_node_fs25 = require("node:fs");
+    import_node_path20 = require("node:path");
+    init_log();
+    init_args();
+    init_atomic();
+    init_archive();
+    init_paths();
+    init_solo();
+    init_forensics();
+    init_contracts();
+    init_deps();
+    init_instruments();
+    init_gitwork();
+    init_ipc();
+    init_turn();
+    init_scoreTurn();
+    init_send2();
+    init_fsread();
+    liveInitDeps = { haveCmd, instrumentBinary, pickRandomInstrument };
+    SOLO_TURN_TIMEOUT = Number(process.env.CONSORT_SOLO_TURN_TIMEOUT) || 14400;
+  }
+});
+
+// src/core/dag.ts
+function parseDagLine(line) {
+  const m = LINE_RE.exec(line);
+  if (!m) return null;
+  const step = m[1], repo = m[2], path6 = m[3] ?? "none", rest = m[4];
+  const d = DEPS_RE.exec(rest);
+  if (d) return { step, repo, path: path6, desc: d[1], deps: d[2].replace(/ /g, "") };
+  return { step, repo, path: path6, desc: rest, deps: "none" };
+}
+function dagSectionBody(docText) {
+  const body = [];
+  let inDag = false;
+  for (const l of docText.split("\n")) {
+    if (/^## Execution DAG[ \t]*$/.test(l)) {
+      inDag = true;
+      continue;
+    }
+    if (/^## /.test(l)) {
+      inDag = false;
+      continue;
+    }
+    if (inDag) body.push(l);
+  }
+  return body;
+}
+function checkDagSection(docText) {
+  for (const l of dagSectionBody(docText)) {
+    if (!/^[ \t]*\d+\./.test(l)) continue;
+    if (parseDagLine(l) === null) return false;
+  }
+  return true;
+}
+function dagMalformedLines(docText) {
+  return dagSectionBody(docText).filter((l) => /^[ \t]*\d+\./.test(l) && parseDagLine(l) === null);
+}
+function emitSoftDag(rows) {
+  return rows.filter((r) => r.step.length > 0).map(
+    (r) => r.deps === "none" || r.deps === "" ? `${r.step}. ${r.repo} \u2014 ${r.desc}` : `${r.step}. ${r.repo} \u2014 ${r.desc} (depends on ${r.deps.replace(/,/g, ", ")})`
+  ).join("\n");
+}
+function dagTopological(edges, nodes) {
+  const indegree = /* @__PURE__ */ new Map();
+  const children = /* @__PURE__ */ new Map();
+  for (const n2 of nodes) {
+    indegree.set(n2, 0);
+    children.set(n2, []);
+  }
+  for (const [from, to] of edges) {
+    if (!from || !to) continue;
+    const cur = indegree.get(to);
+    indegree.set(to, (typeof cur === "number" ? cur : 0) + 1);
+    const kids = children.get(from) ?? [];
+    kids.push(to);
+    children.set(from, kids);
+  }
+  const out = [];
+  let wave = 1;
+  let emitted = 0;
+  const total = nodes.length;
+  while (emitted < total) {
+    const currentWave = [];
+    for (const [n2, deg] of indegree) {
+      if (deg !== 0) continue;
+      currentWave.push(n2);
+    }
+    if (currentWave.length === 0) {
+      process.stderr.write(
+        `dagTopological: cycle detected (no zero-indegree nodes left, ${emitted}/${total} processed)
+`
+      );
+      return null;
+    }
+    const sorted = [...currentWave].sort((a2, b) => Number(a2) - Number(b));
+    for (const n2 of sorted) {
+      out.push(`${wave}	${n2}`);
+      indegree.set(n2, "DONE");
+      emitted += 1;
+      for (const c3 of children.get(n2) ?? []) {
+        const cd = indegree.get(c3);
+        if (cd === void 0 || cd === "DONE") continue;
+        indegree.set(c3, cd - 1);
+      }
+    }
+    wave += 1;
+  }
+  return out;
+}
+function dagFanInRepos(edgesText, wavesText) {
+  const indegree = /* @__PURE__ */ new Map();
+  for (const line of edgesText.split("\n")) {
+    if (line === "") continue;
+    const [, to] = line.split("	");
+    if (!to) continue;
+    indegree.set(to, (indegree.get(to) ?? 0) + 1);
+  }
+  const out = [];
+  for (const line of wavesText.split("\n")) {
+    const cols = line.split("	");
+    const step = cols[1];
+    const repo = cols[2];
+    if (!step) continue;
+    if ((indegree.get(step) ?? 0) >= 2) out.push(repo ?? "");
+  }
+  return out;
+}
+var LINE_RE, DEPS_RE;
+var init_dag = __esm({
+  "src/core/dag.ts"() {
+    "use strict";
+    LINE_RE = /^(\d+)\.[ \t]+([A-Za-z0-9_-]+)(?:[ \t]+\((\/[^)]+)\))?[ \t]+—[ \t]+(.+)$/;
+    DEPS_RE = /^(.+?)[ \t]+\(depends[ \t]+on[ \t]+([0-9, ]+)\)[ \t]*$/;
+  }
+});
+
+// src/core/audit.ts
+function extractTarget(docText) {
+  const matches = docText.match(TARGET_HEADER);
+  if (!matches || matches.length === 0) return { present: false };
+  if (matches.length > 1) return { present: true, valid: false };
+  const line = docText.split("\n").find((l) => /^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+/.test(l)) ?? "";
+  const slug = line.replace(/^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+([^ \t]+).*$/, "$1");
+  return SLUG_REGEX.test(slug) ? { present: true, valid: true, slug } : { present: true, valid: false };
+}
+function auditDoc(docText) {
+  const issues = [];
+  if (!/^##\s+Goal\b/m.test(docText)) issues.push("no_goal_section");
+  if (!/^##\s+(Architecture|Approach)\b/m.test(docText)) issues.push("no_arch_section");
+  if (!/^##\s+.*[Tt]est/m.test(docText)) issues.push("no_testing_section");
+  if (!/^##\s+.*[Ss]uccess/m.test(docText)) issues.push("no_success_section");
+  if (/<(archive|previous-[a-z][a-z0-9_-]*|archived-[a-z][a-z0-9_-]*|source-[a-z][a-z0-9_-]*)>/.test(docText)) issues.push("unresolved_placeholder");
+  if (/\bTBD\b/.test(docText)) issues.push("tbd_marker");
+  if (/\bTODO\b/.test(docText)) issues.push("todo_marker");
+  if (/fill in later/i.test(docText)) issues.push("fill_in_later_marker");
+  if (/to be determined/i.test(docText)) issues.push("to_be_determined_marker");
+  const t = extractTarget(docText);
+  if (t.present && !t.valid) issues.push("target_subproject_when_invalid");
+  if (/^## Execution DAG[ \t]*$/m.test(docText) && !checkDagSection(docText)) issues.push("execution_dag_not_parseable");
+  return issues.length === 0 ? { verdict: "PASS", issues } : { verdict: "FAIL", issues };
+}
+var SLUG_REGEX, TARGET_HEADER;
+var init_audit = __esm({
+  "src/core/audit.ts"() {
+    "use strict";
+    init_dag();
+    SLUG_REGEX = /^[A-Za-z0-9._-]+$/;
+    TARGET_HEADER = /^[ \t]*\*\*Target Sub-Project:\*\*[ \t]+/gm;
+  }
+});
+
+// src/core/multirepo.ts
+function resolveMarker(dir) {
+  const marker = (0, import_node_fs26.existsSync)((0, import_node_path21.join)(dir, "CLAUDE.md")) ? (0, import_node_path21.join)(dir, "CLAUDE.md") : (0, import_node_fs26.existsSync)((0, import_node_path21.join)(dir, "AGENTS.md")) ? (0, import_node_path21.join)(dir, "AGENTS.md") : null;
+  if (!marker) return null;
+  try {
+    return (0, import_node_path21.join)((0, import_node_fs26.realpathSync)(dir), marker.slice(dir.length + 1));
+  } catch {
+    return marker;
+  }
+}
+function validateTargets(cwd, slugs) {
+  const ok = [];
+  const errors = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const slug of slugs) {
+    if (!SLUG_REGEX.test(slug)) {
+      errors.push(`invalid target slug (must match ${SLUG_REGEX.source}): ${slug}`);
+      continue;
+    }
+    if (seen.has(slug)) {
+      errors.push(`duplicate target slug: ${slug}`);
+      continue;
+    }
+    seen.add(slug);
+    const dir = (0, import_node_path21.join)(cwd, slug);
+    const marker = resolveMarker(dir);
+    if (!marker) {
+      errors.push(`target '${slug}' is not a sibling dir with CLAUDE.md/AGENTS.md under ${cwd}`);
+      continue;
+    }
+    ok.push({ slug, marker });
+  }
+  return { ok, errors };
+}
+function detectMultiRepo(cwd, corpus) {
+  const corpusLower = corpus.toLowerCase();
+  const hits = [];
+  let entries;
+  try {
+    entries = (0, import_node_fs26.readdirSync)(cwd, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return hits;
+  }
+  for (const slug of entries) {
+    if (slug.startsWith(".")) continue;
+    const dir = (0, import_node_path21.join)(cwd, slug);
+    const marker = resolveMarker(dir);
+    if (!marker) continue;
+    if (!corpusLower.includes(slug.toLowerCase())) continue;
+    hits.push({ slug, marker });
+  }
+  return hits;
+}
+var import_node_fs26, import_node_path21;
+var init_multirepo = __esm({
+  "src/core/multirepo.ts"() {
+    "use strict";
+    import_node_fs26 = require("node:fs");
+    import_node_path21 = require("node:path");
+    init_audit();
+  }
+});
+
+// src/core/scoreDoc.ts
+function sectionTitle(key) {
+  return TITLES[key] ?? key;
+}
+function assembleDoc(input) {
+  const sections = input.mode === "multi" ? SECTIONS_MULTI : SECTIONS_SINGLE;
+  let out = `# ${input.title}
+
+`;
+  if (input.mode === "multi") {
+    out += `**Date:** ${input.date}
+`;
+    out += `**Target Sub-Project(s):** ${input.targets.join(", ")}
+
+`;
+  }
+  for (const key of sections) {
+    const draft = input.drafts.get(key);
+    if (draft != null) out += `${draft}
+`;
+    else out += `## ${sectionTitle(key)}
+
+_(missing draft)_
+
+`;
+  }
+  return out;
+}
+function synthesizeSeeds(adjText) {
+  const lines = adjText.split("\n");
+  return SEED_SPECS.map((spec) => {
+    const matched = lines.filter(spec.match);
+    const body = `${spec.heading}
+
+${spec.comment}
+` + (matched.length ? matched.join("\n") + "\n" : SEED_PLACEHOLDER + "\n");
+    return { section: spec.section, body };
+  });
+}
+var SECTIONS_SINGLE, SECTIONS_MULTI, TITLES, SEED_SPECS, SEED_PLACEHOLDER;
+var init_scoreDoc = __esm({
+  "src/core/scoreDoc.ts"() {
+    "use strict";
+    SECTIONS_SINGLE = ["problem", "goal", "architecture", "components", "testing", "success-criteria"];
+    SECTIONS_MULTI = ["problem", "goal", "architecture", "components", "execution-dag", "cross-repo-notes", "testing", "success-criteria"];
+    TITLES = {
+      problem: "Problem",
+      goal: "Goal",
+      architecture: "Architecture",
+      components: "Components",
+      "execution-dag": "Execution DAG",
+      "cross-repo-notes": "Cross-Repo Notes",
+      testing: "Testing",
+      "success-criteria": "Success Criteria"
+    };
+    SEED_SPECS = [
+      {
+        section: "problem",
+        heading: "## Problem",
+        comment: "<!-- seed: cross-verified facts about the current state -->",
+        match: (l) => /^- \[/.test(l)
+      },
+      {
+        section: "goal",
+        heading: "## Goal",
+        comment: "<!-- seed: claims tagged [Goal] -->",
+        match: (l) => /^- \[Goal/i.test(l)
+      },
+      {
+        section: "architecture",
+        heading: "## Architecture",
+        comment: "<!-- seed: claims tagged [Architecture] -->",
+        match: (l) => /^- \[Architecture/i.test(l)
+      },
+      {
+        section: "components",
+        heading: "## Components",
+        comment: "<!-- seed: claims tagged [Components] -->",
+        match: (l) => /^- \[Components/i.test(l)
+      },
+      {
+        section: "testing",
+        heading: "## Testing",
+        comment: '<!-- seed: claims tagged [Testing] or containing "test" -->',
+        match: (l) => /^- \[Testing/i.test(l) || /^- .*\btest/i.test(l)
+      },
+      {
+        section: "success-criteria",
+        heading: "## Success Criteria",
+        comment: "<!-- seed: claims tagged [Success Criteria] -->",
+        match: (l) => /^- \[Success/i.test(l)
+      }
+    ];
+    SEED_PLACEHOLDER = "_(no seed content matched; Maestro drafts from scratch in the design walk)_";
+  }
+});
+
 // src/core/scoreAdjudicate.ts
 function parseVerdicts(verify) {
   const out = [];
@@ -19353,7 +19379,7 @@ async function run10(args) {
   const rest = args.slice(1);
   switch (verb) {
     case "init":
-      return initRun2(applyArgsFile(rest));
+      return initRun2(applyArgsFile(rest, { valueFlags: /* @__PURE__ */ new Set(["--targets"]) }));
     case "assemble":
       return assembleRun(rest);
     case "spawn-all":
@@ -20205,6 +20231,7 @@ function resolveTarget(docPath, cwd) {
     isDir2 = false;
   }
   if (!isDir2) {
+    if ((0, import_node_path25.basename)(cwd) === slug) return cwd;
     throw new PerformResolveError(`target sub-project '${slug}' not found at ${sub} (no directory; check spelling or that the sub-repo is checked out)`);
   }
   if (!hasGitDir(sub)) {
@@ -25150,7 +25177,7 @@ async function run13(args) {
   const [verb, ...rest] = args;
   switch (verb) {
     case "init":
-      return initWith4(applyArgsFile(rest), liveInitDeps4);
+      return initWith4(applyArgsFile(rest, { valueFlags: /* @__PURE__ */ new Set(["--seed-from", "--time-budget", "--metric", "--slug"]) }), liveInitDeps4);
     case "metric":
       return metricWith(rest);
     case "sota":
@@ -25750,7 +25777,7 @@ async function run14(args) {
   const rest = args.slice(1);
   switch (verb) {
     case "init":
-      return initRun4(applyArgsFile(rest));
+      return initRun4(applyArgsFile(rest, { valueFlags: /* @__PURE__ */ new Set() }));
     case "classify":
       return classifyRun(rest);
     case "spawn-all":
