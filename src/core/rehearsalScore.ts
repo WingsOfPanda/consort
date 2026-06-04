@@ -11,6 +11,7 @@ import { sanityFlags, type SanityRow } from "./rehearsalSanity.js";
 import { tallyCoverage, type CoverageRow } from "./rehearsalCoverage.js";
 import { diffAuditKnobs, classifyLineage, type LineageRow } from "./rehearsalLineage.js";
 import { classifyInfeasible, parseVerdicts } from "./rehearsalInfeasible.js";
+import { parseInspections, inspectInfeasibleReason } from "./rehearsalInspect.js";
 import { parseHardConstraints } from "./rehearsalFinalize.js";
 import { partsDir, partStateDir, experimentsDir, experimentDir } from "./rehearsal.js";
 
@@ -55,6 +56,7 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
   const metricMd = fs.read(join(art, "metric.md"));
   const parsed = metricMd ? parseMetricMd(metricMd) : null;
   const verdicts = parseVerdicts(fs.read(join(art, "verification.tsv")) ?? "");
+  const inspections = parseInspections(fs.read(join(art, "inspection.tsv")) ?? "");
   const expectedMetric = parsed?.primaryMetric || undefined;
 
   const rows: ScoreRow[] = [];
@@ -116,7 +118,8 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
         audit: auditObj,
       });
       for (const f of flags) sanityRows.push({ expId, instrument, flag: f.flag, detail: f.detail, ts: now() });
-      const infReason = classifyInfeasible(verdicts[`${instrument}/${expId}`], flags.map((f) => f.flag));
+      const infReason = classifyInfeasible(verdicts[`${instrument}/${expId}`], flags.map((f) => f.flag))
+        ?? inspectInfeasibleReason(inspections[`${instrument}/${expId}`]);
       if (infReason) scoreRow.infeasibleReason = infReason;
 
       const lineageTxt = fs.read(join(branchDir, "lineage.txt"));

@@ -920,6 +920,18 @@ describe("rehearsalScore", () => {
     expect(c.scoreboardMd).toMatch(/\| 1 \| exp-001 \| viola \|/);
     expect(c.scoreboardMd).not.toMatch(/infeasible/);
   });
+  it("routes a C1 not-reproduced result to the infeasible group (C1)", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/inspection.tsv": "exp_id\tinstrument\tverdict\treason\treimpl_metric\tts\nexp-001\toboe\tnot-reproduced\tvalue\t0.5\tT\n",
+      "/a/parts/oboe/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.99,status:"ok",
+        runtime_s:5,log_paths:[],checkpoint_path:null,notes:"" }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    expect(c.scoreboardMd).toContain("x1");               // routed to the x<rank> infeasible group
+    expect(c.scoreboardMd).toContain("reimpl-mismatch");  // the infeasible reason (match the actual cell format you read)
+  });
   it("emits per-family coverageRows over ok experiments (B1)", () => {
     const files: Record<string, string> = {
       "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
