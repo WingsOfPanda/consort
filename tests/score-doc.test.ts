@@ -20,10 +20,12 @@ describe("assembleDoc", () => {
     expect(doc).toContain("## Goal\n\ng\n");
     expect(doc).toContain("## Problem\n\n_(missing draft)_\n\n");
   });
-  it("single-sub: Date + singular Target header", () => {
+  it("single-sub: header-less single shape (no Date, no Target header)", () => {
     const doc = assembleDoc({ title: "X", mode: "single-sub", date: "2026-05-29", targets: ["api"], drafts });
-    expect(doc).toContain("**Date:** 2026-05-29\n");
-    expect(doc).toContain("**Target Sub-Project:** api\n\n");
+    expect(doc.startsWith("# X\n\n")).toBe(true);
+    expect(doc).not.toContain("**Target Sub-Project:**");
+    expect(doc).not.toContain("**Date:**");
+    expect(doc).toContain("## Goal\n\ng\n");
   });
   it("multi: Date + plural Target header + 8 sections (DAG + Cross-Repo)", () => {
     const doc = assembleDoc({ title: "X", mode: "multi", date: "2026-05-29", targets: ["api", "web"], drafts });

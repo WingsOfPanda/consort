@@ -12,17 +12,18 @@ export function sectionTitle(key: string): string { return TITLES[key] ?? key; }
 export type DocMode = "single" | "single-sub" | "multi";
 export interface AssembleInput { title: string; mode: DocMode; date: string; targets: string[]; drafts: Map<string, string>; }
 
-/** Port of bin/consult-walk-assemble.sh's concat. v0.17 header = H1 + (multi/single-sub) Date + Target. */
+/** Port of bin/consult-walk-assemble.sh's concat. Header = H1 + (multi only) Date + plural Target;
+ *  single / single-sub are header-less (perform infers a lone target from cwd). */
 export function assembleDoc(input: AssembleInput): string {
   const sections = input.mode === "multi" ? SECTIONS_MULTI : SECTIONS_SINGLE;
   let out = `# ${input.title}\n\n`;
   if (input.mode === "multi") {
     out += `**Date:** ${input.date}\n`;
     out += `**Target Sub-Project(s):** ${input.targets.join(", ")}\n\n`;
-  } else if (input.mode === "single-sub") {
-    out += `**Date:** ${input.date}\n`;
-    out += `**Target Sub-Project:** ${input.targets[0] ?? ""}\n\n`;
   }
+  // single / single-sub: header-less. A lone target is delivered as a single-repo doc; perform
+  // infers the target from its cwd (resolveTarget's hub-self guard), so the singular header — which
+  // mis-resolves to <slug>/<slug> when perform runs inside the sub-project — is no longer emitted.
   for (const key of sections) {
     const draft = input.drafts.get(key);
     if (draft != null) out += `${draft}\n`;

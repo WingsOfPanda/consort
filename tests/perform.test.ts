@@ -104,6 +104,13 @@ describe("resolveTarget", () => {
     const root = mkdtempSync(join(tmpdir(), "rt-"));
     expect(() => resolveTarget(writeDoc(root, "**Target Sub-Project:** ../escape\n"), root)).toThrow(PerformResolveError);
   });
+  it("header slug == basename(cwd) + no such child -> returns cwd (hub-self, single-repo)", () => {
+    const parent = mkdtempSync(join(tmpdir(), "rt-"));
+    const cwd = join(parent, "api");
+    mkdirSync(cwd, { recursive: true });
+    // The doc names sub-project "api"; perform is being run from inside <parent>/api.
+    expect(resolveTarget(writeDoc(cwd, "**Target Sub-Project:** api\n"), cwd)).toBe(cwd);
+  });
   it("two headers -> throws (ambiguous)", () => {
     const root = mkdtempSync(join(tmpdir(), "rt-"));
     expect(() => resolveTarget(writeDoc(root, "**Target Sub-Project:** a\n**Target Sub-Project:** b\n"), root)).toThrow(PerformResolveError);

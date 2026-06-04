@@ -10,11 +10,12 @@ describe("solo dispatcher", () => {
   });
 });
 
-import { existsSync, readFileSync, writeFileSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { freshHome } from "./helpers/tmpHome.js";
-import { soloArtDir } from "../src/core/solo.js";
+import { soloArtDir, soloExecDir } from "../src/core/solo.js";
+import { outboxPath } from "../src/core/ipc.js";
 
 // Build an --args-file the way the dispatcher expects (first line tokenized).
 function argsFile(home: string, line: string): string {
@@ -58,7 +59,9 @@ describe("solo init", () => {
   });
 
   it("unknown provider → rc 3 (env-independent: reads shipped contracts.yaml)", async () => {
-    expect(await soloRun(["init", "--args-file", argsFile(h.home, "do thing --provider nope")])).toBe(3);
+    // Under verbatim-tail (Task 4), only leading --flag pairs are peeled; a --provider after the
+    // body is now part of the verbatim topic. Lead with the flag so it parses as the provider.
+    expect(await soloRun(["init", "--args-file", argsFile(h.home, "--provider nope do thing")])).toBe(3);
   });
 
   it("provider known but binary not on PATH → rc 3", async () => {
@@ -222,6 +225,26 @@ describe("solo turn-wait (turnWaitWith core)", () => {
   it("missing OFFSET → rc 1", async () => {
     await scaffold("auth", "TS=stale\n");
     expect(await turnWaitWith("auth", 1, { wait: async () => null })).toBe(1);
+  });
+
+  it("question: appends a bumped OFFSET so a re-arm resumes past it (no loop)", async () => {
+    await scaffold("auth", "OFFSET=0\n");
+    // Give the part an outbox with known bytes so the bump is non-zero (outboxOffset = file size).
+    const ob = outboxPath("violin", "codex", "auth");
+    mkdirSync(dirname(ob), { recursive: true });
+    const body = '{"event":"question","message":"which db?"}\n';
+    writeFileSync(ob, body);
+    const N = Buffer.byteLength(body);
+    const seen: number[] = [];
+    const wait = async (_i: string, _m: string, _t: string, off: number) => {
+      seen.push(off);
+      return seen.length === 1 ? { event: "question", message: "which db?" } : { event: "done", summary: "ok" };
+    };
+    await turnWaitWith("auth", 1, { wait });   // round 1: handles the question at offset 0
+    await turnWaitWith("auth", 1, { wait });   // re-arm on the SAME round must resume past it
+    const state = readFileSync(join(soloExecDir("auth"), "turn-1.txt"), "utf8");
+    expect(state).toContain(`OFFSET=${N}`);     // a bumped OFFSET line was appended on the question
+    expect(seen).toEqual([0, N]);               // the re-arm read the LATEST offset, not 0 (no loop)
   });
 });
 

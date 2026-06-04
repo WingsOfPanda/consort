@@ -278,7 +278,7 @@ substring-matches `adjudicated.md`. Count the hit lines and branch:
 When `multi-repo.txt` ∈ {single-sub, multi}: after `score synthesize` (still seeds the 6 base sections),
 walk the **multi section list** — for `multi`, all 8 in this exact order (must match `SECTIONS_MULTI` in
 `core/scoreDoc.ts`): **problem, goal, architecture, components, execution-dag, cross-repo-notes, testing,
-success-criteria** (single-sub uses the 6 base sections + the singular header). The 2 multi-only sections
+success-criteria** (single-sub uses the 6 base sections, header-less like single — a lone target ships as a single-repo doc; perform infers the target from its cwd). The 2 multi-only sections
 (`execution-dag`, `cross-repo-notes`) have **no synthesize seed** — draft them fresh. Resume via
 `$CS score walk-state <TOPIC>`. Per-section rules:
 

@@ -14,7 +14,8 @@ import { pickRandomInstrument } from "../core/instruments.js";
 import { runnerAt, preSnapshot, createOrResumeBranch, finishBranch } from "../core/gitwork.js";
 import type { Runner } from "../core/gitwork.js";
 import { outboxOffset, outboxPath, outboxWaitSince, statusPath, type OutboxEvent } from "../core/ipc.js";
-import { composeRound1Prompt, composeFixPrompt, classifyTurn, parseOffset } from "../core/turn.js";
+import { composeRound1Prompt, composeFixPrompt, classifyTurn } from "../core/turn.js";
+import { parseLatestOffset } from "../core/scoreTurn.js";
 import { run as sendRun } from "./send.js";
 import { readIfExists } from "../core/fsread.js";
 
@@ -34,7 +35,7 @@ export async function run(args: string[]): Promise<number> {
   const verb = args[0];
   const rest = args.slice(1);
   switch (verb) {
-    case "init": return initRun(applyArgsFile(rest));
+    case "init": return initRun(applyArgsFile(rest, { valueFlags: new Set(["--provider"]) }));
     case "branch": return branchRun(rest);
     case "turn-send": return turnSendRun(rest);
     case "turn-wait": return turnWaitRun(rest);
@@ -189,14 +190,21 @@ export async function turnWaitWith(topic: string, round: number, d: TurnWaitDeps
   if (!instrument || !provider) { log.error("solo turn-wait: missing instrument.txt/selected-provider.txt"); return 1; }
   const stateFile = join(exec, `turn-${round}.txt`);
   if (!existsSync(stateFile)) { log.error(`solo turn-wait: ${stateFile} missing (run solo turn-send first)`); return 1; }
-  const offset = parseOffset(readFileSync(stateFile, "utf8"));
+  const offset = parseLatestOffset(readFileSync(stateFile, "utf8"));
   if (offset === null) { log.error(`solo turn-wait: OFFSET not set in ${stateFile}`); return 1; }
 
   log.info(`solo turn-wait: round=${round} offset=${offset} timeout=${SOLO_TURN_TIMEOUT}s`);
   const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], SOLO_TURN_TIMEOUT);
   const ts = classifyTurn(ev);
-  if (ts === "question" && ev) atomicWrite(join(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
-  appendFileSync(stateFile, `TS=${ts}\n`);
+  if (ts === "question" && ev) {
+    atomicWrite(join(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
+    // Advance the offset past the handled question so a same-round re-arm does not re-read it
+    // (mirrors perform turnWaitWith; solo has no objection routing, so no OBJECTIONS= line).
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    appendFileSync(stateFile, `OFFSET=${bumped}\nTS=question\n`);
+  } else {
+    appendFileSync(stateFile, `TS=${ts}\n`);
+  }
   log.ok(`solo turn-wait: round=${round} TS=${ts}`);
   return 0;
 }

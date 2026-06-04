@@ -81,6 +81,8 @@ feed (survives teardown and aborts) and costs nothing, so prefer over-recording.
    - **`TS=question`** → read `execute/question-1.txt`, **Write** a best-judgment reply to a temp
      file, then `$CS send --from maestro <INSTRUMENT> <SLUG> @<reply-file>`, and re-arm the
      background `solo turn-wait <SLUG> 1`. Never ask the user. (Re-arm on each question.)
+     The re-arm resumes past the handled question automatically — `turn-wait` appends a bumped
+     `OFFSET=` line on a question, so you never hand-edit `OFFSET=`.
    - **`TS=failed` or `TS=timeout`** → retry once: delete `execute/turn-1.txt`, re-run
      `$CS solo turn-send <SLUG> 1`, re-arm the background wait. On a **second** failure → abort:
      `$CS solo summary <SLUG> --aborted build part-turn-failed "part turn failed twice (TS=<ts>)"`,

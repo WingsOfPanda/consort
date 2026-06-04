@@ -29,16 +29,48 @@ function loadArgsFile(path: string): string[] {
   return tokenizeArgsLine(raw);
 }
 
+export interface ArgsFileOpts { valueFlags: Set<string>; }
+
+/** Verbatim-tail loader for prose-body commands: peel LEADING `--flag [value]` pairs (a flag in
+ *  `valueFlags` without `=` consumes the next whitespace-delimited token), then take the rest of the
+ *  file as ONE verbatim body token — internal whitespace, newlines, apostrophes, and quotes intact.
+ *  Mirrors the legacy plugin's verbatim-cat delivery; does NOT shell-tokenize the body. */
+function loadArgsFileVerbatim(path: string, valueFlags: Set<string>): string[] {
+  if (!existsSync(path)) return [];
+  const raw = readFileSync(path, "utf8");
+  const isWs = (c: string): boolean => c === " " || c === "\t" || c === "\n" || c === "\r";
+  const flags: string[] = [];
+  let i = 0;
+  for (;;) {
+    while (i < raw.length && isWs(raw[i])) i++;            // skip whitespace before the next token
+    if (i >= raw.length) break;
+    if (!(raw[i] === "-" && raw[i + 1] === "-")) break;     // first token not starting with "--": body starts here (all consecutive leading "--" tokens are peeled — see header)
+    let j = i;
+    while (j < raw.length && !isWs(raw[j])) j++;            // read the flag token
+    const flag = raw.slice(i, j);
+    flags.push(flag);
+    i = j;
+    if (valueFlags.has(flag) && !flag.includes("=")) {      // separate-token value flag: consume its value
+      while (i < raw.length && isWs(raw[i])) i++;
+      let k = i;
+      while (k < raw.length && !isWs(raw[k])) k++;
+      if (k > i) { flags.push(raw.slice(i, k)); i = k; }
+    }
+  }
+  const body = raw.slice(i).trim();
+  return body ? [...flags, body] : flags;
+}
+
 function consumeArgsFile(path: string | undefined): void {
   if (!path) return;
   try { rmSync(path, { force: true }); } catch { /* ignore */ }
 }
 
-export function applyArgsFile(argv: string[]): string[] {
+export function applyArgsFile(argv: string[], opts?: ArgsFileOpts): string[] {
   if (argv[0] !== "--args-file") return [...argv];
   const path = argv[1];
   if (!path) throw new ArgsFileError("--args-file requires a path");
-  const tokens = loadArgsFile(path);
+  const tokens = opts ? loadArgsFileVerbatim(path, opts.valueFlags) : loadArgsFile(path);
   consumeArgsFile(path);
   return [...tokens, ...argv.slice(2)];
 }

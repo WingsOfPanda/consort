@@ -38,7 +38,7 @@ export async function run(args: string[]): Promise<number> {
   const verb = args[0];
   const rest = args.slice(1);
   switch (verb) {
-    case "init": return initRun(applyArgsFile(rest));
+    case "init": return initRun(applyArgsFile(rest, { valueFlags: new Set(["--targets"]) }));
     case "assemble": return assembleRun(rest);
     case "spawn-all": return spawnAllRun(rest);
     case "research-send": return researchSendRun(rest);

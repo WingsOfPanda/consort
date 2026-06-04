@@ -105,6 +105,10 @@ export function resolveTarget(docPath: string, cwd: string): string {
   let isDir = false;
   try { isDir = statSync(sub).isDirectory(); } catch { isDir = false; }
   if (!isDir) {
+    // A single-target doc carries a `**Target Sub-Project:** <slug>` header minted from the hub.
+    // When perform runs from INSIDE that sub-project, <cwd>/<slug> is <slug>/<slug> and absent — but
+    // the header just names the repo we are already standing in. Treat that as single-repo.
+    if (basename(cwd) === slug) return cwd;
     throw new PerformResolveError(`target sub-project '${slug}' not found at ${sub} (no directory; check spelling or that the sub-repo is checked out)`);
   }
   if (!hasGitDir(sub)) {

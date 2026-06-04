@@ -1822,7 +1822,7 @@ const liveInspectCheckDeps: InspectCheckDeps = {
 export async function run(args: string[]): Promise<number> {
   const [verb, ...rest] = args;
   switch (verb) {
-    case "init": return initWith(applyArgsFile(rest), liveInitDeps);
+    case "init": return initWith(applyArgsFile(rest, { valueFlags: new Set(["--seed-from", "--time-budget", "--metric", "--slug"]) }), liveInitDeps);
     case "metric": return metricWith(rest);
     case "sota": return sotaWith(rest);
     case "spawn-all": return spawnAllWith(rest, liveSpawnAllDeps);

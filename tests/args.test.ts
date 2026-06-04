@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tokenizeArgsLine, applyArgsFile, kvParse, ArgsFileError, KvError } from "../src/args.js";
+import { parseScoreArgs } from "../src/core/score.js";
 
 describe("args", () => {
   it("tokenize preserves quoted phrases + literal metachars", () => {
@@ -55,5 +56,67 @@ describe("args", () => {
     expect(kvParse("--targets", "")).toEqual({ value: "", shift: 2 }); // empty ok
     expect(kvParse("--mode=a=b=c")).toEqual({ value: "a=b=c", shift: 1 }); // first = only
     expect(() => kvParse("--mode")).toThrow(KvError);
+  });
+});
+
+describe("applyArgsFile verbatim-tail (prose mode)", () => {
+  function af(content: string): string {
+    const f = join(mkdtempSync(join(tmpdir(), "afv-")), "args");
+    writeFileSync(f, content);
+    return f;
+  }
+  const opts = (flags: string[]) => ({ valueFlags: new Set(flags) });
+
+  it("preserves apostrophes and quotes in the body (no shell-tokenizing)", () => {
+    expect(applyArgsFile(["--args-file", af('fix the part\'s "UI" today')], opts([])))
+      .toEqual(['fix the part\'s "UI" today']);
+  });
+  it("preserves internal newlines / paragraphs verbatim", () => {
+    expect(applyArgsFile(["--args-file", af("para one\n\npara two\nmore")], opts([])))
+      .toEqual(["para one\n\npara two\nmore"]);
+  });
+  it("peels a leading boolean flag + value flag, body verbatim", () => {
+    expect(applyArgsFile(["--args-file", af("--ensemble --targets a,b design the part's thing")], opts(["--targets"])))
+      .toEqual(["--ensemble", "--targets", "a,b", "design the part's thing"]);
+  });
+  it("a --flag=value token stays whole; body follows", () => {
+    expect(applyArgsFile(["--args-file", af("--targets=a,b the body")], opts(["--targets"])))
+      .toEqual(["--targets=a,b", "the body"]);
+  });
+  it("an internal --word stays inside the verbatim body", () => {
+    expect(applyArgsFile(["--args-file", af("use --force carefully please")], opts([])))
+      .toEqual(["use --force carefully please"]);
+  });
+  it("empty body yields just the flags (no empty token)", () => {
+    expect(applyArgsFile(["--args-file", af("--ensemble")], opts([]))).toEqual(["--ensemble"]);
+  });
+  it("trims a trailing newline the Write tool appends", () => {
+    expect(applyArgsFile(["--args-file", af("body text\n")], opts([]))).toEqual(["body text"]);
+  });
+  it("consumes the args file (like the no-opts path)", () => {
+    const f = af("hello there");
+    applyArgsFile(["--args-file", f], opts([]));
+    expect(existsSync(f)).toBe(false);
+  });
+  it("no-opts path is unchanged (still shell-tokenizes, glues the unterminated quote)", () => {
+    expect(applyArgsFile(["--args-file", af("fix the part's thing")]))
+      .toEqual(["fix", "the", "parts thing"]);
+  });
+  it("a value-flag with no following value pushes only the flag (no empty token)", () => {
+    expect(applyArgsFile(["--args-file", af("--targets")], opts(["--targets"]))).toEqual(["--targets"]);
+  });
+});
+
+describe("verbatim-tail end-to-end into a command parser", () => {
+  function af(content: string): string {
+    const f = join(mkdtempSync(join(tmpdir(), "afe-")), "args");
+    writeFileSync(f, content);
+    return f;
+  }
+  it("score init: --targets parses and the apostrophe survives into topicText", () => {
+    const tokens = applyArgsFile(["--args-file", af("--targets a,b redesign the part's status line")], { valueFlags: new Set(["--targets"]) });
+    const parsed = parseScoreArgs(tokens);
+    expect(parsed.targets).toEqual(["a", "b"]);
+    expect(parsed.topicText).toBe("redesign the part's status line");
   });
 });
