@@ -59,7 +59,9 @@ describe("solo init", () => {
   });
 
   it("unknown provider → rc 3 (env-independent: reads shipped contracts.yaml)", async () => {
-    expect(await soloRun(["init", "--args-file", argsFile(h.home, "do thing --provider nope")])).toBe(3);
+    // Under verbatim-tail (Task 4), only leading --flag pairs are peeled; a --provider after the
+    // body is now part of the verbatim topic. Lead with the flag so it parses as the provider.
+    expect(await soloRun(["init", "--args-file", argsFile(h.home, "--provider nope do thing")])).toBe(3);
   });
 
   it("provider known but binary not on PATH → rc 3", async () => {

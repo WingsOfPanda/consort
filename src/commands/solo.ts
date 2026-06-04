@@ -35,7 +35,7 @@ export async function run(args: string[]): Promise<number> {
   const verb = args[0];
   const rest = args.slice(1);
   switch (verb) {
-    case "init": return initRun(applyArgsFile(rest));
+    case "init": return initRun(applyArgsFile(rest, { valueFlags: new Set(["--provider"]) }));
     case "branch": return branchRun(rest);
     case "turn-send": return turnSendRun(rest);
     case "turn-wait": return turnWaitRun(rest);
