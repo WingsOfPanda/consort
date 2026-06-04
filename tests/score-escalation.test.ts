@@ -370,6 +370,37 @@ describe("score drilldown", () => {
     expect(rc).toBe(1); // no file written
     expect(await drilldownWith(["t", "Arch"], { offsetFor: () => 0, send: async () => 0, wait: async () => null, multiplier: () => "1.0" }, {})).toBe(2);
   });
+  it("n=8 (subproject only) → K=1, subproject flows into the resolved path", async () => {
+    const art = scoreArtDir("t"); const dd = join(art, "drilldowns"); mkdirSync(join(dd, "_scratch"), { recursive: true });
+    writeFileSync(join(art, "doc.md"), "# doc\n"); mkdirSync(partDir("viola", "codex", "t"), { recursive: true });
+    const sends: string[][] = [];
+    const rc = await drilldownWith(
+      ["t", "Architecture", dd, "", join(art, "doc.md"), "viola", "codex", "apisub"],
+      { offsetFor: () => 0, send: async (a) => { sends.push(a); return 0; },
+        wait: async () => ({ event: "done" }), multiplier: () => "1.0" },
+      { writeProbe: (p: string) => writeFileSync(p, "notes\n") },
+    );
+    expect(rc).toBe(0);
+    expect(sends.length).toBe(1); // subproject is rest[7], NOT a second part
+    expect(existsSync(join(dd, "_scratch", "drilldown-architecture-apisub-viola.md"))).toBe(true);
+  });
+  it("n=10 (i2 m2 subproject) → K=2 parts, both files carry the subproject", async () => {
+    const art = scoreArtDir("t"); const dd = join(art, "drilldowns"); mkdirSync(join(dd, "_scratch"), { recursive: true });
+    writeFileSync(join(art, "doc.md"), "# doc\n");
+    mkdirSync(partDir("viola", "codex", "t"), { recursive: true });
+    mkdirSync(partDir("cello", "gemini", "t"), { recursive: true });
+    const sends: string[][] = [];
+    const rc = await drilldownWith(
+      ["t", "Architecture", dd, "", join(art, "doc.md"), "viola", "codex", "cello", "gemini", "apisub"],
+      { offsetFor: () => 0, send: async (a) => { sends.push(a); return 0; },
+        wait: async () => ({ event: "done" }), multiplier: () => "1.0" },
+      { writeProbe: (p: string) => writeFileSync(p, "notes\n") },
+    );
+    expect(rc).toBe(0);
+    expect(sends.length).toBe(2); // i2=cello parsed as a second part
+    expect(existsSync(join(dd, "_scratch", "drilldown-architecture-apisub-viola.md"))).toBe(true);
+    expect(existsSync(join(dd, "_scratch", "drilldown-architecture-apisub-cello.md"))).toBe(true);
+  });
 });
 
 describe("score forensics + archive", () => {

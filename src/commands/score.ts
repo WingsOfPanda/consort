@@ -557,10 +557,8 @@ export async function drilldownWith(rest: string[], d: DrilldownDeps, hooks: Dri
   const n = rest.length;
   if (![7, 8, 9, 10].includes(n)) { log.error("usage: score drilldown <topic> <section> <dd-dir> <focus> <design-doc> <i1> <m1> [<i2> <m2>] [<subproject>]"); return 2; }
   const [topic, section, ddDir, focus, designDoc, i1, m1] = rest;
-  let i2 = "", m2 = "", subproject = "";
-  if (n === 8) subproject = rest[7];
-  else if (n === 9) { i2 = rest[7]; m2 = rest[8]; }
-  else if (n === 10) { i2 = rest[7]; m2 = rest[8]; subproject = rest[9]; }
+  const subproject = (n === 8 || n === 10) ? rest[n - 1] : "";
+  const [i2, m2] = n >= 9 ? [rest[7], rest[8]] : ["", ""];
   if (!existsSync(ddDir)) { log.error(`score drilldown: dd-dir not found: ${ddDir}`); return 2; }
   if (!existsSync(designDoc)) { log.error(`score drilldown: design-doc not found: ${designDoc}`); return 2; }
 
