@@ -1132,6 +1132,19 @@ export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps):
     if (extra.length) appendFileSync(warningsPath, extra.join("\n") + "\n");
   }
 
+  // B2: fold improve-multi lineage rows into warnings.txt (advisory: delta not cleanly attributable).
+  const lineageTsv = join(art, "lineage.tsv");
+  if (existsSync(lineageTsv)) {
+    const extra: string[] = [];
+    for (const line of readFileSync(lineageTsv, "utf8").split("\n")) {
+      if (!line || line.startsWith("exp_id\t")) continue;
+      const c = line.split("\t");                 // exp_id, instrument, parent_id, knobs_changed, verdict, ts
+      if (c[4] !== "improve-multi") continue;
+      if (c[0] && c[1]) extra.push(`lineage\t${c[1]}/${c[0]}\timprove-multi\tparent=${c[2] ?? ""} knobs_changed=${c[3] ?? ""}`);
+    }
+    if (extra.length) appendFileSync(warningsPath, extra.join("\n") + "\n");
+  }
+
   // 9. render session-summary.md (FULL re-render; wholesale atomic replace).
   const statusRows: StatusRow[] = [];
   for (const instrument of instruments) {
