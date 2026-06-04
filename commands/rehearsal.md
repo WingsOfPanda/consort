@@ -229,13 +229,13 @@ brief entirely when `RAN_SCORE=0` (only heartbeat/question/stale/stuck fired —
         (or `--run-failed` if the command errored / produced no `VERIFY_METRIC=` marker).
      d. The verdict now annotates the next `status-brief` top-3 (`verified` / `mismatch!` /
         `unavailable` / `pending`). Treat a `mismatch` as a result you do NOT yet trust — note it
-        in `## Recent decisions`; acting on it (re-dispatch) is a later phase, but never steer the
+        in `## Recent decisions`; acting on it (re-dispatch) is point f below, and never steer the
         whole roster toward a `mismatch` leader.
      e. `status-brief` also tags suspect results `[suspect: <flags>]` (ceiling-exceeded /
         under-run / log-contradiction / integrity-attestation-incomplete / audit-knob-drift).
         A `[suspect]` result is one whose number may be an artifact (leakage / didn't really run /
         misconfigured knob) — do NOT crown a `[suspect]` leader; note it in `## Recent decisions`.
-        Acting on it (re-dispatch / discard) is a later phase.
+        Acting on it (re-dispatch / discard) is point f below.
      f. **A2 -- act on INFEASIBLE.** A result is INFEASIBLE when its verify verdict is `mismatch` OR it
         carries an A3 `under-run` / `log-contradiction` / `audit-knob-drift` flag. The score pass routes
         infeasible results to the scoreboard `x<rank>` group (out of the ranked leader set -- they are
