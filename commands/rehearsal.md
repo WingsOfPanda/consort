@@ -213,6 +213,10 @@ Then, **IF `RAN_SCORE`**: `$CS rehearsal status-brief <TOPIC> --latest-instrumen
 multiple `done` events queued (score per event, but render the brief once with the LAST values). Skip the
 brief entirely when `RAN_SCORE=0` (only heartbeat/question/stale/stuck fired — no new scored state).
 
+   Scoreboard groups: integer ranks (`1,2,3...`) are the VALID leader set -- steer ONLY on these;
+   `x<rank>` rows are INFEASIBLE (ran but invalid -- excluded from leader/completion/Lane-D);
+   `~<rank>`/`<rank>` rows are partial/fail.
+
 3.5. **Verify the landed result (metric-trust gate).** After `score`/`status-brief`, for the
      experiment that just landed (`<instrument>`/`<exp>`):
 
@@ -232,6 +236,16 @@ brief entirely when `RAN_SCORE=0` (only heartbeat/question/stale/stuck fired —
         A `[suspect]` result is one whose number may be an artifact (leakage / didn't really run /
         misconfigured knob) — do NOT crown a `[suspect]` leader; note it in `## Recent decisions`.
         Acting on it (re-dispatch / discard) is a later phase.
+     f. **A2 -- act on INFEASIBLE.** A result is INFEASIBLE when its verify verdict is `mismatch` OR it
+        carries an A3 `under-run` / `log-contradiction` / `audit-knob-drift` flag. The score pass routes
+        infeasible results to the scoreboard `x<rank>` group (out of the ranked leader set -- they are
+        NOT a refuted idea and never the leader). When the just-landed experiment is INFEASIBLE and this
+        idea has been attempted fewer than `max_debug_attempts` times (metric.md, default 2),
+        RE-DISPATCH the same idea with the failure feedback in the approach-brief (e.g. "previous attempt
+        was INFEASIBLE: `audit-knob-drift mcts_sims=16 vs 200` -- set 200 and re-run"). If the cap is hit,
+        record the idea INFEASIBLE-final in `## Recent decisions` ("couldn't be validly executed", NOT
+        refuted) and let the part move to a new idea. A REFUTED result (feasible `ok`, genuinely low)
+        steers normally -- it is real evidence the idea is weak.
 
 ### Step 4 — Completion check + DECISION POLICY
 The `status-brief` you just printed already shows the `**Completion check:**` line (computed by the same
@@ -262,6 +276,8 @@ or document the concern in session-summary.md Recent decisions -- and dispatch.
 Lane-D abandon (per part, at Step 5 -- ALL THREE must hold):
   1. >= 3 completed (status=ok) experiments for this part;
   2. NONE of this part's LAST 3 experiments scored >= min_acceptable;
+     (count only FEASIBLE experiments -- the integer-ranked scoreboard rows; an INFEASIBLE run in the
+     `x<rank>` group is NOT Lane-D evidence, because it was botched, not a weak idea.)
   3. this part's best metric >= 5 x plateau_threshold BELOW the current overall leader.
   -> transition phase=abandoned + lane_abandon_reason + lane_abandon_ts; skip dispatch;
      surface in chat. (experiment-send refuses an abandoned lane with rc 2.)
