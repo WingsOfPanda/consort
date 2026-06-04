@@ -372,13 +372,13 @@ export interface ExperimentSendDeps {
 
 interface ExperimentSendArgs {
   topic: string; instrument: string; expId: string; approachLabel: string; approachBrief: string;
-  inputs?: string; contextFile?: string; smokeTest?: string; timeout?: string;
+  inputs?: string; contextFile?: string; smokeTest?: string; timeout?: string; parentId?: string;
   badArgs?: boolean;
 }
 
 /** Flags-first then exactly 5 positionals (port of experiment-send.sh's getopts loop). */
 function parseExperimentSendArgs(args: string[]): ExperimentSendArgs {
-  let inputs: string | undefined, contextFile: string | undefined, smokeTest: string | undefined, timeout: string | undefined;
+  let inputs: string | undefined, contextFile: string | undefined, smokeTest: string | undefined, timeout: string | undefined, parentId: string | undefined;
   let i = 0;
   for (; i < args.length; i++) {
     const a = args[i];
@@ -387,12 +387,13 @@ function parseExperimentSendArgs(args: string[]): ExperimentSendArgs {
     else if (a === "--context-file" || a.startsWith("--context-file=")) { const r = kvParse(a, args[i + 1]); contextFile = r.value; i += r.shift - 1; }
     else if (a === "--smoke-test" || a.startsWith("--smoke-test=")) { const r = kvParse(a, args[i + 1]); smokeTest = r.value; i += r.shift - 1; }
     else if (a === "--timeout" || a.startsWith("--timeout=")) { const r = kvParse(a, args[i + 1]); timeout = r.value; i += r.shift - 1; }
+    else if (a === "--parent" || a.startsWith("--parent=")) { const r = kvParse(a, args[i + 1]); parentId = r.value; i += r.shift - 1; }
     else { return { topic: "", instrument: "", expId: "", approachLabel: "", approachBrief: "", badArgs: true }; }
   }
   const pos = args.slice(i);
   if (pos.length !== 5) return { topic: "", instrument: "", expId: "", approachLabel: "", approachBrief: "", badArgs: true };
   const [topic, instrument, expId, approachLabel, approachBrief] = pos;
-  return { topic, instrument, expId, approachLabel, approachBrief, inputs, contextFile, smokeTest, timeout };
+  return { topic, instrument, expId, approachLabel, approachBrief, inputs, contextFile, smokeTest, timeout, parentId };
 }
 
 /** Best-effort peer snapshot for the {{PEERS_BLOCK}} slot. Reads parts.txt (one instrument/line)
@@ -482,6 +483,12 @@ export async function experimentSendWith(args: string[], deps: ExperimentSendDep
   if (phase === "abandoned") { log.error(`rehearsal experiment-send: part ${instrument} lane is abandoned; not dispatching`); return 2; }
   if (phase !== "idle") { log.error(`rehearsal experiment-send: part ${instrument} not idle (phase=${phase}); wait or finalize first`); return 1; }
 
+  // --parent (B2): same-lane parent exp must exist (lineage is recorded for the advisory diff).
+  if (p.parentId !== undefined) {
+    if (!EXP_ID_RE.test(p.parentId)) { log.error(`rehearsal experiment-send: --parent must match exp-[0-9]+; got '${p.parentId}'`); return 2; }
+    if (!existsSync(experimentDir(art, instrument, p.parentId))) { log.error(`rehearsal experiment-send: --parent ${p.parentId} has no experiment dir under ${instrument}`); return 1; }
+  }
+
   // Branch dir + smoke-test BEFORE any state mutation.
   const branchDir = experimentDir(art, instrument, expId);
   mkdirSync(join(branchDir, "code"), { recursive: true });
@@ -533,6 +540,7 @@ export async function experimentSendWith(args: string[], deps: ExperimentSendDep
 
   // Persist prompt.md, write the inbox (canonical fence), transition state.
   atomicWrite(join(branchDir, "prompt.md"), prompt);
+  if (p.parentId !== undefined) atomicWrite(join(branchDir, "lineage.txt"), `parent_id=${p.parentId}\n`);
   inboxWrite(instrument, model, topic, prompt, { from: "maestro", noDoneInstruction: true });
   atomicWrite(stateTxt, buildDispatchState(readFileSync(stateTxt, "utf8"), expId, deps.now()));
 

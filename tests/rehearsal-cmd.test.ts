@@ -412,6 +412,28 @@ describe("rehearsal experiment-send", () => {
     expect(await experimentSendWith([TOPIC, INST, "exp-001", "x", "y"], deps(h))).toBe(1);
   });
 
+  it("--parent with a valid same-lane parent writes lineage.txt and returns 0 (B2)", async () => {
+    const h = home();
+    const { art } = scaffold(h);
+    mkdirSync(experimentDir(art, INST, "exp-001"), { recursive: true });
+    const rc = await experimentSendWith(["--parent", "exp-001", TOPIC, INST, "exp-002", "typed-routing", "tweak lr only"], deps(h));
+    expect(rc).toBe(0);
+    const lp = join(experimentDir(art, INST, "exp-002"), "lineage.txt");
+    expect(existsSync(lp)).toBe(true);
+    expect(readFileSync(lp, "utf8")).toContain("parent_id=exp-001");
+  });
+  it("--parent to a non-existent exp returns rc 1 (B2)", async () => {
+    const h = home();
+    scaffold(h);
+    expect(await experimentSendWith(["--parent", "exp-099", TOPIC, INST, "exp-002", "x", "y"], deps(h))).toBe(1);
+  });
+  it("no --parent writes no lineage.txt (Draft) and returns 0 (B2)", async () => {
+    const h = home();
+    const { art } = scaffold(h);
+    expect(await experimentSendWith([TOPIC, INST, "exp-001", "single-pass", "baseline"], deps(h))).toBe(0);
+    expect(existsSync(join(experimentDir(art, INST, "exp-001"), "lineage.txt"))).toBe(false);
+  });
+
   it("missing art dir -> rc 1", async () => {
     const h = home();
     // no scaffold at all
