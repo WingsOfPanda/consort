@@ -8,6 +8,7 @@ import { mergeState, parseState } from "./rehearsalState.js";
 import { parseMetricMd } from "./rehearsalMetric.js";
 import { parseVerifyBlock, buildManifest } from "./rehearsalVerify.js";
 import { sanityFlags, type SanityRow } from "./rehearsalSanity.js";
+import { classifyInfeasible, parseVerdicts } from "./rehearsalInfeasible.js";
 import { parseHardConstraints } from "./rehearsalFinalize.js";
 import { partsDir, partStateDir, experimentsDir, experimentDir } from "./rehearsal.js";
 
@@ -49,6 +50,7 @@ function str(v: unknown): string {
 export function computeScore(art: string, fs: ScoreFs, now: () => string): ScoreComputation {
   const metricMd = fs.read(join(art, "metric.md"));
   const parsed = metricMd ? parseMetricMd(metricMd) : null;
+  const verdicts = parseVerdicts(fs.read(join(art, "verification.tsv")) ?? "");
   const expectedMetric = parsed?.primaryMetric || undefined;
 
   const rows: ScoreRow[] = [];
@@ -82,8 +84,9 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
       }
       if (fs.exists(sidecar)) staleSidecars.push(sidecar);
       const o = json as Record<string, unknown>;
-      rows.push({ expId, instrument, metric: str(o.metric_value), status: str(o.status),
-        runtime: str(o.runtime_s), approach: str(o.approach_label), metricName: str(o.metric_name) });
+      const scoreRow: ScoreRow = { expId, instrument, metric: str(o.metric_value), status: str(o.status),
+        runtime: str(o.runtime_s), approach: str(o.approach_label), metricName: str(o.metric_name) };
+      rows.push(scoreRow);
       tsvRows.push({ expId, instrument, approach: str(o.approach_label), metric: str(o.metric_value),
         status: str(o.status), runtime: str(o.runtime_s), metricName: str(o.metric_name) });
       const vblock = parseVerifyBlock(o);
@@ -108,6 +111,8 @@ export function computeScore(art: string, fs: ScoreFs, now: () => string): Score
         audit: auditObj,
       });
       for (const f of flags) sanityRows.push({ expId, instrument, flag: f.flag, detail: f.detail, ts: now() });
+      const infReason = classifyInfeasible(verdicts[`${instrument}/${expId}`], flags.map((f) => f.flag));
+      if (infReason) scoreRow.infeasibleReason = infReason;
     }
   }
 

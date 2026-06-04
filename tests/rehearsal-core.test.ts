@@ -801,6 +801,46 @@ describe("rehearsalScore", () => {
     const c = computeScore("/a", fakeFs(files), () => "T");
     expect(c.sanityRows.find((r) => r.flag === "audit-knob-drift")).toMatchObject({ detail: "mcts_sims=16 vs mandated 200" });
   });
+  it("computeScore marks a row infeasible when verification.tsv verdict is mismatch", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/verification.tsv": "exp_id\tinstrument\tverdict\treason\trecomputed\tts\nexp-001\tviola\tmismatch\tvalue\t0.5\tT\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.99,status:"ok",
+        runtime_s:50,log_paths:[],checkpoint_path:null,notes:"",
+        integrity:{ split_before_fit:true, no_train_test_overlap:true, target_not_in_features:true, trained_steps:10, seed:1 } }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    expect(c.scoreboardMd).toMatch(/\| x\d+ \| exp-001 \| viola \|.*infeasible:mismatch/);
+    expect(c.scoreboardMd).not.toMatch(/\| 1 \| exp-001 \|/);
+  });
+  it("computeScore marks a row infeasible from an A3 under-run flag (no verdict)", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.99,status:"ok",
+        runtime_s:0,log_paths:[],checkpoint_path:null,notes:"",
+        integrity:{ split_before_fit:true, no_train_test_overlap:true, target_not_in_features:true, trained_steps:10, seed:1 } }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    expect(c.scoreboardMd).toMatch(/infeasible:under-run/);
+  });
+  it("computeScore leaves a clean verified/unflagged result in the ranked group", () => {
+    const files: Record<string, string> = {
+      "/a/metric.md": "**Primary metric:** accuracy\n**Direction:** maximize\n",
+      "/a/verification.tsv": "exp_id\tinstrument\tverdict\treason\trecomputed\tts\nexp-001\tviola\tverified\t\t0.95\tT\n",
+      "/a/parts/viola/state.txt": "current_exp_id=exp-001\n",
+      "/a/parts/viola/experiments/exp-001/result.json": JSON.stringify({
+        branch_id:"b",approach_label:"x",metric_name:"accuracy",metric_value:0.95,status:"ok",
+        runtime_s:50,log_paths:[],checkpoint_path:null,notes:"",
+        integrity:{ split_before_fit:true, no_train_test_overlap:true, target_not_in_features:true, trained_steps:10, seed:1 } }),
+    };
+    const c = computeScore("/a", fakeFs(files), () => "T");
+    expect(c.scoreboardMd).toMatch(/\| 1 \| exp-001 \| viola \|/);
+    expect(c.scoreboardMd).not.toMatch(/infeasible/);
+  });
 });
 
 function fakeFs(files: Record<string, string>): ScoreFs {
