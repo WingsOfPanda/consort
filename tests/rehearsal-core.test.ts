@@ -119,6 +119,10 @@ describe("parseMetricMd round-trips formatMetricBlock", () => {
     expect(u.ceiling).toBeUndefined();
     expect(u.minRuntimeS).toBeUndefined();
   });
+  it("parses max_debug_attempts; undefined when absent", () => {
+    expect(parseMetricMd("**Primary metric:** acc\n**max_debug_attempts:** 3\n").maxDebugAttempts).toBe(3);
+    expect(parseMetricMd("**Primary metric:** acc\n").maxDebugAttempts).toBeUndefined();
+  });
 });
 
 describe("formatSotaBlock", () => {
