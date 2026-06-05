@@ -68,12 +68,10 @@ describe("perform init", () => {
     expect(readFileSync(join(art, "topic.txt"), "utf8")).toBe("add-oauth"); // NO trailing newline
     expect(readFileSync(join(art, "target_cwd.txt"), "utf8")).toBe(tmpRepo + "\n");
     expect(readFileSync(join(art, "provider.txt"), "utf8")).toBe("codex\n");
-    expect(readFileSync(join(art, "multi-repo.txt"), "utf8")).toBe("single\n");
     expect(readFileSync(join(art, "design.md"), "utf8")).toBe(PASSING_DOC);
     const out = outSpy.text();
     expect(out).toContain(`ART=${art}`);
     expect(out).toContain("TOPIC=add-oauth");
-    expect(out).toContain("ROUTING=single");
     expect(out).toContain("PROVIDER=codex");
     expect(out).toContain(`TARGET_CWD=${tmpRepo}`);
   });

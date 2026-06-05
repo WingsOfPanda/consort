@@ -19138,7 +19138,6 @@ var score_exports = {};
 __export(score_exports, {
   adjudicateRun: () => adjudicateRun,
   archiveRun: () => archiveRun,
-  detectMultiRepoRun: () => detectMultiRepoRun,
   diffRun: () => diffRun,
   drilldownWith: () => drilldownWith,
   forensicsRun: () => forensicsRun2,
@@ -19155,7 +19154,7 @@ __export(score_exports, {
   walkStateRun: () => walkStateRun
 });
 function usage2() {
-  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|drilldown|offset-reset|export-doc|flag|forensics|archive> ...");
+  log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|drilldown|offset-reset|export-doc|flag|forensics|archive> ...");
   return 2;
 }
 async function run10(args) {
@@ -19186,8 +19185,6 @@ async function run10(args) {
       return walkStateRun(rest);
     case "wait-gate":
       return waitGateRun(rest);
-    case "detect-multi-repo":
-      return detectMultiRepoRun(rest);
     case "drilldown":
       return drilldownRun(rest);
     case "offset-reset":
@@ -19244,14 +19241,11 @@ async function initWith2(tokens, d) {
   atomicWrite((0, import_node_path23.join)(art, "topic.txt"), topicText);
   atomicWrite((0, import_node_path23.join)(art, "skill.txt"), classifyTopic(topicText));
   atomicWrite((0, import_node_path23.join)(art, "roster.txt"), formatRosterFile(rows, isoUtc()));
-  const mode = "single";
-  atomicWrite((0, import_node_path23.join)(art, "multi-repo.txt"), mode + "\n");
-  log.ok(`score init: topic=${topic} N=${rows.length} ensemble=${ensemble ? "yes" : "no"} mode=${mode}`);
+  log.ok(`score init: topic=${topic} N=${rows.length} ensemble=${ensemble ? "yes" : "no"}`);
   process.stdout.write(
     `TOPIC=${topic}
 N=${rows.length}
 ENSEMBLE=${ensemble ? "yes" : "no"}
-MODE=${mode}
 ART=${art}
 ` + rows.map((r) => `PART=${r.instrument}:${r.provider}`).join("\n") + "\n"
   );
@@ -19696,9 +19690,6 @@ async function waitGateRun(rest) {
   for (const s of states) process.stdout.write(`${s.instrument}	${s.status}
 `);
   return states.every((s) => s.status === "terminal") ? 0 : 1;
-}
-async function detectMultiRepoRun(_rest) {
-  return 0;
 }
 async function drilldownRun(rest) {
   return drilldownWith(rest, { ...liveResearchSendDeps, ...liveResearchWaitDeps }, {});
@@ -20195,7 +20186,6 @@ var perform_exports = {};
 __export(perform_exports, {
   archiveRun: () => archiveRun2,
   branchWith: () => branchWith2,
-  finishOneWith: () => finishOneWith,
   finishWith: () => finishWith2,
   initWith: () => initWith3,
   kvFileField: () => kvFileField,
@@ -20216,7 +20206,7 @@ function latestObjections(stateFile) {
   return ms.length ? Number(ms[ms.length - 1][1]) : 0;
 }
 function usage3() {
-  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|reset-status|scope-check|summary|finish|finish-one|forensics|archive|find-latest-doc> ...");
+  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|reset-status|scope-check|summary|finish|forensics|archive|find-latest-doc> ...");
   return 2;
 }
 async function findLatestDocRun(rest) {
@@ -20304,8 +20294,6 @@ async function run11(args) {
       return summaryRun2(rest);
     case "finish":
       return finishRun2(rest);
-    case "finish-one":
-      return finishOneRun(rest);
     case "forensics":
       return forensicsRun3(rest);
     case "flag":
@@ -20367,7 +20355,6 @@ async function initWith3(tokens, d) {
     return 2;
   }
   const targetCwd = d.repoRoot();
-  const routing = "single";
   const provider = detectProvider(targetCwd);
   (0, import_node_fs30.mkdirSync)(art, { recursive: true });
   atomicWrite((0, import_node_path26.join)(art, "design.md"), text);
@@ -20375,11 +20362,9 @@ async function initWith3(tokens, d) {
   atomicWrite((0, import_node_path26.join)(art, "target_cwd.txt"), targetCwd + "\n");
   atomicWrite((0, import_node_path26.join)(art, "provider.txt"), provider + "\n");
   atomicWrite((0, import_node_path26.join)(art, "auto_provider.txt"), provider + "\n");
-  atomicWrite((0, import_node_path26.join)(art, "multi-repo.txt"), "single\n");
-  log.ok(`perform init: topic=${topic} routing=${routing} provider=${provider}`);
+  log.ok(`perform init: topic=${topic} provider=${provider}`);
   process.stdout.write(`ART=${art}
 TOPIC=${topic}
-ROUTING=${routing}
 PROVIDER=${provider}
 TARGET_CWD=${targetCwd}
 `);
@@ -20775,35 +20760,6 @@ async function finishWith2(topic, action, d) {
     n2++;
   }
   log.ok(`perform finish: ${n2} target(s) completed`);
-  return 0;
-}
-async function finishOneRun(rest) {
-  const [topic, slug, action] = rest;
-  if (!topic || !slug || !action) {
-    log.error("usage: perform finish-one <topic> <slug> <merge|pr|keep|discard>");
-    return 2;
-  }
-  if (!["merge", "pr", "keep", "discard"].includes(action)) {
-    log.error(`perform finish-one: unknown action '${action}'`);
-    return 2;
-  }
-  return finishOneWith(topic, slug, action, liveFinishDeps);
-}
-async function finishOneWith(topic, slug, action, d) {
-  const art = performArtDir(topic);
-  if (!(0, import_node_fs30.existsSync)(art)) {
-    log.error(`perform finish-one: art-dir missing: ${art}`);
-    return 1;
-  }
-  const target = iterTargets(topic).find((t) => t.slug === slug);
-  if (!target || !target.cwd) {
-    log.error(`perform finish-one: no target slug=${slug}`);
-    return 1;
-  }
-  const outcome = applyFinish(art, { slug: target.slug, cwd: target.cwd }, action, d);
-  (0, import_node_fs30.appendFileSync)((0, import_node_path26.join)(art, "finish-results.tsv"), `${slug}	${action}	${outcome}
-`);
-  log.info(`finish: ${slug} -> ${action} -> ${outcome}`);
   return 0;
 }
 async function forensicsRun3(rest) {

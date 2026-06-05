@@ -40,10 +40,12 @@ modules (`prelude`/`preludeLit`/`preludeConfidence`/`preludeTurn`/`preludeHandof
 `adversary-send`/`adversary-wait`/`synth-final`/`forensics`/`teardown`/`handoff-extract`, the lit-track
 classifier, the 5-signal confidence gate, the adversary round, and Phases 0–10 of `commands/prelude.md`.
 
-**Fully ported.** Every clone-wars command now has a consort equivalent — there is no remaining
-unported command. New behavior beyond a faithful port still needs its own spec under
+**Fully ported, then deliberately narrowed.** Every clone-wars command has a consort equivalent. As of
+0.1.24 the **multi-sub-repo subsystem has been retired** — consort is **single-repo-only**: no
+`--targets`, no `score` multi-repo detection / 8-section walk, no `perform` DAG/wave/sibling execution
+(design: `docs/superpowers/specs/2026-06-04-multi-repo-retirement-design.md`). New behavior beyond a
+faithful port — or a deliberate divergence like the retirement — still needs its own spec under
 `docs/superpowers/specs/`; do not import features across command boundaries without a design doc.
-(This preserves the clone-wars phase-guard convention even though the port is complete.)
 
 ## The musical rebrand (locked) — change everything cosmetic, freeze the protocol
 

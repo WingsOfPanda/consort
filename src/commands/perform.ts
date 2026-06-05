@@ -42,7 +42,7 @@ function latestObjections(stateFile: string): number {
   return ms.length ? Number(ms[ms.length - 1][1]) : 0;
 }
 function usage(): number {
-  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|reset-status|scope-check|summary|finish|finish-one|forensics|archive|find-latest-doc> ...");
+  log.error("usage: perform <init|audit|pre-snapshot|branch|turn-send|turn-wait|reset-status|scope-check|summary|finish|forensics|archive|find-latest-doc> ...");
   return 2;
 }
 
@@ -97,7 +97,6 @@ export async function run(args: string[]): Promise<number> {
     case "scope-check":  return scopeCheckRun(rest);
     case "summary":      return summaryRun(rest);
     case "finish":       return finishRun(rest);
-    case "finish-one":   return finishOneRun(rest);
     case "forensics":    return forensicsRun(rest);
     case "flag":         return runFlag("perform", rest[0], rest.slice(1).join(" "));
     case "archive":      return archiveRun(rest);
@@ -133,8 +132,6 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   if (existsSync(art)) { log.error(`perform init: topic already in flight: ${art} (run /consort:coda or pick a different --topic)`); return 2; }
 
   const targetCwd = d.repoRoot();
-
-  const routing = "single";
   const provider: string = detectProvider(targetCwd);
 
   mkdirSync(art, { recursive: true });
@@ -143,10 +140,9 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   atomicWrite(join(art, "target_cwd.txt"), targetCwd + "\n");
   atomicWrite(join(art, "provider.txt"), provider + "\n");
   atomicWrite(join(art, "auto_provider.txt"), provider + "\n");   // deploy claude-confirm marker (the auto-detected provider)
-  atomicWrite(join(art, "multi-repo.txt"), "single\n");
 
-  log.ok(`perform init: topic=${topic} routing=${routing} provider=${provider}`);
-  process.stdout.write(`ART=${art}\nTOPIC=${topic}\nROUTING=${routing}\nPROVIDER=${provider}\nTARGET_CWD=${targetCwd}\n`);
+  log.ok(`perform init: topic=${topic} provider=${provider}`);
+  process.stdout.write(`ART=${art}\nTOPIC=${topic}\nPROVIDER=${provider}\nTARGET_CWD=${targetCwd}\n`);
   return 0;
 }
 
@@ -376,8 +372,7 @@ async function finishRun(rest: string[]): Promise<number> {
   return finishWith(topic, action as "merge" | "pr" | "keep" | "discard", liveFinishDeps);
 }
 // Shared per-target finish body (deploy-finish.sh:1398-1419 / deploy.md:1398-1419). Resolves the
-// part's feat branch + start branch, then delegates the branch action. Used by both finishWith
-// (apply-to-all, truncate) and finishOneWith (single target, append).
+// part's feat branch + start branch, then delegates the branch action.
 function applyFinish(art: string, t: { slug: string; cwd: string }, action: "merge" | "pr" | "keep" | "discard", d: FinishDeps): string {
   const branch = branchMapField(join(art, "perform-branches.tsv"), t.slug);
   const startBranch = kvFileField(join(art, "baselines", `${t.slug}.tsv`), "branch");
@@ -395,24 +390,6 @@ export async function finishWith(topic: string, action: "merge" | "pr" | "keep" 
     log.info(`finish: ${t.slug} -> ${action} -> ${outcome}`); n++;
   }
   log.ok(`perform finish: ${n} target(s) completed`); return 0;
-}
-// finish-one (deploy-finish.sh:1398-1419 / deploy.md:1398-1419): finishes the lone 'main' target by
-// slug and APPENDS to finish-results.tsv (no truncate). The directive truncates finish-results.tsv
-// once, then calls finish-one for the target (finish menu per target).
-async function finishOneRun(rest: string[]): Promise<number> {
-  const [topic, slug, action] = rest;
-  if (!topic || !slug || !action) { log.error("usage: perform finish-one <topic> <slug> <merge|pr|keep|discard>"); return 2; }
-  if (!["merge", "pr", "keep", "discard"].includes(action)) { log.error(`perform finish-one: unknown action '${action}'`); return 2; }
-  return finishOneWith(topic, slug, action as "merge" | "pr" | "keep" | "discard", liveFinishDeps);
-}
-export async function finishOneWith(topic: string, slug: string, action: "merge" | "pr" | "keep" | "discard", d: FinishDeps): Promise<number> {
-  const art = performArtDir(topic);
-  if (!existsSync(art)) { log.error(`perform finish-one: art-dir missing: ${art}`); return 1; }
-  const target = iterTargets(topic).find((t) => t.slug === slug);
-  if (!target || !target.cwd) { log.error(`perform finish-one: no target slug=${slug}`); return 1; }
-  const outcome = applyFinish(art, { slug: target.slug, cwd: target.cwd }, action, d);
-  appendFileSync(join(art, "finish-results.tsv"), `${slug}\t${action}\t${outcome}\n`);
-  log.info(`finish: ${slug} -> ${action} -> ${outcome}`); return 0;
 }
 
 // ---- forensics (best-effort) + archive (deploy-archive.sh) ----
