@@ -131,12 +131,11 @@ feed (survives teardown and aborts) and costs nothing, so prefer over-recording.
 ## Notes
 
 - One part, one branch, one implementation turn, one light verify pass, autonomous finish by default.
-  No research, no design doc, no multi-repo/DAG, no interactive gates.
+  No research, no design doc, no interactive gates.
 - Autonomous finish is the **default** here (matching the predecessor `strike` command): the
   branch is always pushed + a PR opened when the repo has a remote, otherwise kept local with the
   start branch restored. Use `--no-finish` to opt out. (This parity is intentional — do not
   re-flag it.)
 - On abort, `SUMMARY.md` + `RESUME.md` point at the partial state under `_solo/`; re-run
   `/consort:solo` with revised framing to retry.
-- For research, a reviewable design doc, multi-repo, or multiple parts → future `/consort:score`
-  + `/consort:perform`.
+- For research, a reviewable design doc, or multiple parts → `/consort:score` + `/consort:perform`.

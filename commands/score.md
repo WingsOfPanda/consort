@@ -1,6 +1,6 @@
 ---
 description: Cross-verified multi-model research synthesized into a deploy-audit-passing design doc — Maestro fast-path or escalate to a 2-3 part ensemble
-argument-hint: [--ensemble] [--targets a,b,c] <topic — what to research / design>
+argument-hint: [--ensemble] <topic — what to research / design>
 allowed-tools: Bash, Write, Read, Edit, AskUserQuestion, WebSearch, Skill, TodoWrite
 ---
 
@@ -20,8 +20,7 @@ high-level stages, marking each `in_progress` on entry and `completed` on exit:
 
 - **fast-path:** `draft sections`, `assemble+audit`, `export+present`.
 - **escalation:** `spawn ensemble`, `research`, `diff`, `cross-verify`, `adjudicate`,
-  `detect-multi-repo` (skip when `--targets` was passed), `design walk`, `assemble+audit`,
-  `drilldown` (optional), `teardown+archive`, `export+present`.
+  `design walk`, `assemble+audit`, `drilldown` (optional), `teardown+archive`, `export+present`.
 
 ## Flagging suspicions
 
@@ -39,14 +38,12 @@ feed (survives teardown and aborts) and costs nothing, so prefer over-recording.
    TOPIC=<slug>
    N=<2|3>
    ENSEMBLE=<yes|no>
-   MODE=<single|single-sub|multi>
    ART=<abs path to the _score art dir>
    PART=<instrument>:<provider>   (one per part)
    ```
-   `MODE` reflects `--targets`: `single` (none passed), `single-sub` (one), or `multi` (two or more).
    Non-zero aborts: rc 1 = empty topic OR fewer than 2 validated providers (redirect: just ask
    Claude directly — no orchestration needed); rc 2 = topic already in flight. Capture `TOPIC`/`N`/
-   `ENSEMBLE`/`MODE`/`ART` for later stages — later stages read/write files under `$ART` and pass
+   `ENSEMBLE`/`ART` for later stages — later stages read/write files under `$ART` and pass
    `<TOPIC>` to every subcommand.
 
 ## Stage 1 — routing
@@ -67,13 +64,8 @@ Decide fast-path vs escalation, in order:
 
 > **Routing → next stage.** After Stage 1 decides:
 > - **fast-path** (`Path: fast`) → **Stage 2** (Maestro solo, unchanged).
-> - **escalate** (`escalated-from-flag` / `escalated-from-signals`) **and `MODE=single`** → **Stage 3**
->   (the ensemble pipeline below — research → diff; Phase C ends at the diff).
-> - **escalate and `MODE` is `multi` / `single-sub`** (i.e. `--targets` was passed): proceed into the
->   **multi-repo ensemble** — Stages 3–9 run unchanged (research → diff → cross-verify → adjudicate);
->   then Stage 10 honors the `--targets` short-circuit (targets already materialized by `init`) and
->   Stage 11 walks the 8 sections. `--targets` is itself the escalation signal — skip the fast-path
->   4-signal check.
+> - **escalate** (`escalated-from-flag` / `escalated-from-signals`) → **Stage 3** (the ensemble
+>   pipeline below — research → diff → cross-verify → adjudicate → design walk).
 
 ## Stage 2 — fast-path (Maestro solo)
 
@@ -108,9 +100,8 @@ Then assemble + audit: `$CS score assemble <TOPIC>`.
 
 ## Stage 3 — escalation: preflight + batch-spawn
 
-> Reached on **any** escalation (`MODE` ∈ {single, single-sub, multi}). Stages 3–9 are
-> mode-independent — they always spawn the ensemble + research + diff + cross-verify + adjudicate;
-> `MODE` only changes Stage 10 onward (single-repo skips detection; single-sub/multi walk the targets).
+> Reached on **any** escalation. Stages 3–9 spawn the ensemble + research + diff + cross-verify +
+> adjudicate; the design walk (Stage 10) then produces the doc.
 
 Spawn the ensemble in one call: `$CS score spawn-all <TOPIC>`. It preflights N panes, spawns every
 part in parallel (`--target-pane`, `--cwd <repo>`), and writes `$ART/spawn-results.tsv` (TSV
@@ -225,39 +216,7 @@ so keep handling / relay and re-run. Only on rc 0 continue.
    `- [Components] …`, `- [Testing] …`, `- [Success Criteria] …` — to route them into the matching
    synthesize seed.
 
-## Stage 10 — multi-repo detection
-
-If `--targets` was passed, `$ART/multi-repo.txt` + `$ART/targets.txt` already exist (written by `init`
-after validation) — **skip detection** and go to Stage 11.
-
-Otherwise auto-detect: `$CS score detect-multi-repo <TOPIC> --cwd <HUB>` (HUB = the workspace dir whose
-first-level subdirs are the candidate sub-projects; default is the conductor's cwd). It prints
-`<slug>\t<abs-marker>` per sibling dir (with `CLAUDE.md`/`AGENTS.md`) whose slug case-insensitively
-substring-matches `adjudicated.md`. Count the hit lines and branch:
-
-- **0 hits** → single-repo. Write `single` to `$ART/multi-repo.txt` (no `targets.txt`, no prompt).
-  Continue to Stage 11 (6-section walk).
-- **1 hit** → **AskUserQuestion** (Header `Target`): "Topic targets sub-project `<slug>` (detected from
-  sibling repos). Use it as the single sub-repo target, or treat as hub-level work?" — options
-  **Use `<slug>`** / **Treat as hub-level**.
-  - Use `<slug>` → write that hit's `<slug>\t<marker>` row to `$ART/targets.txt` (TSV) + `single-sub`
-    to `$ART/multi-repo.txt`.
-  - Treat as hub-level → `single` to `$ART/multi-repo.txt`, no `targets.txt`.
-- **2+ hits** → **AskUserQuestion**: "Detected multi-repo candidates: `<slug list>`. Use these as
-  targets, edit, or proceed single-repo?" — options **Use auto-detected list** / **Edit list** /
-  **Proceed single-repo**.
-  - Use list → write all hit rows (TSV) to `targets.txt` + `multi` to `multi-repo.txt`.
-  - Edit list → free-form follow-up for a comma-separated slug list; **re-validate** each (must be a
-    real sibling dir with a marker — same checks `init --targets` runs) and re-prompt on rejection;
-    then **N≥2 edited slugs → `multi`, exactly 1 → `single-sub`** (an edit-down-to-1 is single-sub, NOT
-    multi). Write `targets.txt` (TSV `<slug>\t<marker>`) accordingly.
-  - Proceed single-repo → `single`, no `targets.txt`.
-
-`targets.txt` rows are TSV `<slug>\t<abs-marker>` (the shape `detect-multi-repo`/`init` emit); a leading
-`# generated …` comment line is optional (readers strip it). After this stage, `multi-repo.txt` ∈
-{single, single-sub, multi}.
-
-## Stage 11 — interactive per-section design walk
+## Stage 10 — interactive per-section design walk
 
 1. Seed the drafts: `$CS score synthesize <TOPIC>` (refuses while any `- PENDING:` remains, or if
    `adjudicated.md` is missing). Writes the 6 `.draft/<section>.md`.
@@ -273,65 +232,25 @@ substring-matches `adjudicated.md`. Count the hit lines and branch:
    - **Skip** → Write `_(skipped)_` as the whole body. **Skip is NOT offered for the four
      audit-required sections** (goal, architecture, testing, success-criteria) — they must be drafted.
 
-### Stage 11 (multi-repo): the 8-section walk
-
-When `multi-repo.txt` ∈ {single-sub, multi}: after `score synthesize` (still seeds the 6 base sections),
-walk the **multi section list** — for `multi`, all 8 in this exact order (must match `SECTIONS_MULTI` in
-`core/scoreDoc.ts`): **problem, goal, architecture, components, execution-dag, cross-repo-notes, testing,
-success-criteria** (single-sub uses the 6 base sections, header-less like single — a lone target ships as a single-repo doc; perform infers the target from its cwd). The 2 multi-only sections
-(`execution-dag`, `cross-repo-notes`) have **no synthesize seed** — draft them fresh. Resume via
-`$CS score walk-state <TOPIC>`. Per-section rules:
-
-- **architecture** (multi): draft a `### <slug>` subsection per target (read `$ART/targets.txt` col 1
-  for the slugs) plus any shared/hub architecture. (Required — no Skip.)
-- **cross-repo-notes**: a normal narrative section (Skip allowed) — per-target dependencies, ordering
-  constraints, and shared contracts drawn from the parts' findings.
-- **execution-dag**: the special gated section (below). (No Skip.)
-- All other sections: exactly as the single-repo walk (the 4 required sections never offer Skip).
-
-**execution-dag drafting + pre-Approve gate** (mirrors the bash predecessor's v0.54.0 gate; NO executor):
-1. From the parts' cross-repo-dependency findings, **Write** `$ART/dag-rows.tsv` — one tab-separated
-   `<step>\t<repo>\t<desc>\t<deps-csv|none>` row per step (`deps` = comma-separated upstream step
-   numbers, or `none`). Then `$CS score emit-dag <TOPIC>` renders `.draft/execution-dag.md` as a
-   `## Execution DAG` section (numbered `N. <repo> — <desc> (depends on M, N)` lines, em-dash U+2014).
-2. **Pre-validate before presenting:** `$CS score check-dag <TOPIC>`.
-   - **rc 0** → present the section; **AskUserQuestion Approve / Revise** (NO Skip — execution-dag is
-     required in multi-repo).
-   - **rc 1** → it printed the malformed line(s) to stderr. Do **not** offer the normal options; instead
-     **AskUserQuestion**: **Revise** / **Force-Approve (override)** / **Abort**.
-     - Revise → take direction, rewrite `dag-rows.tsv`, re-run `emit-dag`, re-loop the gate (cap 4 revises).
-     - Force-Approve → keep the non-conforming draft as-is; the Stage-12 audit
-       (`execution_dag_not_parseable`) will catch it.
-     - Abort → stop the walk.
-3. The drafted heading MUST be exactly `## Execution DAG` (a decorated heading silently disables the
-   gate). score validates conformance only — it does NOT topo-sort, compute waves, or detect cycles
-   (a cyclic-but-syntactically-valid DAG passes here and surfaces only at perform time).
-
-## Stage 12 — assemble + deploy-audit gate (retry loop)
+## Stage 11 — assemble + deploy-audit gate (retry loop)
 
 `$CS score assemble <TOPIC>`.
 - **rc 0** → it prints the design-doc path. Immediately run `EXPORTED=$($CS score export-doc <TOPIC>
   | sed -n 's/^EXPORTED=//p')` to copy the doc into `docs/superpowers/specs/` **before** teardown/
-  archive (Stages 14b/15) so the `_score` source still exists (a non-zero `export-doc` is non-fatal).
-  **Read and present** the doc, then continue to Stage 13 (Phase F). Carry `$EXPORTED` to Stage 16.
+  archive (Stages 13b/14) so the `_score` source still exists (a non-zero `export-doc` is non-fatal).
+  **Read and present** the doc, then continue to Stage 12 (Phase F). Carry `$EXPORTED` to Stage 15.
 - **rc 1** (audit FAIL) → it printed paired `ISSUE=<code>` + `SECTION=<mapped>` lines to stderr. For
   each `SECTION=`:
   - a **section name** (problem/goal/architecture/components/testing/success-criteria) → re-walk that
-    one section (Stage 11 for it), then re-assemble.
+    one section (Stage 10 for it), then re-assemble.
   - `ASK` (a TBD/TODO/fill-in marker) → AskUserQuestion which section carries the marker, re-walk it.
-  - `execution-dag` (multi-repo, from `execution_dag_not_parseable`) → `rm $ART/design-doc/.draft/execution-dag.md`,
-    re-walk that one section (re-runs the Stage-11 `emit-dag` + `check-dag` gate), re-assemble.
-  - `header` (multi-repo, from `target_subproject_when_invalid` — a **single-sub** slug-validity failure;
-    the plural multi `**Target Sub-Project(s):**` header is descriptive and not audited as a slug) →
-    `rm -f $ART/multi-repo.txt $ART/targets.txt` and **bounce back to Stage 10** detection, then re-walk
-    + re-assemble.
   - empty (unknown code) → surface the raw `ISSUE=` and stop.
   Re-assemble after each fix; loop until rc 0 (bound to a few attempts per section, then surface the
   remaining ISSUEs and stop).
 
-## Stage 13 — drilldown (optional; parts still live)
+## Stage 12 — drilldown (optional; parts still live)
 
-(Fast-path: no parts → skip Stages 13–15 entirely; go to Stage 16.) Derive the design-doc path
+(Fast-path: no parts → skip Stages 12–14 entirely; go to Stage 15.) Derive the design-doc path
 (`$ART/design-doc/<date>-<TOPIC>-design.md`, also printed by `assemble`; missing → tell the user and
 skip drilldown). **AskUserQuestion**: "Any aspect to drill deeper before tearing down? (parts still
 live)" — **Yes, drill** / **No, proceed to teardown**. While Yes, per round:
@@ -344,16 +263,14 @@ live)" — **Yes, drill** / **No, proceed to teardown**. While Yes, per round:
      <DESIGN_DOC> <i1> <m1> [<i2> <m2>]`.
    - **all three** → **two parallel** `$CS score drilldown …` Bash calls in one message (a K=2 call +
      a K=1 call) sharing `<TOPIC>` + `"$ART/drilldowns"`. Success if ≥1 call returns rc 0.
-   - multi-repo: append the target `<subproject>` slug as the final arg to scope the drill; the output
-     file then carries the `-<subproject>-` infix.
-4. **Read back** `$ART/drilldowns/_scratch/drilldown-<section-slug>-*.md` (tolerate an optional
-   `-<subproject>-` infix) and summarize. On **rc 1** (all empty/timeout) → AskUserQuestion **Retry /
-   Different aspect / Skip**. Then "Drill another aspect?" — loop or proceed.
+4. **Read back** `$ART/drilldowns/_scratch/drilldown-<section-slug>-*.md` and summarize. On **rc 1**
+   (all empty/timeout) → AskUserQuestion **Retry / Different aspect / Skip**. Then "Drill another
+   aspect?" — loop or proceed.
 
 The drill files stay in `_score/drilldowns/_scratch/` (out of `design-doc/`) and ride along into the
-archive (Stage 15). Re-drilling the same section auto-suffixes `-2`, `-3`, ….
+archive (Stage 14). Re-drilling the same section auto-suffixes `-2`, `-3`, ….
 
-## Stage 14a — forensics capture + Maestro reflection
+## Stage 13a — forensics capture + Maestro reflection
 
 `FORENSICS=$($CS score forensics <TOPIC>)` (best-effort; prints a path only if mechanical signals were
 found, else empty — never blocks). If `FORENSICS` is non-empty: tell the user "forensics captured:
@@ -363,36 +280,33 @@ spec topic, a patch, or a one-off) via the Write/Edit tool. **Idempotent:** skip
 already contains the exact header `## Maestro reflection`. The forensics file lives under
 `~/.consort/forensics/<date>/` — OUTSIDE the topic state — so it survives teardown + archive.
 
-## Stage 14b — teardown (FINE banner)
+## Stage 13b — teardown (FINE banner)
 
 Tear down all live parts in one shared banner: read the roster instruments from `$ART/roster.txt` and
 run `$CS coda --pairs <TOPIC> <instrument…>` (one 9s graceful FINE-banner batch, then hard-kill +
 per-part archive). Per-part failures are tolerated. (Equivalent fallback: `$CS coda <instrument>
 <TOPIC>` per part.) Fast-path: no parts → skip.
 
-## Stage 15 — archive
+## Stage 14 — archive
 
 `$CS score archive <TOPIC>` → `archiveTopic(topic,'score')`: stamps every part `status.json` to
 `state=archived`, moves the whole `_score/` dir (including `drilldowns/`) to
 `~/.consort/archive/<repo-hash>/<TOPIC>/_score-<ts>`, and rmdirs the topic. The forensics file from
-Stage 14a is untouched (it lives outside the state tree). Fast-path: skip (nothing beyond the doc).
+Stage 13a is untouched (it lives outside the state tree). Fast-path: skip (nothing beyond the doc).
 
-## Stage 16 — present + perform handoff
+## Stage 15 — present + perform handoff
 
 **Read and present** the final design-doc. State its location clearly: **`$EXPORTED`
-(`docs/superpowers/specs/`) is the primary, discoverable copy** (exported in Stage 12, survives
+(`docs/superpowers/specs/`) is the primary, discoverable copy** (exported in Stage 11, survives
 teardown/archive); the source `_score`/archive copy (`$ART/design-doc/<date>-<TOPIC>-design.md`, or
-the archived path after Stage 15) is noted as provenance. Then point the user at the next step:
-`/consort:perform $EXPORTED` — the deploy-audit gate already guarantees the doc is perform-ready
-(single-repo AND multi-repo). This is the end of `score`.
+the archived path after Stage 14) is noted as provenance. Then point the user at the next step:
+`/consort:perform $EXPORTED` — the deploy-audit gate already guarantees the doc is perform-ready.
+This is the end of `score`.
 
 ## Notes
 
 - Fast-path spawns no parts and writes no working artifacts beyond `topic.txt`, `.draft/*.md`, the
   assembled `design-doc/<date>-<slug>-design.md`, and `audit.log`. No teardown needed.
-- Escalation Stages 3–12 (spawn-all → research → diff → cross-verify → adjudicate → synthesize →
-  design walk → deploy-audit gate), single-repo AND multi-repo (detection → 8-section walk → execution
-  DAG), ship in Phases C–E. The wind-down (Stages 13–16: drilldown → forensics + Maestro reflection →
-  `coda` teardown → archive → present + perform handoff) ships in Phase F. `score` is now complete
-  end-to-end; only the other high-level commands (`perform` / `prelude` / `rehearsal` / `playback`)
-  remain unbuilt.
+- Escalation runs Stages 3–11 (spawn-all → research → diff → cross-verify → adjudicate → synthesize →
+  design walk → deploy-audit gate), then the wind-down (Stages 12–15: drilldown → forensics + Maestro
+  reflection → `coda` teardown → archive → present + perform handoff).

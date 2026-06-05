@@ -13,7 +13,6 @@ afterEach(() => { if (prev === undefined) delete process.env.CONSORT_HOME; else 
 function scaffold(topic: string, sections: Record<string, string>) {
   const dd = scoreDraftDir(topic); mkdirSync(dd, { recursive: true });
   writeFileSync(join(scoreArtDir(topic), "topic.txt"), "My Topic Title");
-  writeFileSync(join(scoreArtDir(topic), "multi-repo.txt"), "single\n");
   for (const [k, v] of Object.entries(sections)) writeFileSync(join(dd, `${k}.md`), v);
 }
 function cap() { const c: string[] = []; const s = vi.spyOn(process.stdout, "write").mockImplementation(((x: unknown) => { c.push(String(x)); return true; }) as never); return { text: () => c.join(""), restore: () => s.mockRestore() }; }

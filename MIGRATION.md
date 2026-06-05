@@ -313,6 +313,10 @@ orchestrates many primitive dispatches. Port after the primitives + one dogfood.
 > in each `commands/*.md` + `lib/*.sh`; do not transliterate line-by-line. Preserve
 > the **stage sequence** and the **IPC dispatch pattern**, modernize the internals.
 
+> **Update (0.1.24):** the multi-sub-repo subsystem was retired after the port — consort `perform`
+> is single-repo-only and `deploy`'s multi-repo DAG / sibling execution was **not** carried forward.
+> See `docs/superpowers/specs/2026-06-04-multi-repo-retirement-design.md`.
+
 ### 6.3 The command → CLI dispatch pattern (the injection fence — keep it)
 
 Every `commands/*.md` keeps the 3-step args-file fence (it defends against shell

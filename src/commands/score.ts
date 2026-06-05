@@ -30,7 +30,7 @@ import { run as sendRun } from "./send.js";
 import { run as spawnRun } from "./spawn.js";
 import { run as preflightRun } from "./preflight.js";
 
-function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|detect-multi-repo|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
+function usage(): number { log.error("usage: score <init|assemble|spawn-all|research-send|research-wait|wait-gate|diff|verify-send|verify-wait|adjudicate|synthesize|walk-state|drilldown|offset-reset|export-doc|flag|forensics|archive> ..."); return 2; }
 
 export async function run(args: string[]): Promise<number> {
   const verb = args[0];
@@ -48,7 +48,6 @@ export async function run(args: string[]): Promise<number> {
     case "synthesize": return synthesizeRun(rest);
     case "walk-state": return walkStateRun(rest);
     case "wait-gate": return waitGateRun(rest);
-    case "detect-multi-repo": return detectMultiRepoRun(rest);
     case "drilldown": return drilldownRun(rest);
     case "offset-reset": return offsetResetRun(rest);
     case "forensics": return forensicsRun(rest);
@@ -98,13 +97,10 @@ export async function initWith(tokens: string[], d: ScoreInitDeps): Promise<numb
   atomicWrite(join(art, "skill.txt"), classifyTopic(topicText));
   // Full roster written even on a fast-path run; the ensemble path (Phase C) reads roster.txt back.
   atomicWrite(join(art, "roster.txt"), formatRosterFile(rows, isoUtc()));
-  // multi-repo retired: always single-repo. multi-repo.txt is kept as a compat shim.
-  const mode = "single";
-  atomicWrite(join(art, "multi-repo.txt"), mode + "\n");
 
-  log.ok(`score init: topic=${topic} N=${rows.length} ensemble=${ensemble ? "yes" : "no"} mode=${mode}`);
+  log.ok(`score init: topic=${topic} N=${rows.length} ensemble=${ensemble ? "yes" : "no"}`);
   process.stdout.write(
-    `TOPIC=${topic}\nN=${rows.length}\nENSEMBLE=${ensemble ? "yes" : "no"}\nMODE=${mode}\nART=${art}\n` +
+    `TOPIC=${topic}\nN=${rows.length}\nENSEMBLE=${ensemble ? "yes" : "no"}\nART=${art}\n` +
     rows.map((r) => `PART=${r.instrument}:${r.provider}`).join("\n") + "\n",
   );
   return 0;
@@ -472,15 +468,6 @@ export async function waitGateRun(rest: string[]): Promise<number> {
   const states = gateState(parts, key);
   for (const s of states) process.stdout.write(`${s.instrument}\t${s.status}\n`);
   return states.every((s) => s.status === "terminal") ? 0 : 1;
-}
-
-// ---- detect-multi-repo (retired stub) ----
-
-// multi-repo retired: always zero hits (single-repo). Kept as a stub so the
-// score.md Stage 10 "0 hits -> single" branch keeps working until the docs
-// follow-up removes the call. See 2026-06-04-multi-repo-retirement spec.
-export async function detectMultiRepoRun(_rest: string[]): Promise<number> {
-  return 0;
 }
 
 // ---- Phase F: drilldown (optional, parts still live) ----

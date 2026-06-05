@@ -1,5 +1,5 @@
 ---
-description: Implement a deploy-schema design doc — audit + route, spawn one part to plan/implement/self-verify, Maestro cross-verifies and runs a bounded fix-loop, then per-target finish + teardown (single-repo)
+description: Implement a deploy-schema design doc — audit, spawn one part to plan/implement/self-verify, Maestro cross-verifies and runs a bounded fix-loop, then finish + teardown (single-repo)
 argument-hint: [--no-branch] [--branch <n>] [--topic <slug>] [--max-rounds N] [<design-doc-path>]
 allowed-tools: Bash, Write, Read, Edit, AskUserQuestion, Skill, TodoWrite, mcp__codegraph
 ---
@@ -16,12 +16,9 @@ Let `CS="node ${CLAUDE_PLUGIN_ROOT}/dist/consort.cjs"`.
 
 Maintain a **TodoWrite** list so the user can see where the run is. Seed it right after Stage 0
 `init` succeeds, mark each item `in_progress` when you enter that stage and `completed` when you
-leave it, and use **one rolling todo** for the dynamic phases (fix-rounds, DAG waves) rather than one
-todo per round/wave.
+leave it, and use **one rolling todo** for the dynamic fix-rounds rather than one todo per round.
 
-- `ROUTING=single` → seed: `spawn part`, `build+verify loop`, `scope+finish`, `teardown+archive`.
-- `ROUTING=multi` → seed: `preflight`, `wave dispatch (rolling)`, `cross-repo verify`, `fix loop`,
-  `sibling+scope+finish`, `teardown+archive`.
+- Seed: `spawn part`, `build+verify loop`, `scope+finish`, `teardown+archive`.
 
 ## Flagging suspicions
 
@@ -30,13 +27,10 @@ alarm — record it: `$CS perform flag <TOPIC> "<what looked off>"`. It writes s
 feed (survives teardown and aborts) and costs nothing, so prefer over-recording. Review later with
 `/consort:playback`.
 
-> **Scope (this build):** single-repo **and multi-repo DAG execution, end to end**. A multi-repo doc
-> (a `**Target Sub-Project(s):**` header plus a `## Execution DAG` section) routes through Stages
-> 3a/3b (preflight panes → wave-by-wave dispatch), then 3c/3d/4 (cross-repo verify → per-repo
-> fix-loop → per-repo finish + teardown). Both paths end at a per-target finish menu and
-> teardown/archive.
+> **Scope:** single-repo. One part implements the design doc on its own `feat/perform-<TOPIC>`
+> branch; the Maestro cross-verifies and runs a bounded fix-loop, then a finish menu + teardown/archive.
 
-## Stage 0 — args-file + init + route + branch
+## Stage 0 — args-file + init + branch
 
 1. **Strip `--max-rounds` first.** Scan `$ARGUMENTS` token-by-token: if you see `--max-rounds`,
    capture the NEXT token into `MAX_ROUNDS_OVERRIDE` and drop both tokens. (The init verb rejects
@@ -71,72 +65,31 @@ feed (survives teardown and aborts) and costs nothing, so prefer over-recording.
    ```
    ART=<abs path to the _perform art dir>
    TOPIC=<slug>
-   ROUTING=<single|multi>
    PROVIDER=<codex|claude>
    TARGET_CWD=<abs path the part runs in>
    ```
-   Capture all five. Non-zero aborts:
+   Capture all four. Non-zero aborts:
    - **rc 1** — the doc/topic/target was unreadable/unresolvable (the audit was already cleared
      above). Surface the message and stop.
    - **rc 2** — usage error, or the topic is already in flight (run `/consort:coda <TOPIC>` to clear it
      first). Stop.
-5. **If `ROUTING=multi`:** materialize the DAG + the per-repo roster *before* the shared step 6:
-   1. `$CS perform dag-parse <TOPIC>` — parses `## Execution DAG` → `$ART/dag-waves.txt`
-      (`<wave>\t<step>\t<repo>\t<path|none>\t<desc>`) + `$ART/dag-edges.txt` (`<from>\t<to>`); prints
-      `WAVES=`/`STEPS=`. On **rc 1** (no `dag-waves.txt`, the offending line / cycle printed to
-      stderr) run the **one-shot prose-DAG rescue** before giving up — the `## Execution DAG` section
-      is often narrative or box-art rather than parser-conforming `N. <slug> — <desc>` lines:
-      1. **Read** `$ART/design.md`'s `## Execution DAG` section. Extract the implicit ordering into
-         parser-conforming lines, one per repo, each `N. <slug> — <desc>` (a literal em-dash `—`
-         between slug and description; `N` is the 1-based order).
-      2. **Verify the repos.** `$CS perform verify-dag-repos <TOPIC>` (resolves each unique DAG slug
-         under the hub `$TARGET_CWD`; prints one `REPO=<slug>\tSTATUS=<ok|missing-dir|missing-marker>`
-         line per slug; rc 1 if any slug is bad, else 0).
-      3. **Confirm gate.** If **every** `STATUS=ok` **and** `CONSORT_PERFORM_FORCE_RESCUE` is unset
-         (default), auto-proceed silently. Otherwise (any bad status, or `CONSORT_PERFORM_FORCE_RESCUE=1`)
-         render the `REPO=…\tSTATUS=…` rows and **AskUserQuestion** ("Looks right — write & retry / Let
-         me edit / Abort"):
-         - *Looks right — write & retry* — continue to rescue sub-step 4 (write the lines).
-         - *Let me edit* — let the user hand-correct the extracted lines you present, then continue to
-           rescue sub-step 4.
-         - *Abort* — stop (re-run `/consort:score` for a clean DAG, or fix the doc by hand).
-      4. **Write the lines.** Use the **Edit** tool to insert a `### DAG Lines` subsection holding the
-         extracted `N. <slug> — <desc>` lines at the **top** of the `## Execution DAG` section in
-         `$ART/design.md`. Then write a one-line `$ART/dag-rescue.log` recording that the rescue ran
-         (e.g. `rescued <K> DAG lines for <TOPIC>`).
-      5. **Re-run once.** Re-run `$CS perform dag-parse <TOPIC>` then (on its success) the
-         `$CS perform multi-init <TOPIC> "$TARGET_CWD"` from step 2 below — **exactly once, no loop**.
-         If `dag-parse` still exits rc 1 (e.g. a genuine **cycle** — `verify-dag-repos` was all-`ok`
-         but the DAG is cyclic), surface the offending line / cycle and stop (re-run `/consort:score`
-         for a clean DAG, or fix the doc by hand).
-   2. `$CS perform multi-init <TOPIC> "$TARGET_CWD"` — resolves each unique sub-repo (in DAG
-      first-occurrence order) under the hub `$TARGET_CWD`, checks its `CLAUDE.md`/`AGENTS.md` marker,
-      assigns one part (instrument) + its detected provider per repo, and writes `$ART/parts.txt`
-      (`<instrument>\t<cwd>\t<provider>`) + a per-part `$ART/<instrument>-branch-base.sha`. rc 1 = a
-      sub-repo is missing / lacks a marker / the instrument pool is exhausted → surface and stop.
-   Then step 6 runs **pre-snapshot + branch across all N parts** (`iterTargets` reads `parts.txt`).
-6. **Pre-snapshot + branch.** `$CS perform pre-snapshot <TOPIC>` (commits any dirty tree so the
+5. **Pre-snapshot + branch.** `$CS perform pre-snapshot <TOPIC>` (commits any dirty tree so the
    perform branch forks clean; rc 2 = the target is not a git repo → surface and stop). Then, unless
    the user passed `--no-branch`, `$CS perform branch <TOPIC>` (creates/resumes `feat/perform-<TOPIC>`
    from the clean HEAD and records `branch-base.sha`). With `--no-branch`, run
    `$CS perform branch --no-branch <TOPIC>` (stays on the current branch).
 
-> **Routing after Stage 0.** `ROUTING=single` → Stages 1.1 / 1 / 2 / 3 / 4 below. `ROUTING=multi` →
-> **skip to Stage 3a** (the materialization in Stage 0 step 5 already ran; pre-snapshot + branch
-> covered every part).
-
-> **Claude-confirm gate (reused before every spawn).** `init` (and, for multi, `multi-init`) records
-> each part's auto-detected provider (`PROVIDER=<codex|claude>` on stdout; also written to
-> `$ART/auto_provider.txt` for single-repo, and into col 3 of `parts.txt` for multi). **Before
-> spawning any part whose provider is `claude`** (this repo has a `.claude-plugin/plugin.json`),
+> **Claude-confirm gate (before the spawn).** `init` records the part's auto-detected provider
+> (`PROVIDER=<codex|claude>` on stdout; also written to `$ART/auto_provider.txt`). **Before
+> spawning the part when its provider is `claude`** (this repo has a `.claude-plugin/plugin.json`),
 > **AskUserQuestion**:
 > - question: "This repo has .claude-plugin/plugin.json — Claude is the recommended part for plugin
 >   testing (it can load slash commands, run hooks, exercise the Claude Code surface natively). It will
 >   use claude tokens. Use claude or fall back to codex?"
 > - options: "Use claude (recommended for plugin testing)" / "Fall back to codex (cheaper)"
 >
-> On *Use claude* keep the provider as `claude`; on *Fall back to codex* set that one spawn's provider
-> to `codex`. Apply this gate at the Stage 1.1 single-repo spawn and at every Stage 3b per-part spawn.
+> On *Use claude* keep the provider as `claude`; on *Fall back to codex* set the spawn's provider
+> to `codex`. Apply this gate at the Stage 1.1 spawn.
 
 ## Stage 1.1 — spawn the part (single-repo)
 
@@ -252,7 +205,7 @@ Then `ROUND=$((ROUND+1))`, `RETRY=0`, and loop back to Stage 1.
    - *Send back* — append the out-of-scope paths as a `[scope]` bug to `$ART/fix-prompt-$((ROUND+1)).md`
      and re-enter Stage 1 (one more fix round).
    - *Force-keep* — append the paths to `$ART/scope-overrides.txt` and proceed.
-2. **Summary.** `$CS perform summary <TOPIC>` — surface its per-target block (branch, baseline/HEAD,
+2. **Summary.** `$CS perform summary <TOPIC>` — surface its block (branch, baseline/HEAD,
    diff stat, commit list) to the user verbatim.
 3. **Finish menu.** Recommend **Push + PR** if `git -C "$TARGET_CWD" remote` is non-empty, else
    **Merge**. **AskUserQuestion** ("Merge to start branch / Push + PR / Keep the branch / Discard"),
@@ -267,208 +220,3 @@ Then `ROUND=$((ROUND+1))`, `RETRY=0`, and loop back to Stage 1.
    then `$CS perform archive <TOPIC>`.
 6. **Final summary.** Print: the branch + commit count (`git -C "$TARGET_CWD" log --oneline
    "$(cat "$ART/branch-base.sha")"..HEAD | wc -l`), the finish outcome, and the archive path.
-
-## Stage 3a — multi-repo preflight (ROUTING=multi only)
-
-Stage 0 step 5 + step 6 have already written `$ART/{dag-waves.txt,dag-edges.txt,parts.txt}` and
-branched every sub-repo. Allocate one tmux pane per part, rooted later in each part's sub-repo cwd.
-Build the preflight roster `<instrument>:<provider>` from `parts.txt` (col 1 = instrument, col 3 =
-provider) and the part count `N`:
-
-```bash
-N=$(grep -vc '^$' "$ART/parts.txt")
-ROSTER=$(awk -F'\t' 'NF>=3 {printf "%s%s:%s", sep, $1, $3; sep=","}' "$ART/parts.txt")
-$CS preflight <TOPIC> "$N" --roster "$ROSTER" --art-dir "$ART"
-```
-
-`preflight` allocates **2–4** panes and writes `$ART/preflight-panes.txt` (TSV `<instrument>\t<pane>`).
-If `N > 4`, dispatch the first 4 parts' panes and tell the user wider intra-wave fan-out is not yet
-supported (the DAG still serializes by wave; only the per-wave pane budget is capped). Load
-`preflight-panes.txt` into an `instrument → pane` map for Stage 3b.
-
-Initialize the wave-failure counter once here: `WAVE_RETRY=0` (consumed by the proceed-degraded
-ladder in Stage 3b step 3).
-
-**Sibling baseline.** Before dispatching any wave, snapshot every **undeclared** sibling git repo of
-the hub (`$TARGET_CWD`) so Stage 4 can detect rogue commits that land on their main branches during
-the run:
-
-```bash
-$CS perform sibling-baseline <TOPIC> "$TARGET_CWD"
-```
-
-This writes `$ART/sibling-baseline.txt` (`<slug>\t<sha>\t<branch>` per qualifying sibling; empty if
-the hub has none — declared sub-repos from `parts.txt` are excluded).
-
-Any `TS=question` a part emits during preflight or an early wave is routed through the Stage 3b
-question handler (read the payload, handle by route with the cap, re-arm with the SAME `<DISPATCH>`
-(it stays constant across question re-arms) + the bumped offset) — no `wave-wait` callsite is deaf to
-a question.
-
-## Stage 3b — DAG wave dispatch (ROUTING=multi only)
-
-Build the lookup tables once — for each `parts.txt` row `<instrument>\t<cwd>\t<provider>`, the repo is
-`basename(cwd)`; map `repo → {instrument, cwd, provider}`. Group `dag-waves.txt` rows by wave (column
-1). The **fan-in** parts (a step with ≥2 incoming `dag-edges.txt` rows — `dagFanInRepos`) warrant
-extra scrutiny in the later cross-verify phase; note them now.
-
-Walk the waves in ascending order — **never start wave W+1 until every part in wave W reports `done`**.
-For each wave, for each repo in it:
-
-1. **Spawn** the part on its allocated pane, rooted in its sub-repo cwd. First apply the
-   **Claude-confirm gate** (defined after Stage 0) for this part: if its `$PROVIDER` (col 3 of
-   `parts.txt`) is `claude`, AskUserQuestion as specified there and, on *Fall back to codex*, set this
-   part's `$PROVIDER=codex` before the spawn. Then (issue the per-wave spawns as parallel Bash calls
-   in one message):
-   ```bash
-   $CS spawn "$INSTRUMENT" "$PROVIDER" "$TOPIC" --cwd "$CWD" --target-pane "$PANE"
-   ```
-2. **Dispatch the build unit** — `send-unit` composes the per-repo DAG-unit prompt (focus the part on
-   its `### <repo>` design-doc slice + its upstream siblings) and delivers it via the canonical
-   write+nudge `send` primitive:
-   ```bash
-   $CS perform send-unit "$TOPIC" "$REPO"
-   ```
-3. **Barrier** — fire one background `wave-wait` per part in the wave (parallel), then wait for all.
-   Initialize a per-part dispatch counter when the part is first dispatched in this wave (`DISPATCH=0`)
-   and pass it. Increment `DISPATCH` only when you dispatch the part a NEW unit of work — its initial
-   wave dispatch is `DISPATCH=0`, each wave-retry re-spawn is `+1`, and (Stage 3d) each fix-round send
-   is `+1`. Do NOT increment it on a question re-arm: a re-arm keeps the same dispatch so the part's
-   objection cap and read offset accumulate (latest-line-wins) in the same `wave-<instrument>-<DISPATCH>.txt`.
-   ```
-   Bash(command='$CS perform wave-wait "$TOPIC" "$INSTRUMENT" "$PROVIDER" "$DISPATCH"', run_in_background: true,
-        description="maestro await <INSTRUMENT> wave <W> dispatch <DISPATCH>")
-   ```
-   On each wave-completion notification, read every part's first `TS=` line from
-   `$ART/wave-<instrument>.txt` and partition into { ok, failed|timeout, question }:
-   - For each **`TS=question`** part:
-     1. Read `$ART/question-<instrument>-<DISPATCH>.txt` (KV: `TEXT=`/`CLAIM_KIND=`/`CLAIM_VALUE=`/`ROUTE=`).
-     2. Handle by `ROUTE`, exactly as single-repo Stage 1 step 3 (verify → mechanical reply; escalate →
-        AskUserQuestion; objection → read `OBJECTIONS=` from `$ART/wave-<instrument>-<DISPATCH>.txt`,
-        cap-of-2 then Revise/Override/Abort). Deliver the reply via `$CS send`.
-     3. Read the bumped offset (`OFFSET=`) from `$ART/wave-<instrument>-<DISPATCH>.txt` and re-fire in
-        the background with the **SAME `<DISPATCH>`** (a question re-arm does NOT increment it — keeping
-        the same dispatch lets the part's objection cap and read offset accumulate in the same
-        `wave-<instrument>-<DISPATCH>.txt`): `$CS perform wave-wait "$TOPIC" "<instrument>" "<provider>" "$DISPATCH" "<bumped-offset>"`.
-     4. Keep this part **out** of the completion set — it is still in flight.
-   - The wave is **complete only when every part is terminal** (`ok` | `failed` | `timeout`). Parts that
-     are already `TS=ok` wait at the barrier until the questioning part terminates.
-   - Evaluate the `WAVE_RETRY` proceed-degraded ladder **only after** all parts reach a terminal `TS=`.
-
-   When all parts are terminal: every part `TS=ok` → advance to the next wave. Any
-   `TS=failed`/`TS=timeout` → surface which sub-repo(s) failed and apply the **proceed-degraded ladder**
-   on the `WAVE_RETRY` counter (init 0 in Stage 3a):
-   - **First failure (`WAVE_RETRY==0`)** — auto-retry the whole wave once: tear down this wave's panes
-     (`$CS coda --pairs <TOPIC> <instrument…>` for the wave's parts), re-run `preflight` /
-     `sibling-baseline` as needed to re-allocate panes, then re-dispatch the wave (spawn + send-unit +
-     barrier) from step 1. Set `WAVE_RETRY=1`.
-   - **Second failure (`WAVE_RETRY==1`)** — **AskUserQuestion** ("Proceed degraded with N=M (drop
-     failed part) / Abort all"), where `M` is the count of still-passing parts:
-     - *Proceed degraded with N=M (drop failed part)* — for **each** failed sub-repo run
-       `$CS perform drop-part <TOPIC> <instrument>` (prunes its `parts.txt` row; prints `N=<remaining>`),
-       then continue the run with the remaining parts.
-     - *Abort all* — `$CS coda --pairs <TOPIC> <instrument…>` + `$CS perform archive <TOPIC>`, stop.
-
-When the last wave's parts all report `TS=ok`, multi-repo execution is complete.
-
-## Stage 3c — final cross-repo verification (ROUTING=multi only)
-
-After every wave's parts report `TS=ok`, the **Maestro** runs its own cross-repo verification. First
-compute the deterministic "feels unsafe" signal:
-
-```bash
-$CS perform cross-signal <TOPIC>   # prints WAVE_COUNT / FAN_IN_REPOS / SHARED_PATHS / UNSAFE
-```
-
-- **`UNSAFE=0`** (default) — cross-repo invariants only: read the design's `## Architecture` section
-  and verify every declared cross-repo interface is implemented consistently across sub-repos. If
-  none are declared, this is a no-op.
-- **`UNSAFE=1`** (wave count >= 3, OR a fan-in repo, OR a path touched by >= 2 parts) — escalate to a
-  full check: per sub-repo `git -C <cwd> status --short` (no uncommitted leftovers), run each
-  sub-repo's test entrypoint if present, and evaluate every `- [ ]` in the design's `## Success
-  Criteria` against the diffs. Treat the `FAN_IN_REPOS` repos with extra scrutiny.
-
-**Bugs contract.** Truncate `$ART/multi-verify-bugs.txt`, then append one TSV row per bug found
-(`<repo>\t<bug-description>`). When the pass is done this file is the authoritative bug list for
-Stage 3d. If it is **empty**, all green → skip to Stage 4. If non-empty → Stage 3d.
-
-## Stage 3d — multi-repo fix-loop (ROUTING=multi only; only if Stage 3c found bugs)
-
-Read `$ART/multi-verify-bugs.txt` (`<repo>\t<bug>` rows). `MAX_FIX_ROUNDS=3` per repo. For each
-`(REPO, BUG)` row:
-
-1. **Find the owning part** — the `parts.txt` row whose `basename(cwd) == REPO` gives the
-   `<instrument>` (col 1) and `<provider>` (col 3). If none, log and skip.
-2. **Send the fix** — write the bug as a fix prompt to `$ART/<instrument>_fix_round_<n>.md` (tagged
-   bullets; **no** `END_OF_INSTRUCTION` / done-line — the `send` primitive's `@file` form does not
-   add the fence, so include neither preamble nor sentinel), then deliver it:
-   ```bash
-   $CS send "<instrument>" "<TOPIC>" "@$ART/<instrument>_fix_round_<n>.md"
-   ```
-3. **Barrier** — one background `wave-wait` per dispatched part. For this fix-round send, **increment
-   the part's existing per-part `DISPATCH`** (the monotonic counter carried from Stage 3b — do **not**
-   reset it to `0`, which would reuse the wave-stage's `wave-<instrument>-<DISPATCH>.txt` and inherit a
-   stale `OBJECTIONS=`/offset) and pass it:
-   ```
-   Bash(command='$CS perform wave-wait "<TOPIC>" "<instrument>" "<provider>" "$DISPATCH"', run_in_background: true,
-        description="maestro await <instrument> fix-round <n> dispatch <DISPATCH>")
-   ```
-   On the fix-round completion, read `$ART/wave-<instrument>.txt`. A **`TS=question`** is handled like
-   Stage 3b's question branch (route dispatch + cap + same-dispatch re-arm): read
-   `$ART/question-<instrument>-<DISPATCH>.txt`, handle by route (verify → mechanical reply; escalate →
-   AskUserQuestion; objection → read `OBJECTIONS=` from `$ART/wave-<instrument>-<DISPATCH>.txt`,
-   cap-of-2 then Revise/Override/Abort), then re-arm with the **SAME `<DISPATCH>`** (the question re-arm
-   does NOT increment it — only the fix-round send itself increments it; keeping the same dispatch lets
-   the objection cap and read offset accumulate in the same `wave-<instrument>-<DISPATCH>.txt`) + the
-   bumped offset (`$CS perform wave-wait "<TOPIC>" "<instrument>" "<provider>" "$DISPATCH" "<bumped-offset>"`),
-   keeping the part **out** of the completion set until it is terminal. Only a terminal `TS=ok`
-   re-runs Stage 3c verification for THIS sub-repo (still buggy and `n < MAX_FIX_ROUNDS` → bump `n`
-   and re-loop step 1); `TS=failed`/`timeout` continues the existing round ladder.
-4. **Exhaustion** (`n >= MAX_FIX_ROUNDS`, still buggy) — **AskUserQuestion**: "Give up on this
-   sub-repo" (record `<REPO>` as FAILED, continue the others) / "Continue more rounds" (bump `n`) /
-   "Escalate" (pick another instrument, fresh `$CS spawn <instrument> <provider> <TOPIC> --cwd
-   <sub-repo>`, reset `n=0`).
-
-When all bugs are resolved or given up, proceed to Stage 4.
-
-## Stage 4 — sibling guard + scope + summary + finish + teardown (ROUTING=multi)
-
-1. **Sibling rogue-commit intercept.** Re-read each sibling's HEAD vs the Stage-3a baseline:
-   ```bash
-   [ -f "$ART/sibling-baseline.txt" ] && $CS perform sibling-verify <TOPIC> "$TARGET_CWD"
-   ```
-   If `$ART/sibling-rogue.txt` is non-empty (`<slug>\t<sha>\t<subject>` per rogue commit), render it
-   as an inline markdown table and **AskUserQuestion** ("Rogue commits on undeclared sibling main
-   branches — pick a recovery path"):
-   - *Revert + replay on feat branch* (Recommended) — `$CS perform sibling-rescue <TOPIC>
-     "$TARGET_CWD"` (leaves `feat/perform-<TOPIC>-rescue` in each rescued sibling; records
-     `$ART/sibling-rescue.txt`).
-   - *Keep on main (accept)* — append `$ART/sibling-rogue.txt` to `$ART/sibling-rogue-accepted.txt`.
-   - *Send back as a fix-loop bug* — append the rogue commits as a bug to `$ART/multi-verify-bugs.txt`
-     and re-enter Stage 3d.
-2. **Scope conformance.** `$CS perform scope-check <TOPIC>` (multi-aware: per-sub-repo diff prefixed
-   `<repo>/`). If `OOS_COUNT > 0`, read `$ART/scope-out-of-scope.txt` and **AskUserQuestion** ("Amend
-   the design / Send back to the part / Force-keep"):
-   - *Amend* — draft the new Components-table rows, present them, **Edit** `$ART/design.md` to insert
-     them, record `amended-rows=<n>` to `$ART/scope-amended.txt`.
-   - *Send back* — append the out-of-scope paths as a bug to `$ART/multi-verify-bugs.txt`, re-enter
-     Stage 3d.
-   - *Force-keep* — append the paths to `$ART/scope-overrides.txt` and proceed.
-3. **Per-repo summary.** `$CS perform summary <TOPIC>` — `iterTargets` reads `parts.txt`, so it emits
-   one block per part (branch, baseline/HEAD, diff stat, commit list). Surface every block verbatim.
-4. **Finish menu per target.** Truncate once: `: > "$ART/finish-results.tsv"`. Then for each
-   `slug<TAB>cwd` from `iterTargets` (`parts.txt`): recommend **Push + PR** if `git -C "$cwd" remote`
-   is non-empty else **Merge**; **AskUserQuestion** per repo (offer an "apply to all" convenience on
-   the first answer when there are >= 2 targets); apply with `$CS perform finish-one <TOPIC> <slug>
-   <merge|pr|keep|discard>`. Read each outcome from `$ART/finish-results.tsv`; on `merge-conflict-left`,
-   tell the user the branch was preserved and the repo restored to the start branch (resolve `git
-   merge feat/perform-<TOPIC>` by hand).
-5. **Forensics + reflection.** `$CS perform forensics <TOPIC>`; if it printed a path, use the
-   **Edit/Write tool** to APPEND an idempotent `## Maestro reflection` section (3-5 short bullets
-   interpreting the mechanical findings) to that file.
-6. **Teardown + archive.** `$CS coda --pairs <TOPIC> <instrument…>` (closes every part pane; prints
-   the **FINE** banner) then `$CS perform archive <TOPIC>`.
-7. **Final summary (multi).** Print one line per part — `<instrument> (<provider>) -> <cwd>: N
-   commit(s) on top of branch base` (`N = git -C <cwd> log --oneline <baseline_sha>..HEAD | wc -l`,
-   `baseline_sha` from `$ART/baselines/<slug>.tsv`) — plus "Final cross-verify verdict: see
-   `_perform/multi-verify-bugs.txt` (empty = PASS)" and the archive path.

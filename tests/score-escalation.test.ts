@@ -6,7 +6,7 @@ import { freshHome } from "./helpers/tmpHome.js";
 import { scoreArtDir } from "../src/core/score.js";
 import { partDir } from "../src/core/paths.js";
 import { outboxPath } from "../src/core/ipc.js";
-import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, detectMultiRepoRun, drilldownWith, forensicsRun, archiveRun } from "../src/commands/score.js";
+import { researchSendWith, researchWaitWith, diffRun, spawnAllWith, verifySendWith, verifyWaitWith, adjudicateRun, synthesizeRun, walkStateRun, drilldownWith, forensicsRun, archiveRun } from "../src/commands/score.js";
 
 let env: { home: string; cleanup: () => void };
 beforeEach(() => { env = freshHome(); });
@@ -325,16 +325,6 @@ describe("score walk-state", () => {
     try { await walkStateRun(["t"]); } finally { (process.stdout as any).write = orig; }
     expect(out).toContain("goal\tapproved");
     expect(out).toContain("problem\tskipped");
-  });
-});
-
-describe("score detect-multi-repo", () => {
-  it("multi-repo retired: always zero hits (stub), prints nothing, rc 0", async () => {
-    let out = ""; const orig = process.stdout.write.bind(process.stdout);
-    (process.stdout as any).write = (s: string) => { out += s; return true; };
-    let rc = 1; try { rc = await detectMultiRepoRun(["t"]); } finally { (process.stdout as any).write = orig; }
-    expect(rc).toBe(0);
-    expect(out).toBe("");
   });
 });
 
