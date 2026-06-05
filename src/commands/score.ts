@@ -118,11 +118,10 @@ async function assembleRun(rest: string[]): Promise<number> {
   if (!existsSync(draftDir)) { log.error(`score assemble: no draft dir at ${draftDir} (run score init + draft sections)`); return 2; }
 
   const title = (readIf(join(art, "topic.txt")).split("\n")[0] || topic).trim();
-  const keys = SECTIONS_SINGLE;
   const drafts = new Map<string, string>();
   // One trailing newline per section → a blank line between them (matches the behavioral source's
   // `cat draft; printf '\n'` and assembleDoc's missing-draft branch which emits a blank line).
-  for (const k of keys) { const f = join(draftDir, `${k}.md`); if (existsSync(f)) drafts.set(k, readFileSync(f, "utf8").replace(/\n+$/, "") + "\n"); }
+  for (const k of SECTIONS_SINGLE) { const f = join(draftDir, `${k}.md`); if (existsSync(f)) drafts.set(k, readFileSync(f, "utf8").replace(/\n+$/, "") + "\n"); }
 
   const date = isoUtc().slice(0, 10);
   const doc = assembleDoc({ title, drafts });

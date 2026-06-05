@@ -19270,9 +19270,8 @@ async function assembleRun(rest) {
     return 2;
   }
   const title = (readIfExists((0, import_node_path23.join)(art, "topic.txt")).split("\n")[0] || topic).trim();
-  const keys = SECTIONS_SINGLE;
   const drafts = /* @__PURE__ */ new Map();
-  for (const k of keys) {
+  for (const k of SECTIONS_SINGLE) {
     const f = (0, import_node_path23.join)(draftDir, `${k}.md`);
     if ((0, import_node_fs28.existsSync)(f)) drafts.set(k, (0, import_node_fs28.readFileSync)(f, "utf8").replace(/\n+$/, "") + "\n");
   }
