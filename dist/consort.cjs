@@ -24551,8 +24551,7 @@ function composePreludeResearchPrompt(topic, writeTo, lit) {
     'Important: this is NOT a recommendation phase. Do not pick a "best" approach.',
     "Surface the landscape; the Maestro will synthesize the tradeoff matrix and a",
     "separate adversary round will challenge the synthesis before the final landscape",
-    "doc is written.",
-    DONE_AND_FENCE("researched " + t)
+    "doc is written."
   ].join("\n");
 }
 function composeAdversaryPrompt(landscapeDraft, instrument, outPath) {
@@ -24612,19 +24611,12 @@ function composeAdversaryPrompt(landscapeDraft, instrument, outPath) {
     "  (verdict: accept). Padding with weak adversarial reaches is worse than admitting",
     "  the draft is sound.",
     "- Be aggressive but stay grounded \u2014 every finding must be defensible from the",
-    "  cited evidence, not speculative",
-    DONE_AND_FENCE("adversary critique done")
+    "  cited evidence, not speculative"
   ].join("\n");
 }
-var DONE_AND_FENCE;
 var init_preludeTurn = __esm({
   "src/core/preludeTurn.ts"() {
     "use strict";
-    DONE_AND_FENCE = (summary) => `
-Then emit {"event":"done", "summary":"${summary}", "ts":"<iso>"} to your outbox.
-
-END_OF_INSTRUCTION
-`;
   }
 });
 

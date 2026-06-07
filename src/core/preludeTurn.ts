@@ -1,9 +1,9 @@
 // src/core/preludeTurn.ts — research + adversary prompt builders for /consort:prelude
-// (port of config/prompt-templates/meditate/{research,adversary}.md, rebranded). These bodies
-// DO include the done-event line + END_OF_INSTRUCTION (prelude sends them as @file, unmodified).
-
-const DONE_AND_FENCE = (summary: string): string =>
-  `\nThen emit {"event":"done", "summary":"${summary}", "ts":"<iso>"} to your outbox.\n\nEND_OF_INSTRUCTION\n`;
+// (port of config/prompt-templates/meditate/{research,adversary}.md, rebranded). These bodies do
+// NOT carry their own done-event line or END_OF_INSTRUCTION: prelude sends them via `send` →
+// `inboxWrite`, which appends exactly one done instruction + one END_OF_INSTRUCTION (same contract
+// as score's composeResearchPrompt/composeVerifyPrompt). Embedding a second here produced a
+// duplicate END_OF_INSTRUCTION in the inbox, which desynced codex parts' terminal `done` event.
 
 /** The {{LIT_GUIDANCE}} block for the research prompt, keyed on the lit-track classification. */
 export function litGuidance(track: "ON" | "OFF"): string {
@@ -79,7 +79,6 @@ export function composePreludeResearchPrompt(topic: string, writeTo: string, lit
     "Surface the landscape; the Maestro will synthesize the tradeoff matrix and a",
     "separate adversary round will challenge the synthesis before the final landscape",
     "doc is written.",
-    DONE_AND_FENCE("researched " + t),
   ].join("\n");
 }
 
@@ -142,6 +141,5 @@ export function composeAdversaryPrompt(landscapeDraft: string, instrument: strin
     "  the draft is sound.",
     "- Be aggressive but stay grounded — every finding must be defensible from the",
     "  cited evidence, not speculative",
-    DONE_AND_FENCE("adversary critique done"),
   ].join("\n");
 }
