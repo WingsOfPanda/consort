@@ -903,7 +903,7 @@ function resolveDrilldownPath(scratchDir, section, instrument) {
   return (0, import_node_path5.join)(scratchDir, `${cand}.md`);
 }
 function scoreExportDocPath(repoRoot2, basename4) {
-  return (0, import_node_path5.join)(repoRoot2, "docs", "superpowers", "specs", basename4);
+  return (0, import_node_path5.join)(repoRoot2, "docs", "consort", "specs", basename4);
 }
 function exportDocTo(topic, destRoot, opts) {
   const ddir = (0, import_node_path5.join)(scoreArtDir(topic, opts), "design-doc");
@@ -912,7 +912,7 @@ function exportDocTo(topic, destRoot, opts) {
   if (hits.length === 0) return null;
   const basename4 = hits[hits.length - 1];
   const dest = scoreExportDocPath(destRoot, basename4);
-  (0, import_node_fs7.mkdirSync)((0, import_node_path5.join)(destRoot, "docs", "superpowers", "specs"), { recursive: true });
+  (0, import_node_fs7.mkdirSync)((0, import_node_path5.join)(destRoot, "docs", "consort", "specs"), { recursive: true });
   atomicWrite(dest, (0, import_node_fs7.readFileSync)((0, import_node_path5.join)(ddir, basename4), "utf8"));
   return dest;
 }

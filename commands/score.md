@@ -86,9 +86,9 @@ emit the heading + a one-line explanation (never `_(skipped)_` on the four requi
 
 Then assemble + audit: `$CS score assemble <TOPIC>`.
 - **rc 0** → it prints the design-doc path. Run `EXPORTED=$($CS score export-doc <TOPIC> | sed -n
-  's/^EXPORTED=//p')` to copy the doc into `docs/superpowers/specs/` (a non-zero `export-doc` is
+  's/^EXPORTED=//p')` to copy the doc into `docs/consort/specs/` (a non-zero `export-doc` is
   non-fatal — just skip the exported path). **Read and present** the doc to the user, state its
-  location clearly — **`$EXPORTED` (docs/superpowers/specs/) as the primary, discoverable path**, with
+  location clearly — **`$EXPORTED` (docs/consort/specs/) as the primary, discoverable path**, with
   the `_score/design-doc/` path as the source — then point at the next step:
   `/consort:perform $EXPORTED`.
 - **rc 1** (audit FAIL) → it printed `ISSUE=<code>` lines to stderr. Map each to its section
@@ -236,7 +236,7 @@ so keep handling / relay and re-run. Only on rc 0 continue.
 
 `$CS score assemble <TOPIC>`.
 - **rc 0** → it prints the design-doc path. Immediately run `EXPORTED=$($CS score export-doc <TOPIC>
-  | sed -n 's/^EXPORTED=//p')` to copy the doc into `docs/superpowers/specs/` **before** teardown/
+  | sed -n 's/^EXPORTED=//p')` to copy the doc into `docs/consort/specs/` **before** teardown/
   archive (Stages 13b/14) so the `_score` source still exists (a non-zero `export-doc` is non-fatal).
   **Read and present** the doc, then continue to Stage 12 (Phase F). Carry `$EXPORTED` to Stage 15.
 - **rc 1** (audit FAIL) → it printed paired `ISSUE=<code>` + `SECTION=<mapped>` lines to stderr. For
@@ -297,7 +297,7 @@ Stage 13a is untouched (it lives outside the state tree). Fast-path: skip (nothi
 ## Stage 15 — present + perform handoff
 
 **Read and present** the final design-doc. State its location clearly: **`$EXPORTED`
-(`docs/superpowers/specs/`) is the primary, discoverable copy** (exported in Stage 11, survives
+(`docs/consort/specs/`) is the primary, discoverable copy** (exported in Stage 11, survives
 teardown/archive); the source `_score`/archive copy (`$ART/design-doc/<date>-<TOPIC>-design.md`, or
 the archived path after Stage 14) is noted as provenance. Then point the user at the next step:
 `/consort:perform $EXPORTED` — the deploy-audit gate already guarantees the doc is perform-ready.

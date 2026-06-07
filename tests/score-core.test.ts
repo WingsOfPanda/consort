@@ -81,9 +81,9 @@ describe("drilldown paths", () => {
 });
 
 describe("score export-doc", () => {
-  it("scoreExportDocPath composes <root>/docs/superpowers/specs/<basename>", () => {
+  it("scoreExportDocPath composes <root>/docs/consort/specs/<basename>", () => {
     expect(scoreExportDocPath("/repo", "2026-06-01-x-design.md")).toBe(
-      join("/repo", "docs", "superpowers", "specs", "2026-06-01-x-design.md"),
+      join("/repo", "docs", "consort", "specs", "2026-06-01-x-design.md"),
     );
   });
 
@@ -96,7 +96,7 @@ describe("score export-doc", () => {
     writeFileSync(join(ddir, "2026-06-01-export-topic-design.md"), "# DOC\nbody\n");
 
     const dest = exportDocTo("export-topic", root);
-    expect(dest).toBe(join(root, "docs", "superpowers", "specs", "2026-06-01-export-topic-design.md"));
+    expect(dest).toBe(join(root, "docs", "consort", "specs", "2026-06-01-export-topic-design.md"));
     expect(existsSync(dest!)).toBe(true);
     expect(rf(dest!, "utf8")).toBe("# DOC\nbody\n");
   });
