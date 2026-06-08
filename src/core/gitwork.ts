@@ -119,3 +119,59 @@ export function finishBranchAction(r: Runner, o: FinishActionOpts): string {
     default: return "no-branch";
   }
 }
+
+export interface PrMergeOpts {
+  branch: string;
+  base: string;
+  hasGh: boolean;
+  originUrl?: string;
+  title?: string;
+  body?: string;
+}
+export interface PrMergeResult { action: "pr-merge" | "local-merge" | "push-only" | "none"; outcome: string; }
+
+/** duet's finisher: open a PR, merge it (a merge commit), and fast-forward local base — a SINGLE
+ *  integration point, so local base never diverges from the remote. Graceful fallbacks for
+ *  no-remote / no-gh / merge-blocked / ff-fail. Ends checked out on `base` (best-effort). */
+export function finishBranchPrMerge(r: Runner, o: PrMergeOpts): PrMergeResult {
+  if (!o.branch || o.branch === o.base ||
+      r.run("git", ["show-ref", "--verify", "--quiet", `refs/heads/${o.branch}`]).code !== 0) {
+    return { action: "none", outcome: "no-branch" };
+  }
+  // No remote → integrate locally (the PR path is impossible). Single merge into base.
+  if (finishAutoAction(r.run("git", ["remote"]).stdout) === "keep") {
+    r.run("git", ["checkout", "-q", o.base]);
+    if (r.run("git", ["merge", "--no-edit", "-q", o.branch]).code === 0) {
+      r.run("git", ["branch", "-q", "-D", o.branch]);
+      return { action: "local-merge", outcome: "local-merged-no-remote" };
+    }
+    r.run("git", ["merge", "--abort"]);
+    return { action: "local-merge", outcome: "local-merge-conflict-left" };
+  }
+  // Remote present → push the feature branch.
+  if (r.run("git", ["push", "-q", "-u", "origin", o.branch]).code !== 0) {
+    r.run("git", ["checkout", "-q", o.base]);
+    return { action: "push-only", outcome: "push-failed" };
+  }
+  if (!o.hasGh) {
+    r.run("git", ["checkout", "-q", o.base]);
+    return { action: "push-only", outcome: "pushed-no-gh" };
+  }
+  const url = o.originUrl ?? r.run("git", ["remote", "get-url", "origin"]).stdout.trim();
+  const title = o.title ?? `duet: ${o.branch}`;
+  const body = o.body ?? `Automated duet branch. Merged into ${o.base}.`;
+  if (r.run("gh", ["pr", "create", "--repo", url, "--base", o.base, "--head", o.branch, "--title", title, "--body", body]).code !== 0) {
+    r.run("git", ["checkout", "-q", o.base]);
+    return { action: "pr-merge", outcome: "pr-create-failed" };
+  }
+  // Leave the feature branch BEFORE the merge deletes it.
+  r.run("git", ["checkout", "-q", o.base]);
+  if (r.run("gh", ["pr", "merge", o.branch, "--merge", "--delete-branch"]).code !== 0) {
+    return { action: "pr-merge", outcome: "pr-open-merge-blocked" };
+  }
+  // The merge happened ONCE (on the remote); local base catches up by fast-forward only.
+  if (r.run("git", ["pull", "--ff-only", "origin", o.base]).code !== 0) {
+    return { action: "pr-merge", outcome: "pr-merged-pull-failed" };
+  }
+  return { action: "pr-merge", outcome: "pr-merged-pulled" };
+}
