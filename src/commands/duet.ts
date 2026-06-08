@@ -8,7 +8,7 @@ import { isoUtc } from "../core/archive.js";
 import { instrumentBinary } from "../core/contracts.js";
 import { haveCmd } from "../core/deps.js";
 import { pickRandomInstrument } from "../core/instruments.js";
-import { runnerAt, preSnapshot, createOrResumeBranch, finishBranch } from "../core/gitwork.js";
+import { runnerAt, preSnapshot, createOrResumeBranch, finishBranchPrMerge } from "../core/gitwork.js";
 import type { Runner } from "../core/gitwork.js";
 import { readIfExists } from "../core/fsread.js";
 import { runForensics, runFlag } from "../core/forensics.js";
@@ -280,10 +280,10 @@ export async function finishWith(topic: string, r: Runner, hasGh: boolean): Prom
   }
   const task = readIfExists(join(duetArtDir(topic), "topic-text.txt"));
   const verify = readField(join(exec, "verify-result.txt"));
-  const res = finishBranch(r, {
-    branch, startBranch, hasGh,
+  const res = finishBranchPrMerge(r, {
+    branch, base: startBranch, hasGh,
     title: `duet: ${branch}`,
-    body: `${task}\n\nVerify: ${verify}\n\n(Automated duet branch — review and merge into ${startBranch}.)`,
+    body: `${task}\n\nVerify: ${verify}\n\n(Automated duet branch — merged into ${startBranch}.)`,
   });
   atomicWrite(join(exec, "finish-result.txt"), `${res.action}\t${res.outcome}\n`);
   log.ok(`duet finish: ${res.action} → ${res.outcome}`);
