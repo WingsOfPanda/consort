@@ -129,3 +129,65 @@ describe("duet branch", () => {
     expect(await branchWith("t", "/abs/repoB", r)).toBe(1);
   });
 });
+
+import { roundSendWith, roundWaitWith } from "../src/commands/duet.js";
+import type { TurnSendDeps, TurnWaitDeps } from "../src/commands/duet.js";
+import type { OutboxEvent } from "../src/core/ipc.js";
+import { partDir } from "../src/core/paths.js";
+
+function seedPart(slug: string, repo: string) {
+  const art = duetArtDir(slug), exec = duetExecDir(slug);
+  mkdirSync(exec, { recursive: true });
+  writeFileSync(join(art, "instrument.txt"), "viola\n");
+  writeFileSync(join(art, "selected-provider.txt"), "codex\n");
+  writeFileSync(join(art, "topic-text.txt"), "implement X");
+  writeFileSync(join(exec, "target_cwd.txt"), repo + "\n");
+  writeFileSync(join(exec, "branch.txt"), `feat/duet-${slug}\n`);
+  // outbox must exist for the guard
+  const pd = partDir("viola", "codex", slug); mkdirSync(pd, { recursive: true }); writeFileSync(join(pd, "outbox.jsonl"), "");
+}
+
+describe("duet round-send / round-wait", () => {
+  let h: { home: string; cleanup: () => void };
+  beforeEach(() => { h = freshHome(); });
+  afterEach(() => h.cleanup());
+
+  it("round-send 1 records OFFSET and sends the composed brief", async () => {
+    seedPart("t", "/abs/repoB");
+    let sent: string[] | undefined;
+    const deps: TurnSendDeps = { offsetFor: () => 0, send: async (a) => { sent = a; return 0; } };
+    const rc = await roundSendWith("t", 1, deps);
+    expect(rc).toBe(0);
+    expect(readFileSync(join(duetExecDir("t"), "round-1.txt"), "utf8")).toContain("OFFSET=0");
+    expect(sent?.[0]).toBe("viola");
+    expect(sent?.[2]).toMatch(/^@.*round-prompt-1\.md$/);
+    expect(readFileSync(join(duetExecDir("t"), "round-prompt-1.md"), "utf8")).toContain("implement X");
+  });
+
+  it("round-send 2 requires followup-2.md (rc 1 if missing)", async () => {
+    seedPart("t", "/abs/repoB");
+    const deps: TurnSendDeps = { offsetFor: () => 0, send: async () => 0 };
+    expect(await roundSendWith("t", 2, deps)).toBe(1);
+  });
+
+  it("round-wait classifies done→ok and writes TS=ok", async () => {
+    seedPart("t", "/abs/repoB");
+    writeFileSync(join(duetExecDir("t"), "round-1.txt"), "OFFSET=0\n");
+    const deps: TurnWaitDeps = { wait: async () => ({ event: "done", summary: "x", ts: "now" } as OutboxEvent) };
+    expect(await roundWaitWith("t", 1, deps)).toBe(0);
+    expect(readFileSync(join(duetExecDir("t"), "round-1.txt"), "utf8")).toContain("TS=ok");
+  });
+
+  it("round-wait on a question writes question-N.txt and APPENDS a bumped OFFSET + TS=question", async () => {
+    seedPart("t", "/abs/repoB");
+    writeFileSync(join(duetExecDir("t"), "round-1.txt"), "OFFSET=0\n");
+    // make the outbox non-empty so the bumped offset differs
+    writeFileSync(join(partDir("viola", "codex", "t"), "outbox.jsonl"), '{"event":"question","question":"?","ts":"now"}\n');
+    const deps: TurnWaitDeps = { wait: async () => ({ event: "question", question: "?", ts: "now" } as unknown as OutboxEvent) };
+    expect(await roundWaitWith("t", 1, deps)).toBe(0);
+    const st = readFileSync(join(duetExecDir("t"), "round-1.txt"), "utf8");
+    expect(st).toMatch(/TS=question/);
+    expect((st.match(/OFFSET=/g) || []).length).toBe(2); // original + bumped
+    expect(existsSync(join(duetExecDir("t"), "question-1.txt"))).toBe(true);
+  });
+});
