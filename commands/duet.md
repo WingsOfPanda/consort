@@ -1,5 +1,5 @@
 ---
-description: Collaborative cross-repo session — open one persistent claude/codex part in ANOTHER repo and co-develop with it over open-ended rounds, relaying questions both ways with you, finishing as a PR in that repo.
+description: Use when a task requires changes in a DIFFERENT git repository than the one you're working in — rather than cd-ing away, open one persistent claude/codex part inside that other repo (repo B) and co-develop with it over open-ended rounds, relaying questions both ways with the user, finishing as a PR there.
 argument-hint: --repo <abs-repo-path> <opening task> [--provider codex|claude|agy|opencode] [--in-place]
 allowed-tools: Bash, Write, Read, Edit, AskUserQuestion
 ---
