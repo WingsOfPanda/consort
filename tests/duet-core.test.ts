@@ -34,3 +34,34 @@ describe("duet path helpers", () => {
     expect(deriveSlug("Add OAuth Login!")).toBe("add-oauth-login");
   });
 });
+
+import { renderDuetSummary, renderDuetResume } from "../src/core/duet.js";
+
+describe("renderDuetResume", () => {
+  it("records repo B, branch+mode, last round, task, and a restore pointer (no auto-resume)", () => {
+    const md = renderDuetResume({
+      topic: "t", repo: "/abs/repoB", branch: "feat/duet-t", mode: "branch",
+      lastRound: 3, task: "do the thing", phase: "round", gate: "round-wait",
+    });
+    expect(md).toContain("# RESUME — t (aborted at round.round-wait)");
+    expect(md).toContain("/abs/repoB");
+    expect(md).toContain("feat/duet-t");
+    expect(md).toContain("Last round: 3");
+    expect(md).toContain("do the thing");
+    expect(md).toMatch(/cannot auto-resume/i);
+  });
+});
+
+describe("renderDuetSummary", () => {
+  it("emits a command: duet frontmatter and the cross-repo facts", () => {
+    const md = renderDuetSummary({
+      topic: "t", status: "ok", started: "s", ended: "e", duration: 5,
+      provider: "codex", instrument: "viola", repo: "/abs/repoB", mode: "branch",
+      branch: "feat/duet-t", rounds: 4, verify: "PASS", diffStats: "1 file",
+      archived: "/arch", finishResult: "pr\tpr-opened",
+    });
+    expect(md).toMatch(/^---\ncommand: duet\n/);
+    expect(md).toContain("/abs/repoB");
+    expect(md).toContain("rounds: 4");
+  });
+});
