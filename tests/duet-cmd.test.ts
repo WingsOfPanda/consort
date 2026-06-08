@@ -205,7 +205,7 @@ describe("duet finish", () => {
     expect(await finishRun(["finish", "t"])).toBe(1);
   });
 
-  it("branch mode: writes diff-stats + finish-result, builds a duet: PR title", async () => {
+  it("branch mode: writes diff-stats + finish-result via finishBranchPrMerge (pr-merged-pulled)", async () => {
     const exec = duetExecDir("t"); mkdirSync(exec, { recursive: true });
     writeFileSync(join(exec, "mode.txt"), "branch\n");
     writeFileSync(join(exec, "branch.txt"), "feat/duet-t\n");
@@ -218,16 +218,16 @@ describe("duet finish", () => {
       const key = [cmd, ...args].join(" ");
       if (key.startsWith("git diff --shortstat")) return { code: 0, stdout: " 1 file changed\n" };
       if (key === "git remote") return { code: 0, stdout: "origin\n" };
-      if (key.startsWith("git push")) return { code: 0, stdout: "" };
       if (key.startsWith("git remote get-url")) return { code: 0, stdout: "git@x:y.git\n" };
-      if (cmd === "gh") { prTitle = args[args.indexOf("--title") + 1]; return { code: 0, stdout: "" }; }
-      return { code: 0, stdout: "" };
+      if (key.startsWith("git show-ref")) return { code: 0, stdout: "" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "create") { prTitle = args[args.indexOf("--title") + 1]; return { code: 0, stdout: "" }; }
+      return { code: 0, stdout: "" }; // push, checkout, gh pr merge, pull all succeed
     } };
     const rc = await finishWith("t", r, true);
     expect(rc).toBe(0);
     expect(prTitle).toBe("duet: feat/duet-t");
     expect(readFileSync(join(exec, "diff-stats.txt"), "utf8")).toContain("1 file changed");
-    expect(readFileSync(join(exec, "finish-result.txt"), "utf8")).toContain("pr");
+    expect(readFileSync(join(exec, "finish-result.txt"), "utf8")).toContain("pr-merged-pulled");
   });
 
   it("in-place mode: no branch ops, records in-place finish-result", async () => {

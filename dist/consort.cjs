@@ -18101,6 +18101,43 @@ function finishBranchAction(r, o2) {
       return "no-branch";
   }
 }
+function finishBranchPrMerge(r, o2) {
+  if (!o2.branch || o2.branch === o2.base || r.run("git", ["show-ref", "--verify", "--quiet", `refs/heads/${o2.branch}`]).code !== 0) {
+    return { action: "none", outcome: "no-branch" };
+  }
+  if (finishAutoAction(r.run("git", ["remote"]).stdout) === "keep") {
+    r.run("git", ["checkout", "-q", o2.base]);
+    if (r.run("git", ["merge", "--no-edit", "-q", o2.branch]).code === 0) {
+      r.run("git", ["branch", "-q", "-D", o2.branch]);
+      return { action: "local-merge", outcome: "local-merged-no-remote" };
+    }
+    r.run("git", ["merge", "--abort"]);
+    return { action: "local-merge", outcome: "local-merge-conflict-left" };
+  }
+  if (r.run("git", ["push", "-q", "-u", "origin", o2.branch]).code !== 0) {
+    r.run("git", ["checkout", "-q", o2.base]);
+    return { action: "push-only", outcome: "push-failed" };
+  }
+  if (!o2.hasGh) {
+    r.run("git", ["checkout", "-q", o2.base]);
+    return { action: "push-only", outcome: "pushed-no-gh" };
+  }
+  const url = o2.originUrl ?? r.run("git", ["remote", "get-url", "origin"]).stdout.trim();
+  const title = o2.title ?? `duet: ${o2.branch}`;
+  const body = o2.body ?? `Automated duet branch. Merged into ${o2.base}.`;
+  if (r.run("gh", ["pr", "create", "--repo", url, "--base", o2.base, "--head", o2.branch, "--title", title, "--body", body]).code !== 0) {
+    r.run("git", ["checkout", "-q", o2.base]);
+    return { action: "pr-merge", outcome: "pr-create-failed" };
+  }
+  r.run("git", ["checkout", "-q", o2.base]);
+  if (r.run("gh", ["pr", "merge", o2.branch, "--merge", "--delete-branch"]).code !== 0) {
+    return { action: "pr-merge", outcome: "pr-open-merge-blocked" };
+  }
+  if (r.run("git", ["pull", "--ff-only", "origin", o2.base]).code !== 0) {
+    return { action: "pr-merge", outcome: "pr-merged-pull-failed" };
+  }
+  return { action: "pr-merge", outcome: "pr-merged-pulled" };
+}
 var import_node_child_process9;
 var init_gitwork = __esm({
   "src/core/gitwork.ts"() {
@@ -25664,16 +25701,16 @@ async function finishWith3(topic, r, hasGh) {
   }
   const task = readIfExists((0, import_node_path35.join)(duetArtDir(topic), "topic-text.txt"));
   const verify = readField2((0, import_node_path35.join)(exec, "verify-result.txt"));
-  const res = finishBranch(r, {
+  const res = finishBranchPrMerge(r, {
     branch,
-    startBranch,
+    base: startBranch,
     hasGh,
     title: `duet: ${branch}`,
     body: `${task}
 
 Verify: ${verify}
 
-(Automated duet branch \u2014 review and merge into ${startBranch}.)`
+(Automated duet branch \u2014 merged into ${startBranch}.)`
   });
   atomicWrite((0, import_node_path35.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
 `);
