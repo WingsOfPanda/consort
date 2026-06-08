@@ -1,14 +1,14 @@
 // src/core/turn.ts
 import type { OutboxEvent } from "./ipc.js";
 
-const BRANCH_DISCIPLINE =
+export const BRANCH_DISCIPLINE =
   "BRANCH DISCIPLINE (hard rule):\n" +
   "- You are already on the correct branch. Do NOT run `git checkout`, `git switch`,\n" +
   "  or `git branch`, and do NOT create new branches.\n" +
   "- If the work genuinely needs a different branch, do NOT switch; instead emit\n" +
   '  {"event":"error","reason":"branch-discipline: needed a different branch"} and stop.\n';
 
-const BLOCKERS =
+export const BLOCKERS =
   "IF YOU ARE BLOCKED:\n" +
   "- If a path, file, command, or assumption is wrong or missing, do NOT guess or invent a\n" +
   "  workaround. Append a question event to your outbox and stop:\n" +

@@ -368,8 +368,8 @@ function haveCmd(name) {
     return false;
   }
 }
-function tmuxVersionString(run15) {
-  if (run15) return run15();
+function tmuxVersionString(run16) {
+  if (run16) return run16();
   if (!haveCmd("tmux")) return null;
   try {
     return (0, import_node_child_process2.execFileSync)("tmux", ["-V"], { encoding: "utf8" }).trim();
@@ -25186,6 +25186,597 @@ var init_prelude2 = __esm({
   }
 });
 
+// src/core/duet.ts
+function parseDuetArgs(tokens) {
+  let repo;
+  let provider;
+  let inPlace = false;
+  const text = [];
+  for (let i2 = 0; i2 < tokens.length; i2++) {
+    const t = tokens[i2];
+    if (t === "--in-place") {
+      inPlace = true;
+      continue;
+    }
+    if (t === "--repo") {
+      const v = tokens[i2 + 1];
+      if (v && !v.startsWith("--")) {
+        repo = v;
+        i2++;
+      }
+      continue;
+    }
+    if (t.startsWith("--repo=")) {
+      repo = t.slice("--repo=".length);
+      continue;
+    }
+    if (t === "--provider") {
+      const v = tokens[i2 + 1];
+      if (v && !v.startsWith("--")) {
+        provider = v;
+        i2++;
+      }
+      continue;
+    }
+    if (t.startsWith("--provider=")) {
+      provider = t.slice("--provider=".length);
+      continue;
+    }
+    text.push(t);
+  }
+  return { repo, taskText: text.join(" ").trim(), provider, inPlace };
+}
+function duetArtDir(topic) {
+  return (0, import_node_path34.join)(topicDir(topic), "_duet");
+}
+function duetExecDir(topic) {
+  return (0, import_node_path34.join)(duetArtDir(topic), "execute");
+}
+function renderDuetResume(f) {
+  const restore = f.mode === "in-place" ? "(in-place run \u2014 no branch was cut; nothing to restore)" : `git -C ${f.repo} checkout <your-original-branch>   # the part's work is on ${f.branch}`;
+  return [
+    `# RESUME \u2014 ${f.topic} (aborted at ${f.phase}.${f.gate})`,
+    "",
+    "## State pointers",
+    `- Repo B: ${f.repo}`,
+    `- Branch: ${f.branch} (mode: ${f.mode})`,
+    `- Last round: ${f.lastRound}`,
+    "",
+    "## Opening task",
+    f.task.trim(),
+    "",
+    "## Restore",
+    `- ${restore}`,
+    "- Forensic pointer only: /consort:duet cannot auto-resume an in-flight slug \u2014 run /consort:coda to clear it, then re-run.",
+    ""
+  ].join("\n");
+}
+function renderDuetSummary(f) {
+  const lines = [
+    "---",
+    "command: duet",
+    `topic: ${f.topic}`,
+    `status: ${f.status}`,
+    "---",
+    "",
+    `# duet \u2014 ${f.topic}`,
+    "",
+    `- Repo B: ${f.repo}`,
+    `- Mode: ${f.mode}`,
+    `- Branch: ${f.branch}`,
+    `- Instrument: ${f.instrument} (${f.provider})`,
+    `- rounds: ${f.rounds}`,
+    `- Verify: ${f.verify}`,
+    `- Diff: ${f.diffStats}`,
+    `- Finish: ${f.finishResult}`,
+    `- Archived: ${f.archived}`,
+    `- Timing: started=${f.started} ended=${f.ended ?? "(running)"} duration=${f.duration ?? 0}s`
+  ];
+  if (f.status === "aborted") {
+    lines.push("", `## Aborted`, `- Phase: ${f.abortedPhase ?? "unknown"}`, `- Gate: ${f.abortedGate ?? "unknown"}`, `- Reason: ${f.abortedReason ?? "unknown"}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+var import_node_path34;
+var init_duet = __esm({
+  "src/core/duet.ts"() {
+    "use strict";
+    import_node_path34 = require("node:path");
+    init_paths();
+    init_solo();
+  }
+});
+
+// src/core/duetTurn.ts
+function composeDuetBrief(task, repoPath, branch) {
+  return [
+    `You are collaborating with a conductor on a multi-round task in the repository at \`${repoPath}\`.`,
+    `You are on the branch \`${branch}\` of THAT repository (your shell is already there). The conductor`,
+    "is running from a SEPARATE repository and will coordinate with you over several rounds \u2014 expect",
+    "follow-up messages after this one.",
+    "",
+    "THE OPENING TASK:",
+    "",
+    task.trim(),
+    "",
+    "INSTRUCTIONS:",
+    `- Work directly in \`${repoPath}\`, on \`${branch}\`.`,
+    "- This is one round of an ongoing collaboration: do this round's work, commit per logical change",
+    "  with Conventional Commits messages, then report by emitting the done event (see below).",
+    "- The conductor will review your work and may send refinements for the next round.",
+    "- If the repository has a test suite, run it and make your change pass it.",
+    "",
+    BRANCH_DISCIPLINE,
+    BLOCKERS
+  ].join("\n");
+}
+function composeDuetFollowup(text, round) {
+  return [
+    `You are continuing the collaboration \u2014 round ${round}, still on the same branch and repository.`,
+    "",
+    "The conductor's message for this round:",
+    "",
+    text.trim(),
+    "",
+    "INSTRUCTIONS:",
+    "- Address the above. Commit per logical change with Conventional Commits messages.",
+    "- If the repository has a test suite, run it and keep it passing.",
+    "- When this round's work is done and committed, emit the done event (see below).",
+    "",
+    BRANCH_DISCIPLINE,
+    BLOCKERS
+  ].join("\n");
+}
+var init_duetTurn = __esm({
+  "src/core/duetTurn.ts"() {
+    "use strict";
+    init_turn();
+  }
+});
+
+// src/commands/duet.ts
+var duet_exports = {};
+__export(duet_exports, {
+  branchWith: () => branchWith3,
+  finishWith: () => finishWith3,
+  initWith: () => initWith6,
+  roundSendWith: () => roundSendWith,
+  roundWaitWith: () => roundWaitWith,
+  run: () => run15
+});
+function usage6() {
+  log.error("usage: duet <init|branch|round-send|round-wait|relay|detect-test|finish|forensics|flag|summary> ...");
+  return 2;
+}
+async function run15(args) {
+  const verb = args[0];
+  const rest = args.slice(1);
+  switch (verb) {
+    case "init":
+      return initRun5(applyArgsFile(rest, { valueFlags: /* @__PURE__ */ new Set(["--provider", "--repo"]) }));
+    case "branch":
+      return branchRun3(rest);
+    case "round-send":
+      return roundSendRun(rest);
+    case "round-wait":
+      return roundWaitRun(rest);
+    case "relay":
+      return relayRun(rest);
+    case "detect-test":
+      return detectTestRun2(rest);
+    case "finish":
+      return finishRun3(rest);
+    case "summary":
+      return summaryRun3(rest);
+    case "forensics":
+      return runForensics("duet", duetArtDir, rest[0]);
+    case "flag":
+      return runFlag("duet", rest[0], rest.slice(1).join(" "));
+    default:
+      return usage6();
+  }
+}
+async function initRun5(tokens) {
+  return initWith6(tokens, liveInitDeps5);
+}
+async function initWith6(tokens, d) {
+  const { repo, taskText, provider: provArg, inPlace } = parseDuetArgs(tokens);
+  if (!taskText) {
+    log.error("duet init: task text is empty");
+    return 1;
+  }
+  if (!repo) {
+    log.error("duet init: --repo <abs-path> is required");
+    return 1;
+  }
+  if (!repo.startsWith("/") || /\s/.test(repo)) {
+    log.error(`duet init: --repo must be a whitespace-free absolute path: '${repo}'`);
+    return 1;
+  }
+  if (!(0, import_node_fs36.existsSync)(repo)) {
+    log.error(`duet init: --repo does not exist: ${repo}`);
+    return 1;
+  }
+  if (!inPlace && !d.isGitRepo(repo)) {
+    log.error(`duet init: --repo is not a git repository (use --in-place to skip isolation): ${repo}`);
+    return 1;
+  }
+  const slug = deriveSlug(taskText);
+  if (!slug) {
+    log.error("duet init: task produced an empty slug; provide alphanumerics");
+    return 1;
+  }
+  const provider = provArg ?? "codex";
+  const binary = d.instrumentBinary(provider);
+  if (!binary) {
+    log.error(`duet init: provider '${provider}' has no entry in contracts.yaml`);
+    return 3;
+  }
+  if (!d.haveCmd(binary)) {
+    log.error(`duet init: ${provider}'s binary '${binary}' is not on PATH`);
+    return 3;
+  }
+  const art = duetArtDir(slug);
+  if ((0, import_node_fs36.existsSync)(art)) {
+    log.error(`duet init: topic already in flight: ${art}`);
+    log.error("  run /consort:coda or pick a different task");
+    return 2;
+  }
+  const instrument = d.pickRandomInstrument(slug);
+  if (!instrument) {
+    log.error(`duet init: no available instrument in the pool for '${slug}'`);
+    return 1;
+  }
+  const mode = inPlace ? "in-place" : "branch";
+  const exec = duetExecDir(slug);
+  (0, import_node_fs36.mkdirSync)(exec, { recursive: true });
+  atomicWrite((0, import_node_path35.join)(art, "topic.txt"), slug + "\n");
+  atomicWrite((0, import_node_path35.join)(art, "topic-text.txt"), taskText);
+  atomicWrite((0, import_node_path35.join)(art, "selected-provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path35.join)(art, "instrument.txt"), instrument + "\n");
+  atomicWrite((0, import_node_path35.join)(art, "timing.txt"), `started=${isoUtc()}
+`);
+  atomicWrite((0, import_node_path35.join)(exec, "provider.txt"), provider + "\n");
+  atomicWrite((0, import_node_path35.join)(exec, "mode.txt"), mode + "\n");
+  atomicWrite((0, import_node_path35.join)(exec, "target_cwd.txt"), repo + "\n");
+  atomicWrite((0, import_node_path35.join)(exec, "repo-b-head.txt"), (inPlace ? "" : d.headSha(repo)) + "\n");
+  log.ok(`duet init: topic=${slug} instrument=${instrument} provider=${provider} mode=${mode} repo=${repo}`);
+  process.stdout.write(`SLUG=${slug}
+INSTRUMENT=${instrument}
+PROVIDER=${provider}
+MODE=${mode}
+TARGET=${repo}
+`);
+  return 0;
+}
+function readField2(path6) {
+  return readIfExists(path6).split("\n")[0].trim();
+}
+async function branchRun3(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: duet branch <topic>");
+    return 2;
+  }
+  const target = readField2((0, import_node_path35.join)(duetExecDir(topic), "target_cwd.txt"));
+  if (!target) {
+    log.error("duet branch: target_cwd.txt missing \u2014 run duet init first");
+    return 1;
+  }
+  return branchWith3(topic, target, runnerAt(target));
+}
+async function branchWith3(topic, target, r) {
+  const snap = preSnapshot(r, "duet", topic);
+  if (snap.state === "not-git") {
+    log.error(`duet branch: ${target} is not a git repository`);
+    return 1;
+  }
+  const branch = `feat/duet-${topic}`;
+  if (snap.branch.startsWith("feat/duet-") && snap.branch !== branch) {
+    log.error(`duet branch: ${target} is already on ${snap.branch} (another duet session?) \u2014 refusing`);
+    return 1;
+  }
+  const onBranch = createOrResumeBranch(r, branch);
+  const exec = duetExecDir(topic);
+  atomicWrite((0, import_node_path35.join)(exec, "start-branch.txt"), snap.branch + "\n");
+  atomicWrite((0, import_node_path35.join)(exec, "branch-base.sha"), snap.baseSha + "\n");
+  atomicWrite((0, import_node_path35.join)(exec, "branch.txt"), branch + "\n");
+  if (!onBranch) {
+    log.warn(`duet branch: checkout ${branch} failed; staying on ${snap.branch}`);
+  }
+  log.ok(`duet branch: ${branch} (snapshot=${snap.state}, base=${snap.baseSha.slice(0, 8)})`);
+  return 0;
+}
+async function roundSendRun(rest) {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) {
+    log.error("usage: duet round-send <topic> <round>=1..");
+    return 2;
+  }
+  return roundSendWith(topic, round, {
+    offsetFor: (i2, m, t) => outboxOffset(outboxPath(i2, m, t)),
+    send: (args) => run2(args)
+  });
+}
+async function roundSendWith(topic, round, d) {
+  const art = duetArtDir(topic);
+  const exec = duetExecDir(topic);
+  const instrument = readField2((0, import_node_path35.join)(art, "instrument.txt"));
+  const provider = readField2((0, import_node_path35.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("duet round-send: missing instrument.txt/selected-provider.txt (run duet init)");
+    return 1;
+  }
+  const outbox = outboxPath(instrument, provider, topic);
+  if (!(0, import_node_fs36.existsSync)(outbox)) {
+    log.error(`duet round-send: outbox not found at ${outbox} \u2014 was ${instrument} spawned?`);
+    return 1;
+  }
+  const sp = statusPath(instrument, provider, topic);
+  if ((0, import_node_fs36.existsSync)(sp)) {
+    const m = (0, import_node_fs36.readFileSync)(sp, "utf8").match(/"state":"([^"]*)"/);
+    if (m && m[1] && m[1] !== "idle") {
+      log.error(`duet round-send: part not idle (state=${m[1]}); previous round still in flight`);
+      return 1;
+    }
+  }
+  const stateFile = (0, import_node_path35.join)(exec, `round-${round}.txt`);
+  if ((0, import_node_fs36.existsSync)(stateFile)) {
+    log.error(`duet round-send: ${stateFile} already exists; rm to retry`);
+    return 1;
+  }
+  let prompt;
+  if (round === 1) {
+    const task = readIfExists((0, import_node_path35.join)(art, "topic-text.txt"));
+    const repo = readField2((0, import_node_path35.join)(exec, "target_cwd.txt"));
+    const branch = readField2((0, import_node_path35.join)(exec, "branch.txt")) || "the current branch";
+    prompt = composeDuetBrief(task, repo, branch);
+  } else {
+    const bundle = (0, import_node_path35.join)(exec, `followup-${round}.md`);
+    if (!(0, import_node_fs36.existsSync)(bundle)) {
+      log.error(`duet round-send: follow-up bundle missing: ${bundle} (the directive must write it first)`);
+      return 1;
+    }
+    prompt = composeDuetFollowup((0, import_node_fs36.readFileSync)(bundle, "utf8"), round);
+  }
+  const promptFile = (0, import_node_path35.join)(exec, `round-prompt-${round}.md`);
+  atomicWrite(promptFile, prompt);
+  const offset = d.offsetFor(instrument, provider, topic);
+  atomicWrite(stateFile, `OFFSET=${offset}
+`);
+  const rc = await d.send([instrument, topic, `@${promptFile}`]);
+  if (rc !== 0) {
+    log.error(`duet round-send: send failed (rc=${rc}); ${stateFile} kept for retry`);
+    return 1;
+  }
+  log.ok(`duet round-send: round=${round} offset=${offset}`);
+  return 0;
+}
+async function roundWaitRun(rest) {
+  const [topic, roundStr] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1) {
+    log.error("usage: duet round-wait <topic> <round>=1..");
+    return 2;
+  }
+  return roundWaitWith(topic, round, { wait: (i2, m, t, off, ev, to) => outboxWaitSince(i2, m, t, off, ev, to) });
+}
+async function roundWaitWith(topic, round, d) {
+  const art = duetArtDir(topic);
+  const exec = duetExecDir(topic);
+  const instrument = readField2((0, import_node_path35.join)(art, "instrument.txt"));
+  const provider = readField2((0, import_node_path35.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("duet round-wait: missing instrument.txt/selected-provider.txt");
+    return 1;
+  }
+  const stateFile = (0, import_node_path35.join)(exec, `round-${round}.txt`);
+  if (!(0, import_node_fs36.existsSync)(stateFile)) {
+    log.error(`duet round-wait: ${stateFile} missing (run duet round-send first)`);
+    return 1;
+  }
+  const offset = parseLatestOffset((0, import_node_fs36.readFileSync)(stateFile, "utf8"));
+  if (offset === null) {
+    log.error(`duet round-wait: OFFSET not set in ${stateFile}`);
+    return 1;
+  }
+  log.info(`duet round-wait: round=${round} offset=${offset} timeout=${DUET_TURN_TIMEOUT}s`);
+  const ev = await d.wait(instrument, provider, topic, offset, ["done", "error", "question"], DUET_TURN_TIMEOUT);
+  const ts = classifyTurn(ev);
+  if (ts === "question" && ev) {
+    atomicWrite((0, import_node_path35.join)(exec, `question-${round}.txt`), JSON.stringify(ev) + "\n");
+    const bumped = outboxOffset(outboxPath(instrument, provider, topic));
+    (0, import_node_fs36.appendFileSync)(stateFile, `OFFSET=${bumped}
+TS=question
+`);
+  } else {
+    (0, import_node_fs36.appendFileSync)(stateFile, `TS=${ts}
+`);
+  }
+  log.ok(`duet round-wait: round=${round} TS=${ts}`);
+  return 0;
+}
+function kvField2(path6, key) {
+  if (!(0, import_node_fs36.existsSync)(path6)) return "";
+  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = (0, import_node_fs36.readFileSync)(path6, "utf8").match(new RegExp(`^${k}=(.*)$`, "m"));
+  return m ? m[1].trim() : "";
+}
+async function relayRun(rest) {
+  const [topic, roundStr, ...answerParts] = rest;
+  const round = Number(roundStr);
+  if (!topic || !Number.isInteger(round) || round < 1 || answerParts.length === 0) {
+    log.error("usage: duet relay <topic> <round> <answer|@file>");
+    return 2;
+  }
+  const art = duetArtDir(topic);
+  const instrument = readField2((0, import_node_path35.join)(art, "instrument.txt"));
+  const provider = readField2((0, import_node_path35.join)(art, "selected-provider.txt"));
+  if (!instrument || !provider) {
+    log.error("duet relay: missing instrument/provider (run duet init)");
+    return 1;
+  }
+  const answer = answerParts.join(" ");
+  const rc = await run2(["--from", "maestro", instrument, topic, answer]);
+  if (rc !== 0) {
+    log.error(`duet relay: send failed (rc=${rc})`);
+    return 1;
+  }
+  (0, import_node_fs36.appendFileSync)((0, import_node_path35.join)(duetExecDir(topic), `question-${round}.txt`), `RELAYED=${answer}
+`);
+  log.ok(`duet relay: round=${round} answered`);
+  return 0;
+}
+async function detectTestRun2(rest) {
+  const cwd = rest[0] || repoRoot();
+  process.stdout.write(detectTestCommand(cwd) + "\n");
+  return 0;
+}
+async function finishRun3(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: duet finish <topic>");
+    return 2;
+  }
+  const target = readField2((0, import_node_path35.join)(duetExecDir(topic), "target_cwd.txt"));
+  if (!target) {
+    log.error("duet finish: target_cwd.txt missing/empty \u2014 refusing (will NOT fall back to the conductor repo)");
+    return 1;
+  }
+  return finishWith3(topic, runnerAt(target), haveCmd("gh"));
+}
+async function finishWith3(topic, r, hasGh) {
+  const exec = duetExecDir(topic);
+  const mode = readField2((0, import_node_path35.join)(exec, "mode.txt")) || "branch";
+  if (mode === "in-place") {
+    atomicWrite((0, import_node_path35.join)(exec, "finish-result.txt"), "none	in-place (commits on the current branch)\n");
+    log.ok("duet finish: in-place \u2014 commits left on the current branch");
+    return 0;
+  }
+  const branch = readField2((0, import_node_path35.join)(exec, "branch.txt"));
+  const startBranch = readField2((0, import_node_path35.join)(exec, "start-branch.txt")) || "main";
+  const base = readField2((0, import_node_path35.join)(exec, "branch-base.sha"));
+  if (base) {
+    const ds = r.run("git", ["diff", "--shortstat", `${base}..HEAD`]).stdout.trim();
+    atomicWrite((0, import_node_path35.join)(exec, "diff-stats.txt"), (ds || "(no changes)") + "\n");
+  }
+  const task = readIfExists((0, import_node_path35.join)(duetArtDir(topic), "topic-text.txt"));
+  const verify = readField2((0, import_node_path35.join)(exec, "verify-result.txt"));
+  const res = finishBranch(r, {
+    branch,
+    startBranch,
+    hasGh,
+    title: `duet: ${branch}`,
+    body: `${task}
+
+Verify: ${verify}
+
+(Automated duet branch \u2014 review and merge into ${startBranch}.)`
+  });
+  atomicWrite((0, import_node_path35.join)(exec, "finish-result.txt"), `${res.action}	${res.outcome}
+`);
+  log.ok(`duet finish: ${res.action} \u2192 ${res.outcome}`);
+  return 0;
+}
+async function summaryRun3(rest) {
+  const topic = rest[0];
+  if (!topic) {
+    log.error("usage: duet summary <topic> [--aborted <phase> <gate> <reason...>]");
+    return 2;
+  }
+  const art = duetArtDir(topic);
+  const exec = duetExecDir(topic);
+  const started = kvField2((0, import_node_path35.join)(art, "timing.txt"), "started") || "unknown";
+  let ended, duration;
+  const i2 = rest.indexOf("--aborted");
+  const aborted2 = i2 >= 0;
+  if (!aborted2) {
+    ended = isoUtc();
+    const s = Date.parse(started), e = Date.parse(ended);
+    duration = Number.isFinite(s) && Number.isFinite(e) ? Math.round((e - s) / 1e3) : 0;
+    atomicWrite((0, import_node_path35.join)(art, "timing.txt"), `started=${started}
+ended=${ended}
+duration=${duration}
+`);
+  }
+  let rounds = 0;
+  for (let n2 = 1; n2 < 1e3; n2++) {
+    if ((0, import_node_fs36.existsSync)((0, import_node_path35.join)(exec, `round-${n2}.txt`))) rounds = n2;
+    else if (n2 > rounds + 2) break;
+  }
+  const facts = {
+    topic,
+    status: aborted2 ? "aborted" : "ok",
+    started,
+    ended,
+    duration,
+    provider: readField2((0, import_node_path35.join)(art, "selected-provider.txt")) || "unknown",
+    instrument: readField2((0, import_node_path35.join)(art, "instrument.txt")) || "unknown",
+    repo: readField2((0, import_node_path35.join)(exec, "target_cwd.txt")) || "<repo>",
+    mode: readField2((0, import_node_path35.join)(exec, "mode.txt")) || "branch",
+    branch: readField2((0, import_node_path35.join)(exec, "branch.txt")) || "(none)",
+    rounds,
+    verify: readField2((0, import_node_path35.join)(exec, "verify-result.txt")) || "unknown",
+    diffStats: readField2((0, import_node_path35.join)(exec, "diff-stats.txt")) || "unknown",
+    archived: readField2((0, import_node_path35.join)(art, "archived-path.txt")) || "(not archived)",
+    finishResult: readField2((0, import_node_path35.join)(exec, "finish-result.txt")) || "(not finished)",
+    abortedPhase: aborted2 ? rest[i2 + 1] : void 0,
+    abortedGate: aborted2 ? rest[i2 + 2] : void 0,
+    abortedReason: aborted2 ? rest.slice(i2 + 3).join(" ") || "unknown" : void 0
+  };
+  atomicWrite((0, import_node_path35.join)(art, "SUMMARY.md"), renderDuetSummary(facts));
+  if (aborted2) {
+    atomicWrite((0, import_node_path35.join)(art, "RESUME.md"), renderDuetResume({
+      topic,
+      repo: facts.repo,
+      branch: facts.branch,
+      mode: facts.mode,
+      lastRound: rounds,
+      task: readIfExists((0, import_node_path35.join)(art, "topic-text.txt")),
+      phase: facts.abortedPhase ?? "unknown",
+      gate: facts.abortedGate ?? "unknown"
+    }));
+  }
+  log.ok(`duet summary: wrote ${(0, import_node_path35.join)(art, "SUMMARY.md")}`);
+  return 0;
+}
+var import_node_fs36, import_node_path35, liveInitDeps5, DUET_TURN_TIMEOUT;
+var init_duet2 = __esm({
+  "src/commands/duet.ts"() {
+    "use strict";
+    import_node_fs36 = require("node:fs");
+    import_node_path35 = require("node:path");
+    init_log();
+    init_args();
+    init_atomic();
+    init_archive();
+    init_contracts();
+    init_deps();
+    init_instruments();
+    init_gitwork();
+    init_fsread();
+    init_forensics();
+    init_solo();
+    init_paths();
+    init_duet();
+    init_duetTurn();
+    init_turn();
+    init_scoreTurn();
+    init_ipc();
+    init_send2();
+    liveInitDeps5 = {
+      haveCmd,
+      instrumentBinary,
+      pickRandomInstrument,
+      isGitRepo: (dir) => runnerAt(dir).run("git", ["rev-parse", "--is-inside-work-tree"]).code === 0,
+      headSha: (dir) => runnerAt(dir).run("git", ["rev-parse", "HEAD"]).stdout.trim()
+    };
+    DUET_TURN_TIMEOUT = Number(process.env.CONSORT_DUET_TURN_TIMEOUT) || 14400;
+  }
+});
+
 // src/consort.ts
 init_args();
 init_paths();
@@ -25208,7 +25799,7 @@ async function dispatch(fn, args) {
 
 // src/consort.ts
 async function loadHandlers() {
-  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform, playback, rehearsal, prelude] = await Promise.all([
+  const [spawn2, send, collect, roster, coda, soundcheck, preflight, hook, solo, score, perform, playback, rehearsal, prelude, duet] = await Promise.all([
     Promise.resolve().then(() => (init_spawn(), spawn_exports)),
     Promise.resolve().then(() => (init_send2(), send_exports)),
     Promise.resolve().then(() => (init_collect(), collect_exports)),
@@ -25222,7 +25813,8 @@ async function loadHandlers() {
     Promise.resolve().then(() => (init_perform2(), perform_exports)),
     Promise.resolve().then(() => (init_playback2(), playback_exports)),
     Promise.resolve().then(() => (init_rehearsal2(), rehearsal_exports)),
-    Promise.resolve().then(() => (init_prelude2(), prelude_exports))
+    Promise.resolve().then(() => (init_prelude2(), prelude_exports)),
+    Promise.resolve().then(() => (init_duet2(), duet_exports))
   ]);
   return {
     spawn: spawn2.run,
@@ -25238,7 +25830,8 @@ async function loadHandlers() {
     perform: perform.run,
     playback: playback.run,
     rehearsal: rehearsal.run,
-    prelude: prelude.run
+    prelude: prelude.run,
+    duet: duet.run
   };
 }
 async function banner(label, color) {
