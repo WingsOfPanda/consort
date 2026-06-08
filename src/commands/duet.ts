@@ -305,8 +305,9 @@ async function summaryRun(rest: string[]): Promise<number> {
     duration = Number.isFinite(s) && Number.isFinite(e) ? Math.round((e - s) / 1000) : 0;
     atomicWrite(join(art, "timing.txt"), `started=${started}\nended=${ended}\nduration=${duration}\n`);
   }
-  // count rounds = highest round-<n>.txt present
-  let rounds = 0; for (let n = 1; n < 1000; n++) { if (existsSync(join(exec, `round-${n}.txt`))) rounds = n; else if (n > rounds + 2) break; }
+  // count rounds = highest round-<n>.txt present (files are contiguous 1..K: round-send refuses to
+  // overwrite an existing round-<n>.txt and the directive only ever advances the round by +1)
+  let rounds = 0; while (existsSync(join(exec, `round-${rounds + 1}.txt`))) rounds++;
 
   const facts: DuetSummaryFacts = {
     topic, status: aborted ? "aborted" : "ok", started, ended, duration,

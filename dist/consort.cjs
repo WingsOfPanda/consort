@@ -25739,10 +25739,7 @@ duration=${duration}
 `);
   }
   let rounds = 0;
-  for (let n2 = 1; n2 < 1e3; n2++) {
-    if ((0, import_node_fs36.existsSync)((0, import_node_path35.join)(exec, `round-${n2}.txt`))) rounds = n2;
-    else if (n2 > rounds + 2) break;
-  }
+  while ((0, import_node_fs36.existsSync)((0, import_node_path35.join)(exec, `round-${rounds + 1}.txt`))) rounds++;
   const facts = {
     topic,
     status: aborted2 ? "aborted" : "ok",
