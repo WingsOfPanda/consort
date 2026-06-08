@@ -84,8 +84,13 @@ continue.
    ```bash
    printf '%s\n' "$VERIFY" > <SLUG state>/_duet/execute/verify-result.txt
    ```
-3. Finish (branch mode → push + PR in repo B, or local commit if no remote; in-place → leaves commits on
-   the current branch): `$CS duet finish <SLUG>`.
+3. Finish: `$CS duet finish <SLUG>`. In **branch mode** this opens a PR, merges it (a merge commit), and
+   fast-forwards repo B's base branch — so repo B ends back on its base branch, up to date, with the
+   merge on record and no local/remote divergence. Fallbacks (each recorded in `finish-result.txt`): no
+   remote → it merges into base locally; no `gh` → it pushes the branch and you open + merge the PR
+   manually, then `git -C <TARGET> pull`; the PR merge being blocked (branch protection / CI / conflict)
+   → it leaves the PR open for you to merge; base can't fast-forward → it reports and stops. In
+   **in-place mode** it leaves the commits on the current branch.
 
 ## Stage 4 — Teardown + SUMMARY
 
