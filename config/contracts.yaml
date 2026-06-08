@@ -26,6 +26,12 @@ codex:
   # before the nudge fires). The directive-side auto-retry-once that
   # complements this lives in commands/score.md (Stage 3 spawn-all retry).
   bootstrap_sleep_s: 20
+  # 0.1.31: codex-xhigh research/adversary turns reliably run ~10-12 min and
+  # tripped the 600s research_timeout_s by 1-2 min, forcing a re-arm dance
+  # (playback 2026-06-08: 4x across distinct prelude/score topics). Same lever
+  # opencode uses for its wall-clock slowness; 1.5 -> 900s gives margin and the
+  # liveness probe still catches genuinely-dead parts.
+  timeout_multiplier: 1.5
 
 agy:
   binary: agy
