@@ -60,9 +60,9 @@ export function windowBorderStatusArgs(target: string): string[] {
 export function wrapLaunch(launch: string, hasBashrc: boolean = existsSync(join(homedir(), ".bashrc"))): string {
   return hasBashrc ? `bash -ic 'exec ${launch}'` : launch;
 }
-export function sentinelCommand(labelFmt: string): string {
+export function sentinelCommand(coloredLabel: string): string {
   // printf the colored label + reserved notice, then hold the pane open.
-  return `printf '%s\\n  preflight pane reserved — awaiting spawn...\\n' ${JSON.stringify(labelFmt)}; sleep infinity`;
+  return `printf '%s\\n  preflight pane reserved — awaiting spawn...\\n' ${JSON.stringify(coloredLabel)}; sleep infinity`;
 }
 
 // ---------- execa wrappers (live tmux) ----------

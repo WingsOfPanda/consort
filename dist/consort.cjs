@@ -616,7 +616,7 @@ function outboxDump(i2, m, t) {
   return (0, import_node_fs5.existsSync)(p) ? (0, import_node_fs5.readFileSync)(p, "utf8") : "";
 }
 function paneMetaWrite(i2, m, t, paneId, opts) {
-  const spawned = (opts?.now ?? /* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const spawned = isoUtc(opts?.now);
   atomicWrite(paneMetaPath(i2, m, t), JSON.stringify({ pane_id: paneId, instrument: i2, model: m, spawned_at: spawned }) + "\n");
 }
 function paneMetaReadForDir(dir) {
@@ -665,6 +665,7 @@ var init_ipc = __esm({
     import_node_path3 = require("node:path");
     init_paths();
     init_atomic();
+    init_archive();
     SENDER_RE = /^[a-zA-Z0-9_-]+$/;
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
@@ -16697,8 +16698,8 @@ function windowBorderStatusArgs(target) {
 function wrapLaunch(launch, hasBashrc = (0, import_node_fs15.existsSync)((0, import_node_path13.join)((0, import_node_os5.homedir)(), ".bashrc"))) {
   return hasBashrc ? `bash -ic 'exec ${launch}'` : launch;
 }
-function sentinelCommand(labelFmt2) {
-  return `printf '%s\\n  preflight pane reserved \u2014 awaiting spawn...\\n' ${JSON.stringify(labelFmt2)}; sleep infinity`;
+function sentinelCommand(coloredLabel) {
+  return `printf '%s\\n  preflight pane reserved \u2014 awaiting spawn...\\n' ${JSON.stringify(coloredLabel)}; sleep infinity`;
 }
 async function tmux(args) {
   const { stdout } = await execa("tmux", args);
@@ -16871,7 +16872,7 @@ async function captureFailure(input, deps) {
   const scrollback = await deps.capturePane(input.paneId, SCROLLBACK_LINES).catch(() => "");
   const dest = `${dir}/${FAILURE_FILENAME}`;
   const doc = renderFailureReport({
-    timestamp: (deps.now ?? (() => (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z")))(),
+    timestamp: (deps.now ?? (() => isoUtc()))(),
     instrument: input.instrument,
     model: input.model,
     topic: input.topic,
@@ -16973,7 +16974,7 @@ function writeForensicsFeed(opts) {
   (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
   const path6 = (0, import_node_path14.join)(dir, opts.fileNameFor(time));
   const md = renderArtForensics(
-    { command: opts.command, topicSlug: opts.topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+    { command: opts.command, topicSlug: opts.topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: isoUtc(opts.now) },
     opts.findings
   );
   atomicWrite(path6, md);
@@ -17083,6 +17084,7 @@ var init_forensics = __esm({
     import_node_path14 = require("node:path");
     init_paths();
     init_atomic();
+    init_archive();
     init_log();
     SCROLLBACK_LINES = 50;
     NO_EVENT_SENTINEL = "no error event before timeout";
@@ -17246,7 +17248,7 @@ ${ob}
       }
       const fr = await captureFailure(
         { instrument, model, topic, paneId: pane, reason, eventLine: ev ? JSON.stringify(ev) : void 0, readyTimeout },
-        { partDir, capturePane: (p, n2) => capturePane(p, n2), atomicWriteSync: (d, c3) => (0, import_node_fs17.writeFileSync)(d, c3), isWritableDir: (d) => (0, import_node_fs17.existsSync)(d), now: () => (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z") }
+        { partDir, capturePane: (p, n2) => capturePane(p, n2), atomicWriteSync: (d, c3) => (0, import_node_fs17.writeFileSync)(d, c3), isWritableDir: (d) => (0, import_node_fs17.existsSync)(d), now: () => isoUtc() }
       );
       captureSpawnFailure({ instrument, model, topic, ...bootstrapFailureArgs(ev ?? null, fr.ok ? fr.path : void 0) });
       await killNow(pane);
@@ -19671,7 +19673,7 @@ async function synthesizeRun(rest) {
     return 1;
   }
   const adjText = (0, import_node_fs28.readFileSync)(adj, "utf8");
-  if (adjText.split("\n").some((l) => /^- PENDING:/.test(l))) {
+  if (/^- PENDING:/m.test(adjText)) {
     log.error("score synthesize: adjudicated.md still has '- PENDING:' lines; resolve them first");
     return 1;
   }
@@ -23587,7 +23589,7 @@ async function finalizeWith(args, deps) {
     return 1;
   }
   const partsFile = (0, import_node_path30.join)(art, "parts.txt");
-  const instruments = (0, import_node_fs33.existsSync)(partsFile) ? (0, import_node_fs33.readFileSync)(partsFile, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];
+  const instruments = (0, import_node_fs33.existsSync)(partsFile) ? splitNonCommentLines((0, import_node_fs33.readFileSync)(partsFile, "utf8")) : [];
   for (const instrument of instruments) {
     const stateDir = partStateDir(art, instrument);
     const stateTxt = (0, import_node_path30.join)(stateDir, "state.txt");
@@ -24366,10 +24368,7 @@ function topApproach(draft) {
 function draftCitations(draft) {
   const re = /[A-Za-z_./-]+\.[a-z]+(?::[0-9]+)?|https?:\/\/[^ )"\\]+/g;
   const seen = /* @__PURE__ */ new Set();
-  for (const m of draft.matchAll(re)) {
-    const tok = m[0];
-    if (!seen.has(tok)) seen.add(tok);
-  }
+  for (const m of draft.matchAll(re)) seen.add(m[0]);
   return [...seen];
 }
 function matrixBadRows(draft) {

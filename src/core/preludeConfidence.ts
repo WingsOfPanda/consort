@@ -22,7 +22,7 @@ export function topApproach(draft: string): string {
 export function draftCitations(draft: string): string[] {
   const re = /[A-Za-z_./-]+\.[a-z]+(?::[0-9]+)?|https?:\/\/[^ )"\\]+/g;
   const seen = new Set<string>();
-  for (const m of draft.matchAll(re)) { const tok = m[0]; if (!seen.has(tok)) seen.add(tok); }
+  for (const m of draft.matchAll(re)) seen.add(m[0]);
   return [...seen];
 }
 

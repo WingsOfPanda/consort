@@ -4,7 +4,7 @@ import { kvParse } from "../args.js";
 import { log } from "../core/log.js";
 import { inTmuxSession, tmuxVersionOk, haveCmd } from "../core/deps.js";
 import { topicDir, partDir, repoRoot } from "../core/paths.js";
-import { stateInit, stateArchive } from "../core/archive.js";
+import { stateInit, stateArchive, isoUtc } from "../core/archive.js";
 import { identityWrite, identityPath, inboxWrite, inboxPath, paneMetaWrite, outboxWait, outboxDump } from "../core/ipc.js";
 import { paneListedFor } from "../core/score.js";
 import { pickRandomInstrument, instrumentInUse, formatCollisionError } from "../core/instruments.js";
@@ -112,7 +112,7 @@ export async function run(args: string[]): Promise<number> {
       }
       const fr = await captureFailure(
         { instrument, model, topic, paneId: pane, reason: reason as "timeout" | "error_event", eventLine: ev ? JSON.stringify(ev) : undefined, readyTimeout },
-        { partDir, capturePane: (p, n) => capturePane(p, n), atomicWriteSync: (d, c) => writeFileSync(d, c), isWritableDir: (d) => existsSync(d), now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z") },
+        { partDir, capturePane: (p, n) => capturePane(p, n), atomicWriteSync: (d, c) => writeFileSync(d, c), isWritableDir: (d) => existsSync(d), now: () => isoUtc() },
       );
       captureSpawnFailure({ instrument, model, topic, ...bootstrapFailureArgs(ev ?? null, fr.ok ? fr.path : undefined) });
       await killNow(pane);

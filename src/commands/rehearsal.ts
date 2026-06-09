@@ -1163,9 +1163,7 @@ export async function finalizeWith(args: string[], deps: RehearsalFinalizeDeps):
 
   // Parts list (one instrument per non-blank line). Used in steps 2 + 9.
   const partsFile = join(art, "parts.txt");
-  const instruments = existsSync(partsFile)
-    ? readFileSync(partsFile, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
-    : [];
+  const instruments = existsSync(partsFile) ? splitNonCommentLines(readFileSync(partsFile, "utf8")) : [];
 
   // 2. Per-part reconcile + phase normalization.
   for (const instrument of instruments) {

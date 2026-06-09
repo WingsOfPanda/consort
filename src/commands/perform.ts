@@ -132,7 +132,7 @@ export async function initWith(tokens: string[], d: PerformInitDeps): Promise<nu
   if (existsSync(art)) { log.error(`perform init: topic already in flight: ${art} (run /consort:coda or pick a different --topic)`); return 2; }
 
   const targetCwd = d.repoRoot();
-  const provider: string = detectProvider(targetCwd);
+  const provider = detectProvider(targetCwd);
 
   mkdirSync(art, { recursive: true });
   atomicWrite(join(art, "design.md"), text);

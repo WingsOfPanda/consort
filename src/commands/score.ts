@@ -429,7 +429,7 @@ export async function synthesizeRun(rest: string[]): Promise<number> {
   const adj = join(art, "adjudicated.md");
   if (!existsSync(adj)) { log.error(`score synthesize: ${adj} missing — cp adjudicated-draft.md -> adjudicated.md and resolve PENDINGs first`); return 1; }
   const adjText = readFileSync(adj, "utf8");
-  if (adjText.split("\n").some((l) => /^- PENDING:/.test(l))) { log.error("score synthesize: adjudicated.md still has '- PENDING:' lines; resolve them first"); return 1; }
+  if (/^- PENDING:/m.test(adjText)) { log.error("score synthesize: adjudicated.md still has '- PENDING:' lines; resolve them first"); return 1; }
 
   const draftDir = scoreDraftDir(topic);
   mkdirSync(draftDir, { recursive: true });

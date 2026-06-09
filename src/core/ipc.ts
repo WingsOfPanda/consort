@@ -2,6 +2,7 @@ import { statSync, readFileSync, existsSync, openSync, readSync, closeSync, read
 import { join } from "node:path";
 import { partDir, topicDir, pluginRoot } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
+import { isoUtc } from "./archive.js";
 
 export function inboxPath(i: string, m: string, t: string) { return join(partDir(i, m, t), "inbox.md"); }
 export function outboxPath(i: string, m: string, t: string) { return join(partDir(i, m, t), "outbox.jsonl"); }
@@ -116,7 +117,7 @@ export function outboxDump(i: string, m: string, t: string): string {
 }
 
 export function paneMetaWrite(i: string, m: string, t: string, paneId: string, opts?: { now?: Date }): void {
-  const spawned = (opts?.now ?? new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const spawned = isoUtc(opts?.now);
   atomicWrite(paneMetaPath(i, m, t), JSON.stringify({ pane_id: paneId, instrument: i, model: m, spawned_at: spawned }) + "\n");
 }
 

@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { globalRoot, repoHash, partDir } from "./paths.js";
 import { atomicWrite } from "./atomic.js";
+import { isoUtc } from "./archive.js";
 import { log } from "./log.js";
 
 export type FailureReason = "timeout" | "error_event";
@@ -49,7 +50,7 @@ export async function captureFailure(input: CaptureFailureInput, deps: Forensics
   const scrollback = await deps.capturePane(input.paneId, SCROLLBACK_LINES).catch(() => "");
   const dest = `${dir}/${FAILURE_FILENAME}`;
   const doc = renderFailureReport({
-    timestamp: (deps.now ?? (() => new Date().toISOString().replace(/\.\d{3}Z$/, "Z")))(),
+    timestamp: (deps.now ?? (() => isoUtc()))(),
     instrument: input.instrument, model: input.model, topic: input.topic,
     paneId: input.paneId, reason: input.reason,
     readyTimeout: input.readyTimeout == null ? "unknown" : String(input.readyTimeout),
@@ -141,7 +142,7 @@ function writeForensicsFeed(opts: {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, opts.fileNameFor(time));
   const md = renderArtForensics(
-    { command: opts.command, topicSlug: opts.topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: iso.replace(/\.\d{3}Z$/, "Z") },
+    { command: opts.command, topicSlug: opts.topicSlug, repoHash: hash, artDir: opts.artDir, invokedAt: isoUtc(opts.now) },
     opts.findings,
   );
   atomicWrite(path, md);
