@@ -1500,7 +1500,11 @@ function sweepTmpLock(dir: string, depth: number): void {
 
 export async function teardownWith(args: string[], deps: RehearsalTeardownDeps): Promise<number> {
   const out = deps.stdout ?? ((l: string): void => { process.stdout.write(l + "\n"); });
-  const topic = args[0];
+  // --panes-only is Phase-3's spawn-retry reset: kill the partial-spawn panes only and PRESERVE
+  // all state (no archive / winner-symlink / sweep) so the immediately-following spawn-all can
+  // reuse it. The default (archiving) mode is the terminal Phase-6 teardown.
+  const panesOnly = args.includes("--panes-only");
+  const topic = args.find((a) => !a.startsWith("--"));
   if (!topic) { log.error("rehearsal teardown: topic required"); return 2; }
 
   const art = rehearsalArtDir(topic, deps.opts);
@@ -1510,12 +1514,18 @@ export async function teardownWith(args: string[], deps: RehearsalTeardownDeps):
   //    --pairs`; no-op when preflight-panes.txt is absent (tests/dogfood).
   const pf = join(art, "preflight-panes.txt");
   if (existsSync(pf)) {
-    for (const line of readFileSync(pf, "utf8").split("\n")) {
-      const pane = (line.split("\t")[1] ?? "").trim();   // line is "<instrument>\t<pane>"
-      if (!pane) continue;
+    for (const pane of parsePanesFile(readFileSync(pf, "utf8")).values()) {
       try { await deps.killPane(pane); } catch { /* best-effort */ }
     }
     try { rmSync(pf, { force: true }); } catch { /* best-effort */ }
+  }
+
+  if (panesOnly) {
+    // spawn-all self-clears spawn-results.tsv + rewrites parts.txt/preflight-panes.txt on retry,
+    // so killing the partial panes (above) + skipping archive/finalize is the full reset.
+    try { rmSync(join(art, "spawn-results.tsv"), { force: true }); } catch { /* best-effort */ }
+    log.ok(`[teardown] panes-only reset for ${topic} (state preserved for retry)`);
+    return 0;
   }
 
   // 2. shared/ sweep (best-effort): drop *.tmp / *.lock leak shapes (depth <= 2).

@@ -105,11 +105,14 @@ Spawn N parts in one call: `$CS rehearsal spawn-all <TOPIC> <N>`. It picks N dis
 panes off your pane (main-vertical), batch-spawns them as codex, and writes `$ART/spawn-results.tsv` +
 `$ART/parts.txt`. Branch on rc:
 - **rc 0** → all parts ready. Continue (Phase 4 lands next).
-- **rc 3 (preflight/setup), first failure** → teardown the partial set and retry `spawn-all` ONCE
-  (cold-start tolerance).
+- **rc 3 (preflight/setup), first failure** → reset the partial spawn
+  (`$CS rehearsal teardown <TOPIC> --panes-only` — kills the partial panes only and **preserves**
+  state; a plain `teardown` would archive `_rehearsal` and the retry would fail) and retry
+  `spawn-all` ONCE (cold-start tolerance).
 - **rc 3, after retry** → preflight is unrecoverable: teardown + archive + exit. Do **NOT** show a
   degraded prompt (a pane-allocation failure that survives a retry will not be fixed by dropping parts).
-- **rc 1 or 2 (spawn-class), first failure** → teardown the partial set and retry `spawn-all` ONCE.
+- **rc 1 or 2 (spawn-class), first failure** → reset the partial spawn
+  (`$CS rehearsal teardown <TOPIC> --panes-only`, as above) and retry `spawn-all` ONCE.
 - **rc 1 or 2, after retry** → read the FRESH `$ART/spawn-results.tsv` (`spawn-all` clears any stale one
   at start). If **< 2** parts have rc 0, abort (teardown + archive). Else **AskUserQuestion**: **Proceed
   degraded (<k>/<N>)** / **Abort**. On **Proceed degraded**, for EACH instrument whose `spawn-results.tsv`

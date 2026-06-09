@@ -23863,7 +23863,8 @@ async function teardownWith(args, deps) {
   const out = deps.stdout ?? ((l) => {
     process.stdout.write(l + "\n");
   });
-  const topic = args[0];
+  const panesOnly = args.includes("--panes-only");
+  const topic = args.find((a2) => !a2.startsWith("--"));
   if (!topic) {
     log.error("rehearsal teardown: topic required");
     return 2;
@@ -23875,9 +23876,7 @@ async function teardownWith(args, deps) {
   }
   const pf = (0, import_node_path30.join)(art, "preflight-panes.txt");
   if ((0, import_node_fs33.existsSync)(pf)) {
-    for (const line of (0, import_node_fs33.readFileSync)(pf, "utf8").split("\n")) {
-      const pane = (line.split("	")[1] ?? "").trim();
-      if (!pane) continue;
+    for (const pane of parsePanesFile((0, import_node_fs33.readFileSync)(pf, "utf8")).values()) {
       try {
         await deps.killPane(pane);
       } catch {
@@ -23887,6 +23886,14 @@ async function teardownWith(args, deps) {
       (0, import_node_fs33.rmSync)(pf, { force: true });
     } catch {
     }
+  }
+  if (panesOnly) {
+    try {
+      (0, import_node_fs33.rmSync)((0, import_node_path30.join)(art, "spawn-results.tsv"), { force: true });
+    } catch {
+    }
+    log.ok(`[teardown] panes-only reset for ${topic} (state preserved for retry)`);
+    return 0;
   }
   const shared = (0, import_node_path30.join)(art, "shared");
   if ((0, import_node_fs33.existsSync)(shared) && (0, import_node_fs33.statSync)(shared).isDirectory()) sweepTmpLock(shared, 2);
@@ -25131,7 +25138,8 @@ async function teardownWith2(args, deps) {
   const out = deps.stdout ?? ((l) => {
     process.stdout.write(l + "\n");
   });
-  const topic = args[0];
+  const panesOnly = args.includes("--panes-only");
+  const topic = args.find((a2) => !a2.startsWith("--"));
   if (!topic) {
     log.error("prelude teardown: topic required");
     return 2;
@@ -25143,14 +25151,22 @@ async function teardownWith2(args, deps) {
   }
   const pf = (0, import_node_path33.join)(art, "preflight-panes.txt");
   if ((0, import_node_fs35.existsSync)(pf)) {
-    for (const line of (0, import_node_fs35.readFileSync)(pf, "utf8").split("\n")) {
-      const pane = line.trim();
-      if (!pane) continue;
+    for (const pane of parsePanesFile((0, import_node_fs35.readFileSync)(pf, "utf8")).values()) {
       try {
         await deps.killPane(pane);
       } catch {
       }
     }
+  }
+  if (panesOnly) {
+    for (const f of ["preflight-panes.txt", "spawn-results.tsv"]) {
+      try {
+        (0, import_node_fs35.rmSync)((0, import_node_path33.join)(art, f), { force: true });
+      } catch {
+      }
+    }
+    log.ok(`[teardown] panes-only reset for ${topic} (state preserved for retry)`);
+    return 0;
   }
   const dest = deps.archiveTopic(topic, "prelude");
   if (dest) {

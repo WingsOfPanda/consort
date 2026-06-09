@@ -279,17 +279,44 @@ describe("prelude synth-final", () => {
 });
 
 describe("prelude teardown", () => {
-  it("archives _prelude and prints the dest", async () => {
+  it("archives _prelude, kills panes by id (not the whole TSV line), prints the dest", async () => {
     const { cleanup } = freshHome();
     try {
       await initWith(["x"], initDeps());
+      const art = preludeArtDir("x");
+      writeFileSync(join(art, "preflight-panes.txt"), "viola\t%1\ncello\t%2\n");
       let dest = "";
+      const killed: string[] = [];
       const rc = await preludeTeardownWith(["x"], {
-        killPane: async () => {}, archiveTopic: () => { dest = "/archive/x/_prelude-T"; return dest; },
+        killPane: async (p) => { killed.push(p); },
+        archiveTopic: () => { dest = "/archive/x/_prelude-T"; return dest; },
         stdout: (l) => { dest = l; },
       });
       expect(rc).toBe(0);
       expect(dest).toContain("_prelude");
+      expect(killed).toEqual(["%1", "%2"]);   // pane id, not "viola\t%1"
+    } finally { cleanup(); }
+  });
+
+  it("--panes-only: kills partial panes, clears attempt files, preserves roster, no archive", async () => {
+    const { cleanup } = freshHome();
+    try {
+      await initWith(["x"], initDeps());
+      const art = preludeArtDir("x");
+      writeFileSync(join(art, "preflight-panes.txt"), "viola\t%1\ncello\t%2\n");
+      writeFileSync(join(art, "spawn-results.tsv"), "viola\tcodex\t0\n");
+      const killed: string[] = [];
+      let archived = false;
+      const rc = await preludeTeardownWith(["x", "--panes-only"], {
+        killPane: async (p) => { killed.push(p); },
+        archiveTopic: () => { archived = true; return "/should/not/happen"; },
+      });
+      expect(rc).toBe(0);
+      expect(killed).toEqual(["%1", "%2"]);                              // partial panes killed
+      expect(archived).toBe(false);                                     // NO archive
+      expect(existsSync(join(art, "preflight-panes.txt"))).toBe(false); // attempt files cleared
+      expect(existsSync(join(art, "spawn-results.tsv"))).toBe(false);
+      expect(existsSync(join(art, "roster.txt"))).toBe(true);           // state preserved for retry
     } finally { cleanup(); }
   });
 });

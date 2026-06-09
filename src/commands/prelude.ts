@@ -1,7 +1,7 @@
 // src/commands/prelude.ts — /consort:prelude CLI verbs (port of meditate). Built on score's DI
 // pattern + IPC/wait/archive helpers; meditate-specific logic lives in src/core/prelude*.ts.
 // NOTE: verbs are added task-by-task; the dispatcher's switch grows as each verb lands.
-import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../core/log.js";
 import { applyArgsFile } from "../args.js";
@@ -419,19 +419,31 @@ async function teardownRun(rest: string[]): Promise<number> { return teardownWit
 
 export async function teardownWith(args: string[], deps: PreludeTeardownDeps): Promise<number> {
   const out = deps.stdout ?? ((l: string): void => { process.stdout.write(l + "\n"); });
-  const topic = args[0];
+  // --panes-only is the mid-flight reset for Phase 2's spawn-retry: kill the partial-spawn
+  // panes + clear the per-attempt artifacts, but PRESERVE roster/topic/research state (no
+  // archive) so the immediately-following spawn-all can reuse it. The default (archiving)
+  // mode is the terminal Phase-9 teardown.
+  const panesOnly = args.includes("--panes-only");
+  const topic = args.find((a) => !a.startsWith("--"));
   if (!topic) { log.error("prelude teardown: topic required"); return 2; }
   const art = preludeArtDir(topic);
   if (!existsSync(art) || !statSync(art).isDirectory()) { log.error(`${art} not found`); return 1; }
 
   const pf = join(art, "preflight-panes.txt");
   if (existsSync(pf)) {
-    for (const line of readFileSync(pf, "utf8").split("\n")) {
-      const pane = line.trim();
-      if (!pane) continue;
+    for (const pane of parsePanesFile(readFileSync(pf, "utf8")).values()) {
       try { await deps.killPane(pane); } catch { /* best-effort */ }
     }
   }
+
+  if (panesOnly) {
+    for (const f of ["preflight-panes.txt", "spawn-results.tsv"]) {
+      try { rmSync(join(art, f), { force: true }); } catch { /* best-effort */ }
+    }
+    log.ok(`[teardown] panes-only reset for ${topic} (state preserved for retry)`);
+    return 0;
+  }
+
   const dest = deps.archiveTopic(topic, "prelude");
   if (dest) { out(dest); log.ok(`[teardown] archived ${topic} -> ${dest}`); }
   return 0;

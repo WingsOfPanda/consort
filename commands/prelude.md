@@ -96,8 +96,12 @@ pane, spawns every part in parallel (`--target-pane`, `--cwd <repo>`), and write
 `$ART/spawn-results.tsv`. Branch on its rc:
 
 - **rc 0** → all N parts ready. Continue to Phase 3.
-- **rc 1 or 2, FIRST failure** → cold-start tolerance: tear down the partial set
-  (`$CS prelude teardown <TOPIC>`) and retry `$CS prelude spawn-all <TOPIC>` **ONCE**.
+- **rc 1 or 2, FIRST failure** → cold-start tolerance: reset the partial spawn
+  (`$CS prelude teardown <TOPIC> --panes-only` — kills the partial panes + clears the attempt
+  artifacts but **preserves** `roster.txt`/`topic.txt`/research state) and retry
+  `$CS prelude spawn-all <TOPIC>` **ONCE**. (Do NOT use a plain `teardown` for the retry — that
+  archives the whole `_prelude` dir, so the immediately-following `spawn-all` fails with
+  "roster.txt missing".)
 - **rc 1 or 2, after the retry (second failure)** → retry exhausted. Tear down
   (`$CS prelude teardown <TOPIC>`), `rm -rf "$ART/../"` (the topic state dir — its parent is
   `<topic>/`, of which `_prelude` is a child), and abort. Surface the specific provider failures from

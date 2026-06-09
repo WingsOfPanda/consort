@@ -346,6 +346,28 @@ describe("teardown", () => {
     expect(lines).toContain("/archive/here/_rehearsal-20260530T000000Z");
   });
 
+  it("--panes-only: kills partial panes, no archive / no winner symlink, preserves state, rc 0", async () => {
+    const h = home();
+    const opts = { home: h.home, cwd: h.home };
+    const art = rehearsalArtDir("tune-model", opts);
+    mkdirSync(join(art, "parts", "violin", "experiments", "exp-003", "code"), { recursive: true });
+    writeFileSync(join(art, "scoreboard.md"), WINNER_SB);          // a winner exists...
+    writeFileSync(join(art, "preflight-panes.txt"), "violin\t%1\nviola\t%2\n");
+    writeFileSync(join(art, "metric.md"), "primary_metric: acc\n");
+
+    const killed: string[] = [];
+    let archived = false;
+    const rc = await teardownWith(["tune-model", "--panes-only"], deps({
+      opts, killPane: async (p) => { killed.push(p); },
+      archiveTopic: () => { archived = true; return "/should/not/happen"; },
+    }));
+    expect(rc).toBe(0);
+    expect(killed).toEqual(["%1", "%2"]);                          // partial panes killed
+    expect(archived).toBe(false);                                 // NO archive
+    expect(existsSync(join(art, "winner"))).toBe(false);          // ...but no winner symlink mid-retry
+    expect(existsSync(join(art, "metric.md"))).toBe(true);        // state preserved for retry
+  });
+
   it("no ok row in scoreboard -> no winner symlink, still archives (rc 0)", async () => {
     const h = home();
     const opts = { home: h.home, cwd: h.home };
