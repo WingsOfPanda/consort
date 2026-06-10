@@ -1,7 +1,10 @@
 // src/core/performScope.ts
 //
-// SCOPE-CONFORMANCE guard for `perform` Phase A. Byte-faithful port of the prior bash plugin's
-// scope-conformance helpers (deploy-scope): deploy_extract_components_paths -> extractComponentsPaths,
+// SCOPE-CONFORMANCE guard for `perform` Phase A. Port of the prior bash plugin's scope-conformance
+// helpers (deploy-scope), EXTENDED in consort (deliberate divergence — see
+// docs/superpowers/specs/2026-06-10-perform-scope-bullets-design.md) so extractComponentsPaths also
+// reads bullet-list Components, not only table rows:
+// deploy_extract_components_paths -> extractComponentsPaths,
 // deploy_match_diff_against_components -> matchDiffAgainstComponents. The Bash helpers read files via
 // awk; the TS ports take the already-read strings (file IO is the caller's concern), but the
 // extraction algorithm — section bounds, separator-row skip, first-cell parse, header skip, path

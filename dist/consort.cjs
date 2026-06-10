@@ -19943,6 +19943,15 @@ var init_perform = __esm({
 });
 
 // src/core/performScope.ts
+function pathTokensFrom(text) {
+  const out = [];
+  for (const raw of text.replace(/`/g, "").split(/\s+/)) {
+    const tok = raw.replace(/^[(\[{"']+/, "").replace(/[)\]}"',.;:!?]+$/, "");
+    if (tok === "") continue;
+    if (HAS_SLASH.test(tok) || ENDS_WITH_EXT.test(tok)) out.push(tok);
+  }
+  return out;
+}
 function extractComponentsPaths(docText) {
   const out = [];
   let inSection = false;
@@ -19965,6 +19974,8 @@ function extractComponentsPaths(docText) {
       line = line.replace(/[ \t]+$/, "");
       if (HEADER_CELL.test(line)) continue;
       if (HAS_SLASH.test(line) || ENDS_WITH_EXT.test(line)) out.push(line);
+    } else if (inSection && BULLET_ROW.test(record)) {
+      out.push(...pathTokensFrom(record.replace(/^[ \t]*[-*+][ \t]+/, "")));
     }
   }
   return out;
@@ -19999,7 +20010,7 @@ function matchDiffAgainstComponents(diffPaths, compPaths) {
   }
   return out;
 }
-var COMPONENTS_HEADER, OTHER_H2, ANY_COMPONENTS_PREFIX, TABLE_ROW, SEPARATOR_ROW, HEADER_CELL, HAS_SLASH, ENDS_WITH_EXT;
+var COMPONENTS_HEADER, OTHER_H2, ANY_COMPONENTS_PREFIX, TABLE_ROW, SEPARATOR_ROW, BULLET_ROW, HEADER_CELL, HAS_SLASH, ENDS_WITH_EXT;
 var init_performScope = __esm({
   "src/core/performScope.ts"() {
     "use strict";
@@ -20008,6 +20019,7 @@ var init_performScope = __esm({
     ANY_COMPONENTS_PREFIX = /^## Components/;
     TABLE_ROW = /^[ \t]*\|/;
     SEPARATOR_ROW = /^[ \t]*\|([ \t]*[:-]+[ \t]*\|)+[ \t]*$/;
+    BULLET_ROW = /^[ \t]*[-*+][ \t]+/;
     HEADER_CELL = /^(File|Path|Name|Files?[ \t]+(edited|moved|touched))$/;
     HAS_SLASH = /\//;
     ENDS_WITH_EXT = /\.[a-zA-Z]+$/;
@@ -20683,11 +20695,13 @@ async function scopeCheckWith(topic, d) {
   atomicWrite((0, import_node_path26.join)(art, "diff-paths.txt"), diffPaths.length ? diffPaths.join("\n") + "\n" : "");
   const compPaths = extractComponentsPaths((0, import_node_fs30.readFileSync)(designFile, "utf8"));
   atomicWrite((0, import_node_path26.join)(art, "components-paths.txt"), compPaths.length ? compPaths.join("\n") + "\n" : "");
+  if (compPaths.length === 0) log.warn("scope conformance: design declared 0 parseable component paths; ALL changed files flagged by default (guard no-op)");
   const oos = matchDiffAgainstComponents(diffPaths, compPaths);
   const oosPath = (0, import_node_path26.join)(art, "scope-out-of-scope.txt");
   atomicWrite(oosPath, oos.length ? oos.join("\n") + "\n" : "");
   if (oos.length > 0) log.warn(`scope conformance: ${oos.length} out-of-scope path(s) detected`);
-  process.stdout.write(`OOS_COUNT=${oos.length}
+  process.stdout.write(`SCOPE_DECLARED=${compPaths.length}
+OOS_COUNT=${oos.length}
 OOS_PATH=${oosPath}
 `);
   return 0;
