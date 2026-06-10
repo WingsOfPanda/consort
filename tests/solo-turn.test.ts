@@ -1,7 +1,7 @@
 // tests/solo-turn.test.ts
 import { describe, it, expect } from "vitest";
 import { composeRound1Prompt, composeFixPrompt } from "../src/core/turn.js";
-import { classifyTurn, parseOffset } from "../src/core/turn.js";
+import { classifyTurn } from "../src/core/turn.js";
 
 describe("composeRound1Prompt", () => {
   it("inlines the brief, names the branch, forbids branch switching, documents question/done", () => {
@@ -32,13 +32,5 @@ describe("classifyTurn", () => {
     expect(classifyTurn({ event: "error", message: "x" })).toBe("failed");
     expect(classifyTurn({ event: "question", message: "?" })).toBe("question");
     expect(classifyTurn({ event: "weird" })).toBe("failed");
-  });
-});
-
-describe("parseOffset", () => {
-  it("reads the OFFSET= line, ignores a later TS= line", () => {
-    expect(parseOffset("OFFSET=128\n")).toBe(128);
-    expect(parseOffset("OFFSET=0\nTS=ok\n")).toBe(0);
-    expect(parseOffset("TS=failed\n")).toBeNull();
   });
 });

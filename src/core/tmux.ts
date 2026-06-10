@@ -79,8 +79,6 @@ export const respawn = async (pane: string, launch: string, cwd?: string): Promi
   return pane;
 };
 
-export async function setOption(pane: string, opt: string, val: string): Promise<void> { await tmux(setOptionArgs(pane, opt, val)); }
-
 /** Apply the orchestra pane-border config (idempotent `set -g`) so part labels render on the
  *  border instead of the raw TUI title. Called from spawn; tolerant of tmux errors. Returns
  *  false if any set-option failed (caller may warn). */

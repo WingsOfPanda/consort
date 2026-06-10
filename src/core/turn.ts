@@ -49,12 +49,6 @@ export function classifyTurn(ev: OutboxEvent | null): TurnStatus {
   return "failed";
 }
 
-/** Read the OFFSET=<n> line from a turn state file's contents. null if absent/unparseable. */
-export function parseOffset(stateText: string): number | null {
-  const m = stateText.match(/^OFFSET=(\d+)\s*$/m);
-  return m ? Number(m[1]) : null;
-}
-
 /** Fix-round prompt body (round >= 2). Same fence note as composeRound1Prompt. */
 export function composeFixPrompt(issuesText: string, round: number): string {
   return [

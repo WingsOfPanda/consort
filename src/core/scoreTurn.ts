@@ -1,5 +1,5 @@
 // src/core/scoreTurn.ts — multi-part research-phase turn helpers for score.
-// Built on the ipc primitives + the classifyTurn/parseOffset *semantics* from turn.ts
+// Built on the ipc primitives + the classifyTurn *semantics* from turn.ts
 // (reused, not bent). The verify-phase composer + state machine land in Phase D.
 import type { OutboxEvent } from "./ipc.js";
 import { parseClaims } from "./scoreDiff.js";
@@ -34,7 +34,6 @@ export function researchState(ev: OutboxEvent | null, findingsText: string | nul
 
 /** The LAST `OFFSET=<n>` line in a state file's contents. The question re-arm appends a second
  *  OFFSET= line (bumped past the question event); the re-armed wait must resume from the latest.
- *  Distinct from turn.ts parseOffset (first match — correct for solo's single-offset file).
  *  null if absent/unparseable. */
 export function parseLatestOffset(stateText: string): number | null {
   const ms = [...stateText.matchAll(/^OFFSET=(\d+)\s*$/gm)];
