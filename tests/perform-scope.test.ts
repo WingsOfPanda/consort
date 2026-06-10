@@ -40,6 +40,43 @@ describe("extractComponentsPaths", () => {
   it("a non-exact Components heading (## Components (extra)) does NOT open the section", () => {
     expect(extractComponentsPaths(doc("## Components (extra)", "| src/a.ts | x |"))).toEqual([]);
   });
+  it("bullet: extracts a backticked path", () => {
+    expect(extractComponentsPaths(doc("## Components", "- `src/core/foo.ts` — add helper"))).toEqual(["src/core/foo.ts"]);
+  });
+  it("bullet: extracts a bare path with a trailing colon label", () => {
+    expect(extractComponentsPaths(doc("## Components", "- src/core/bar.ts: edit"))).toEqual(["src/core/bar.ts"]);
+  });
+  it("bullet: extracts a path that appears mid-line", () => {
+    expect(extractComponentsPaths(doc("## Components", "- add a helper to src/core/baz.ts"))).toEqual(["src/core/baz.ts"]);
+  });
+  it("bullet: extracts ALL path-like tokens from one bullet", () => {
+    expect(extractComponentsPaths(doc("## Components", "- src/a.ts and src/b.ts"))).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+  it("bullet: recognizes * and + markers", () => {
+    expect(extractComponentsPaths(doc("## Components", "* src/star.ts", "+ src/plus.ts"))).toEqual(["src/star.ts", "src/plus.ts"]);
+  });
+  it("bullet: recognizes a nested/indented bullet", () => {
+    expect(extractComponentsPaths(doc("## Components", "    - src/deep.ts"))).toEqual(["src/deep.ts"]);
+  });
+  it("bullet: trims surrounding punctuation but keeps a trailing slash", () => {
+    expect(extractComponentsPaths(doc("## Components", "- `src/x.ts`,", "- (src/y.ts).", "- src/core/"))).toEqual(["src/x.ts", "src/y.ts", "src/core/"]);
+  });
+  it("bullet: drops bare words with no slash and no .ext", () => {
+    expect(extractComponentsPaths(doc("## Components", "- just prose here", "- Makefile"))).toEqual([]);
+  });
+  it("bullet + table mixed in one section, document order", () => {
+    const d = doc("## Components", "- src/bullet.ts", "| File | x |", "| `src/table.ts` | y |");
+    expect(extractComponentsPaths(d)).toEqual(["src/bullet.ts", "src/table.ts"]);
+  });
+  it("bullet: a horizontal rule (---) is not a bullet and yields nothing", () => {
+    expect(extractComponentsPaths(doc("## Components", "---"))).toEqual([]);
+  });
+  it("bullet: section still ends at the next H2 (bullet after ## Architecture not harvested)", () => {
+    expect(extractComponentsPaths(doc("## Components", "- src/in.ts", "## Architecture", "- src/out.ts"))).toEqual(["src/in.ts"]);
+  });
+  it("over-match (accepted): a referenced path in a bullet IS pulled into scope", () => {
+    expect(extractComponentsPaths(doc("## Components", "- see docs/DESIGN.md for context"))).toEqual(["docs/DESIGN.md"]);
+  });
 });
 
 describe("matchDiffAgainstComponents", () => {
